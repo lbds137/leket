@@ -41,9 +41,16 @@ export function render(exp, records, { timeZone = "UTC" } = {}) {
       at = t.index + t[0].length;
       const [whole, url, user, role, channel, emoji, unix] = t;
       if (url) {
-        // closing punctuation after a link is the sentence's, not the link's
-        const tail = (url.match(/[).,!?:;'"]+$/) || [""])[0];
-        const link = url.slice(0, url.length - tail.length);
+        // closing punctuation after a link is the sentence's, not the link's; a ")" stays
+        // while the link has an unclosed "(" (a wiki address)
+        let link = url;
+        for (;;) {
+          const c = link.slice(-1);
+          const open = (link.match(/\(/g) || []).length, close = (link.match(/\)/g) || []).length;
+          if (!(/[.,!?:;'"]/.test(c) || (c === ")" && close > open))) break;
+          link = link.slice(0, -1);
+        }
+        const tail = url.slice(link.length);
         out += `<a href="${esc(link)}">${esc(link)}</a>${esc(tail)}`;
       } else if (user) out += `<span class="mention">@${esc(personName(user) || user)}</span>`;
       else if (role) out += `<span class="mention">@role</span>`;
@@ -77,14 +84,16 @@ export function render(exp, records, { timeZone = "UTC" } = {}) {
   const listed = (atts, k) => (files.get(k) || (atts || []).map((a) => ({ filename: a.filename, error: "saving attachments was turned off" })))
     .map(attachment).join("");
 
+  // only web addresses become links: anything else (javascript:, data:) is shown as text
+  const web = (u) => /^https?:\/\//i.test(String(u || ""));
   const embed = (e) => {
-    const title = e.title ? (e.url ? `<a href="${esc(e.url)}">${esc(e.title)}</a>` : esc(e.title)) : "";
+    const title = e.title ? (web(e.url) ? `<a href="${esc(e.url)}">${esc(e.title)}</a>` : esc(e.title)) : "";
     return `<div class="embed">` +
       (e.author ? `<div class="e-author">${esc(e.author)}</div>` : "") +
       (title ? `<div class="e-title">${title}</div>` : "") +
       (e.description ? `<div>${text(e.description)}</div>` : "") +
       (e.fields || []).map((f) => `<div class="e-field"><b>${esc(f.name)}</b><div>${text(f.value)}</div></div>`).join("") +
-      (e.image ? `<div class="e-img">image: <a href="${esc(e.image)}">${esc(e.image)}</a> (not saved)</div>` : "") +
+      (e.image ? `<div class="e-img">image: ${web(e.image) ? `<a href="${esc(e.image)}">${esc(e.image)}</a>` : esc(e.image)} (not saved)</div>` : "") +
       (e.footer ? `<div class="e-footer">${esc(e.footer)}</div>` : "") +
       `</div>`;
   };

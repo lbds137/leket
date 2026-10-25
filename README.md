@@ -28,6 +28,7 @@ If you only want the messages, untick **save attachments too** before clicking S
 
 - **"STALLED, not at the start"**: Discord stopped loading older messages. Scroll up a little by hand, then click Auto-scroll again.
 - **"WOULD NOT OPEN"**: a group of messages from someone you blocked or ignored stayed closed. The panel says where it is. Scroll back there so it gets clicked again, then click Save again.
+- **"The extension didn't answer"**: the extension was updated or reloaded after you clicked its button. Your messages were still saved, as a JSON file in Downloads. For the attachments and the readable page, reload the Discord tab, click the button again and collect again.
 - **Attachments that couldn't be saved**: Discord's links to files expire after about a day. Reload the Discord tab, collect again and save again.
 - **A save in several parts** (`…-part1-of-3.zip` and so on): very large saves are split. Unzip all the parts into the same folder, then open `index.html`.
 

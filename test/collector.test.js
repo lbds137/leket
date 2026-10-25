@@ -153,7 +153,7 @@ test("the file name is the same with or without unread marks", () => {
 
 test("a forward keeps what was forwarded; a reply is not a forward", () => {
   const d = runPage("dm-forward").export;
-  const [reply, fwd, api, bare] = d.messages.slice(7);
+  const [reply, fwd, api, bare, late, untyped] = d.messages.slice(7);
   assert.equal(reply.reply_to, d.messages[0].id);
   assert.equal(reply.forward_of, undefined);
   assert.equal(fwd.reply_to, null);
@@ -162,7 +162,20 @@ test("a forward keeps what was forwarded; a reply is not a forward", () => {
     attachments: [{ filename: "f1.png", url: "https://cdn.discordapp.com/attachments/1/1/f1.png" }], embeds: [{ title: "Card" }] }]);
   assert.deepEqual(api.forwarded.map((f) => [f.text, f.datetime]), [["api form", "2020-12-02T00:00:00.000Z"]]);
   assert.deepEqual(bare.forwarded, []);
+  // snapshots that arrive after the first read are picked up; the author isn't counted twice
+  assert.deepEqual(late.forwarded.map((f) => f.text), ["late words"]);
+  assert.equal(d.participants.find((p) => p.id === "2").messages, 6);
+  // snapshots make a forward even where the reference gives no type
+  assert.deepEqual([untyped.reply_to, untyped.forward_of.message_id, untyped.forwarded[0].text], [null, "81", "no type"]);
   assert.equal(d.forwards_without_snapshot, 1);
+});
+
+test("with the bridge's mark but no answer, Save downloads the JSON and says why", () => {
+  const page = runPage("dm", [], { BRIDGE: "1", BRIDGE_ACK: "0" });
+  assert.equal(page.downloaded, true);
+  assert.equal(page.posted.type, "discord-tools:export");
+  assert.equal(page.export.messages.length, 7);
+  assert.match(page.status, /^The extension didn't answer .* messages saved to Downloads\/discord-someone-600\.json/);
 });
 
 test("with the bridge's mark, Save posts the export instead of downloading it", () => {

@@ -53,8 +53,14 @@ if (scenario === "dm-forward") {
     { id: snowflake(10), author: users.mod, content: "", message_reference: { type: 1, message_id: "78" },
       message_snapshots: [{ message: { content: "api form", timestamp: "2020-12-02T00:00:00+00:00", attachments: [], embeds: [] } }] },
     { id: snowflake(11), author: users.mod, content: "", messageReference: { type: 1, message_id: "79" } },
+    // its snapshots arrive after it was first read
+    { id: snowflake(12), author: users.mod, content: "", messageReference: { type: 1, message_id: "80" } },
+    // snapshots, but a reference with no type
+    { id: snowflake(13), author: users.mod, content: "", messageReference: { message_id: "81" },
+      messageSnapshots: [{ message: { content: "no type", attachments: [], embeds: [] } }] },
   );
 }
+const lateSnapshots = scenario === "dm-forward" ? msgs.find((m) => m.id === snowflake(12)) : null;
 // as a real page had them: the header's text carries a server tag badge or
 // hover text after the name; the name's own element (Alice's) holds the name alone
 const rendered = {
@@ -238,10 +244,20 @@ const document = {
   documentElement: { dataset: process.env.BRIDGE === "1" ? { discordToolsBridge: "1" } : {} },
 };
 let posted = null;
+const listeners = [];
 const observed = [];
 const sandbox = {
   location: { pathname: `/channels/${IS_DM ? "@me" : GUILD}/${CHANNEL}`, origin: "https://discord.com" },
-  postMessage: (data, origin) => { posted = { data, origin }; },
+  // the bridge's side: it answers a handoff unless BRIDGE_ACK=0 (an extension reloaded since)
+  postMessage: (data, origin) => {
+    if (data.type !== "discord-tools:export") return;
+    posted = { data, origin };
+    if (process.env.BRIDGE_ACK !== "0") {
+      setTimeout(() => listeners.forEach((f) => f({ source: vm.runInContext("window", sandbox), data: { type: "discord-tools:ack", id: data.id, ok: true } })), 10);
+    }
+  },
+  addEventListener: (type, f) => { if (type === "message") listeners.push(f); },
+  removeEventListener: (type, f) => { const i = listeners.indexOf(f); if (i >= 0) listeners.splice(i, 1); },
   document,
   alert: (s) => { throw new Error("alert: " + s); },
   console,
@@ -303,12 +319,17 @@ const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r)
     list.add(redraw(false), at);
     await mutated();
   }
+  if (lateSnapshots) {
+    lateSnapshots.messageSnapshots = [{ message: { content: "late words", attachments: [], embeds: [] } }];
+    await mutated();
+  }
   await save.onclick();
   const link = created.find((e) => e.tag === "a");
   // the panel's divs: the panel, its heading, the status line
   const status = created.filter((e) => e.tag === "div")[2];
-  const out = posted
-    ? { file: posted.data.file, export: JSON.parse(posted.data.json), posted: { ...posted.data, json: undefined, origin: posted.origin } }
-    : { file: link.download, export: JSON.parse(saved) };
+  const out = link
+    ? { file: link.download, export: JSON.parse(saved) }
+    : { file: posted.data.file, export: JSON.parse(posted.data.json) };
+  if (posted) out.posted = { ...posted.data, json: undefined, origin: posted.origin };
   process.stdout.write(JSON.stringify({ ...out, status: status.textContent, downloaded: !!link }));
 })();

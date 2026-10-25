@@ -466,38 +466,44 @@
   };
   const attachmentsOf = (m) => (m.attachments || []).map((x) => ({ filename: x.filename, url: x.url }));
 
-  // A forward is a message whose reference has type 1 and whose own content is empty: what
-  // was forwarded sits in its snapshots (the client's record calls them messageSnapshots,
-  // the API message_snapshots, each {message: {…}}; read off neither live yet). A reply's
-  // reference has type 0 or none.
-  let forwardsWithoutSnapshot = 0;
+  // A forward is a message whose reference has type 1, or that carries snapshots: what was
+  // forwarded sits in its snapshots (the client's record calls them messageSnapshots, the
+  // API message_snapshots, each {message: {…}}; read off neither live yet). A reply's
+  // reference has type 0 or none. A forward first seen without its snapshots is read again
+  // each pass until they arrive.
   const FORWARD = 1;
+  const snapshotsOf = (m) => {
+    const snaps = m.messageSnapshots || m.message_snapshots || [];
+    return Array.isArray(snaps) ? snaps : [];
+  };
   const isoOf = (t) => {
     if (!t) return null;
     try {
       return typeof t.toISOString === "function" ? t.toISOString() : new Date(String(t)).toISOString();
     } catch { return String(t); }
   };
-  const forwardedOf = (m) => {
-    const snaps = m.messageSnapshots || m.message_snapshots || [];
-    return (Array.isArray(snaps) ? snaps : []).map((s) => {
-      const x = (s && s.message) || s || {};
-      return { text: x.content || "", datetime: isoOf(x.timestamp), attachments: attachmentsOf(x), embeds: (x.embeds || []).map(embedOf) };
-    });
-  };
+  const forwardedOf = (m) => snapshotsOf(m).map((s) => {
+    const x = (s && s.message) || s || {};
+    return { text: x.content || "", datetime: isoOf(x.timestamp), attachments: attachmentsOf(x), embeds: (x.embeds || []).map(embedOf) };
+  });
+  const waitingForSnapshots = (rec) => !!rec.forward_of && !rec.forwarded.length;
 
   const harvest = () => {
     for (const li of document.querySelectorAll(ROW)) {
       const id = li.id.slice(`chat-messages-${CHANNEL}-`.length);
-      if (seen.has(id)) continue;
+      const had = seen.get(id);
+      if (had && !waitingForSnapshots(had)) continue;
       const m = fiberMessage(li) || fiberMessage(li.firstElementChild || li);
+      if (had) {
+        if (m && m.id === id) had.forwarded = forwardedOf(m);
+        continue;
+      }
       if (m && m.id === id) {
         const a = m.author || {};
         const p = a.id ? noteAuthor(m, a, id) : null;
         const ref = m.messageReference || m.message_reference || null;
-        const forward = !!ref && ref.type === FORWARD;
+        const forward = (!!ref && ref.type === FORWARD) || snapshotsOf(m).length > 0;
         const forwarded = forward ? forwardedOf(m) : [];
-        if (forward && !forwarded.length) forwardsWithoutSnapshot++;
         seen.set(id, {
           id,
           datetime: isoFromSnowflake(id),
@@ -514,8 +520,8 @@
           type: m.type,
           // a forward's source message, and what was forwarded (empty where the snapshots
           // weren't found: counted in forwards_without_snapshot)
-          ...(forward ? { forward_of: { message_id: ref.message_id || null, channel_id: ref.channel_id || null,
-            guild_id: ref.guild_id || null }, forwarded } : {}),
+          ...(forward ? { forward_of: { message_id: (ref && ref.message_id) || null, channel_id: (ref && ref.channel_id) || null,
+            guild_id: (ref && ref.guild_id) || null }, forwarded } : {}),
         });
       } else {
         const content = document.getElementById(`message-content-${id}`);
@@ -683,6 +689,24 @@
     autoBtn.textContent = "Auto-scroll";
   }
 
+  // true once the bridge says the export tab is opening; false after 5 s without a word
+  const handOver = (json) => new Promise((resolve) => {
+    if (document.documentElement.dataset.discordToolsBridge !== "1") return resolve(false);
+    const id = `${Date.now()}-${Math.random()}`;
+    const done = (ok) => {
+      clearTimeout(timeout);
+      window.removeEventListener("message", onAck);
+      resolve(ok);
+    };
+    const onAck = (e) => {
+      const d = e.data;
+      if (e.source === window && d && d.type === "discord-tools:ack" && d.id === id) done(!!d.ok);
+    };
+    const timeout = setTimeout(() => done(false), 5000);
+    window.addEventListener("message", onAck);
+    window.postMessage({ type: "discord-tools:export", id, file: OUT, json, attachments: withFilesBox.checked }, location.origin);
+  });
+
   let saving = false;
   btn("Save", async () => {
     // a second press while bars are opening would save twice
@@ -754,18 +778,20 @@
         // what the store search saw (counts and store names only); null for a DM
         member_data_debug: IS_DM ? null : STORE_DEBUG,
         // forwards (reference type 1) whose forwarded content wasn't found on the message
-        forwards_without_snapshot: forwardsWithoutSnapshot,
+        forwards_without_snapshot: messages.filter(waitingForSnapshots).length,
         participants,
         messages,
       },
       null,
       1,
     );
-    // The extension's bridge (src/bridge.js, in the content-script world) marks the page;
-    // pasted into DevTools without it, Save downloads the JSON alone.
+    // The extension's bridge (src/bridge.js, in the content-script world) marks the page and
+    // answers a handoff once the export tab is on its way. Pasted into DevTools without it, or
+    // with no answer (the extension reloaded since the button was clicked), Save downloads
+    // the JSON alone, so no collected messages are lost.
+    const handedOver = await handOver(json);
     let where;
-    if (document.documentElement.dataset.discordToolsBridge === "1") {
-      window.postMessage({ type: "discord-tools:export", file: OUT, json, attachments: withFilesBox.checked }, location.origin);
+    if (handedOver) {
       where = "Handed to the export tab (it opens next to this one)";
     } else {
       const a = document.createElement("a");
@@ -774,7 +800,9 @@
       document.body.appendChild(a);
       a.click();
       a.remove();
-      where = `Saved to Downloads/${OUT}`;
+      where = (document.documentElement.dataset.discordToolsBridge === "1"
+        ? "The extension didn't answer (reload this tab and click its button again for attachments); messages saved" : "Saved") +
+        ` to Downloads/${OUT}`;
     }
     status.textContent = `${where}: ${messages.length} messages` +
       (reachedStart ? "" : reachedSince ? ` (from ${reachedSince} on, as asked)`

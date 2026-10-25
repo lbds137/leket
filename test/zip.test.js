@@ -50,6 +50,16 @@ test("a new part starts past the limit, and a file bigger than the limit gets a 
   assert.deepEqual(parts.map((p) => Object.keys(p)), [["one"], ["two"], ["big"], ["three"]]);
 });
 
+test("a Blob goes in with the crc32 worked out piece by piece", async () => {
+  const a = enc.encode("hello "), b = enc.encode("world");
+  assert.equal(crc32(b, crc32(a)), crc32(enc.encode("hello world")));
+  const z = new ZipWriter();
+  z.add("hw.txt", new Blob([a, b]), crc32(b, crc32(a)));
+  assert.throws(() => z.add("no-crc", new Blob(["x"])), /needs its crc32/);
+  const [files] = await read(z.parts());
+  assert.equal(files["hw.txt"], "hello world");
+});
+
 test("an empty writer still gives one valid zip; a name used twice is refused", async () => {
   const [files] = await read(new ZipWriter().parts());
   assert.deepEqual(files, {});

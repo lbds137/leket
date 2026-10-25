@@ -13,8 +13,9 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-export function crc32(bytes) {
-  let c = 0xffffffff;
+// crc32(bytes), or piece by piece: crc32(second, crc32(first))
+export function crc32(bytes, prev = 0) {
+  let c = (prev ^ 0xffffffff) >>> 0;
   for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
@@ -52,14 +53,18 @@ export class ZipWriter {
     if (this.central.length && (this.offset + size > this.partLimit || this.central.length === 0xffff)) this.close();
   }
 
-  // bytes: Uint8Array of the file's content; returns the number of the part it went in (1-based)
-  add(name, bytes) {
-    if (bytes.length >= MAX) throw new Error(`${name} is 4 GiB or larger: too big for a zip without zip64`);
+  // data: the file's content, a Uint8Array, or a Blob with its crc32 given (so a large file
+  // is never copied); returns the number of the part it went in (1-based)
+  add(name, data, crc) {
+    const isBlob = typeof Blob !== "undefined" && data instanceof Blob;
+    const size = isBlob ? data.size : data.length;
+    if (isBlob && typeof crc !== "number") throw new Error(`${name}: a Blob needs its crc32`);
+    if (size >= MAX) throw new Error(`${name} is 4 GiB or larger: too big for a zip without zip64`);
     const nameBytes = new TextEncoder().encode(name);
-    this.room(30 + nameBytes.length + bytes.length + 46 + nameBytes.length);
+    this.room(30 + nameBytes.length + size + 46 + nameBytes.length);
     if (this.names.has(name)) throw new Error(`two entries named ${name}`);
     this.names.add(name);
-    const crc = crc32(bytes);
+    if (!isBlob) crc = crc32(data);
     const local = new DataView(new ArrayBuffer(30));
     local.setUint32(0, 0x04034b50, true);
     local.setUint16(4, 20, true);
@@ -68,8 +73,8 @@ export class ZipWriter {
     local.setUint16(10, this.stamp.time, true);
     local.setUint16(12, this.stamp.date, true);
     local.setUint32(14, crc, true);
-    local.setUint32(18, bytes.length, true);
-    local.setUint32(22, bytes.length, true);
+    local.setUint32(18, size, true);
+    local.setUint32(22, size, true);
     local.setUint16(26, nameBytes.length, true);
     local.setUint16(28, 0, true);
     const cen = new DataView(new ArrayBuffer(46));
@@ -81,13 +86,13 @@ export class ZipWriter {
     cen.setUint16(12, this.stamp.time, true);
     cen.setUint16(14, this.stamp.date, true);
     cen.setUint32(16, crc, true);
-    cen.setUint32(20, bytes.length, true);
-    cen.setUint32(24, bytes.length, true);
+    cen.setUint32(20, size, true);
+    cen.setUint32(24, size, true);
     cen.setUint16(28, nameBytes.length, true);
     cen.setUint32(42, this.offset, true);
-    this.blobs.push(new Blob([local, nameBytes, bytes]));
+    this.blobs.push(new Blob([local, nameBytes, data]));
     this.central.push(new Blob([cen, nameBytes]));
-    this.offset += 30 + nameBytes.length + bytes.length;
+    this.offset += 30 + nameBytes.length + size;
     if (this.offset >= MAX) throw new Error("part grew past 4 GiB");
     return this.done.length + 1;
   }

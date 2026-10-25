@@ -35,8 +35,11 @@ function download(blob, name) {
 
 (async () => {
   try {
-    const { file, attachments, exp } = await readSave();
-    ask({ type: "discord-tools:release" }).catch(() => {});
+    const save = await readSave();
+    const { attachments, exp } = save;
+    // the collector's own names are "discord-<name>-<channel>.json"; anything else posted to
+    // the bridge (a path, a name the zip uses itself) is not used as a file name
+    const file = /^discord-[\p{L}\p{N}._-]+\.json$/u.test(save.file) && !save.file.includes("..") ? save.file : "discord-export.json";
     document.title = `Discord tools: ${exp.channel || "saving"}`;
     $("title").textContent = [exp.channel, exp.guild_name].filter(Boolean).join(" · ") || "Discord tools";
     const bar = $("bar");
@@ -58,11 +61,14 @@ function download(blob, name) {
     links.forEach(({ li }) => list.appendChild(li));
     $("downloads").replaceChildren(list);
     links.forEach(({ a }) => a.click());
+    // kept by the Discord tab until now, so a failed build can be retried by reloading this tab
+    ask({ type: "discord-tools:release" }).catch(() => {});
     const n = (exp.messages || []).length;
     say(`Saved ${n} messages${records.length ? ` and ${saved} of ${records.length} attachments` : ""}.`, failed.length ? "warn" : "ok");
     $("detail").innerHTML =
       (parts.length > 1 ? `The save is in ${parts.length} parts: unzip them all into the same folder, then open index.html. ` : "Unzip it and open index.html to read it. ") +
-      "If the download didn't start, click the link below.";
+      (parts.length > 1 ? "If Chrome asks whether this page may download several files, allow it; or click each link below."
+        : "If the download didn't start, click the link below.");
     if (failed.length) {
       $("problems").innerHTML = `<p class="warn">${failed.length} attachment(s) could not be saved. ` +
         "Links Discord gives out expire after about a day: reload the Discord tab and save again to retry them.</p><ul>" +

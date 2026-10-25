@@ -73,6 +73,22 @@ test("an expired link isn't retried; a network error is, then reported", async (
   assert.equal(down.error, "HTTP 503");
   const short = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response("abc", { headers: { "content-length": "10" } }), wait: 0, tries: 1 });
   assert.equal(short.error, "got 3 of 10 bytes");
+  // a compressed response's length is not the file's
+  const gz = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response("abcdef", { headers: { "content-length": "4", "content-encoding": "gzip" } }), wait: 0, tries: 1 });
+  assert.equal(await gz.blob.text(), "abcdef");
+});
+
+test("a download that stalls is dropped after the idle time, and the build goes on", async () => {
+  const stalls = async (url, { signal }) => new Response(new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("par"));
+      signal.addEventListener("abort", () => c.error(signal.reason));
+    },
+  }));
+  const t = Date.now();
+  const r = await fetchFile(`${CDN}/a`, { fetchFn: stalls, wait: 0, tries: 2, idle: 100 });
+  assert.equal(r.error, "nothing received for 0.1 s");
+  assert.ok(Date.now() - t < 2000);
 });
 
 test("the zip holds the JSON, the page, the manifest and the files that came", async () => {
@@ -131,6 +147,14 @@ test("the page escapes what people wrote and shows Discord's markup readably", (
   assert.ok(html.includes("Friday, January 1, 2021") && html.includes("Saturday, January 2, 2021"));
   assert.match(html, /The start of the conversation was not reached/);
   assert.match(html, /1 group\(s\) of blocked or ignored messages would not open/);
+  // only web addresses are links; a wiki address keeps its closing parenthesis
+  const odd = exp();
+  odd.messages[0].text = "see https://en.wikipedia.org/wiki/Foo_(bar), ok";
+  odd.messages[1].embeds = [{ title: "Click", url: "javascript:alert(1)", image: "data:text/html,x" }];
+  const oddHtml = render(odd, [], { timeZone: "UTC" });
+  assert.ok(oddHtml.includes('<a href="https://en.wikipedia.org/wiki/Foo_(bar)">https://en.wikipedia.org/wiki/Foo_(bar)</a>, ok'));
+  assert.ok(!/href="(javascript|data):/i.test(oddHtml));
+  assert.ok(oddHtml.includes('<div class="e-title">Click</div>'));
   // nothing on the page reaches out to the web by itself: no remote src
   assert.ok(![...html.matchAll(/\ssrc="([^"]+)"/g)].some(([, s]) => /^https?:/.test(s)));
 });
