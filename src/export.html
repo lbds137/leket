@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discord tools: saving</title>
+<style>
+:root{--bg:#fff;--fg:#1e1f22;--muted:#5c5e66;--warn:#a15c00;--ok:#1a7f37;--accent:#5865f2}
+@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#949ba4;--warn:#f0b232;--ok:#3fb950;--accent:#949cf7}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px}
+h1{font-size:20px;margin:0 0 12px}
+#status{font-size:16px}#detail{color:var(--muted)}
+.warn{color:var(--warn)}.ok{color:var(--ok)}a{color:var(--accent)}
+progress{width:100%;margin:12px 0}
+ul{padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1 id="title">Discord tools</h1>
+<div id="status">Reading the save from the Discord tab…</div>
+<progress id="bar" hidden></progress>
+<div id="detail"></div>
+<div id="downloads"></div>
+<div id="problems"></div>
+</main>
+<script type="module" src="export.js"></script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+// Runs src/collector.js against a fake Discord page and prints the file name and JSON its
+// Save button hands over, as {"file": …, "export": …, "status": …, "posted": …}.
+// Usage: node fake_page.cjs <scenario> [tab title] [mod nick]
+// (guild | guild-guildstore-roles | guild-no-stores | guild-no-getmember |
+// guild-throwing-getmember | guild-no-cache | guild-registry | guild-unnamed |
+// guild-empty-cache | guild-two-runtimes | guild-hidden | guild-hidden-inside |
+// guild-hidden-throws | guild-hidden-returns | dm | dm-forward). With BRIDGE=1 in the
+// environment the page carries the extension bridge's mark, and Save posts the export
+// (posted: the message) instead of downloading it. The stores mimic the shape the collector
+// expects of Discord's; that they match the live client is checked only by a run on the real page.
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const scenario = process.argv[2];
+const title = process.argv[3];
+const modNick = process.argv[4] || "Mod Nick";
+const IS_DM = scenario.startsWith("dm");
+const GUILD = "500", CHANNEL = "600";
+const snowflake = (n) => String((BigInt(Date.UTC(2021, 0, n) - 1420070400000) << 22n));
+
+const users = {
+  alice: { id: "1", username: "alice_u", globalName: "Alice" },
+  mod: { id: "2", username: "mod_u", globalName: "Global Mod", bot: false },
+  left: { id: "3", username: "left_u", global_name: "Gone" },
+  late: { id: "4", username: "late_u", globalName: "Late" },
+  hook: (name) => ({ id: "9", username: name }),
+};
+const msgs = [
+  { id: snowflake(1), author: users.alice, content: "one" },
+  { id: snowflake(2), author: users.mod, content: "two" },
+  // a bot log: no content, one embed as the client holds it (raw* names), one as the API sends it
+  { id: snowflake(3), author: users.mod, content: "", embeds: [
+    { type: "rich", rawTitle: "Member banned", rawDescription: "<@5> spam",
+      fields: [{ rawName: "Moderator", rawValue: "mod_u", inline: true }], footer: { text: "ID: 5" },
+      timestamp: "2021-03-22T02:39:25.750Z", author: { name: "YAGPDB" } },
+    { title: "Plain", thumbnail: { url: "https://x/t.png" } },
+  ] },
+  { id: snowflake(4), author: users.left, content: "four" },
+  { id: snowflake(5), author: users.hook("Proxy One"), webhookId: "9", content: "five" },
+  { id: snowflake(6), author: users.hook("Proxy Two"), webhookId: "9", content: "six" },
+  { id: snowflake(7), author: users.late, content: "seven" },
+];
+// dm-forward: a reply, a forward as the client holds it (messageSnapshots, a moment-like
+// timestamp), one as the API sends it, and one whose snapshots aren't there
+if (scenario === "dm-forward") {
+  const file = (n) => ({ filename: `f${n}.png`, url: `https://cdn.discordapp.com/attachments/1/${n}/f${n}.png` });
+  msgs.push(
+    { id: snowflake(8), author: users.alice, content: "a reply", messageReference: { type: 0, message_id: snowflake(1) } },
+    { id: snowflake(9), author: users.alice, content: "", messageReference: { type: 1, message_id: "77", channel_id: "88", guild_id: "99" },
+      messageSnapshots: [{ message: { content: "forwarded words", timestamp: { toISOString: () => "2020-12-01T00:00:00.000Z" },
+        attachments: [file(1)], embeds: [{ rawTitle: "Card" }] } }] },
+    { id: snowflake(10), author: users.mod, content: "", message_reference: { type: 1, message_id: "78" },
+      message_snapshots: [{ message: { content: "api form", timestamp: "2020-12-02T00:00:00+00:00", attachments: [], embeds: [] } }] },
+    { id: snowflake(11), author: users.mod, content: "", messageReference: { type: 1, message_id: "79" } },
+  );
+}
+// as a real page had them: the header's text carries a server tag badge or
+// hover text after the name; the name's own element (Alice's) holds the name alone
+const rendered = {
+  [snowflake(2)]: { innerText: `${modNick} [TAG], \nServer Tag: TAG\nTAG`,
+    author: { nick: modNick, colorString: "#ff0000", colorRoleName: "Admins" } },
+  // the header's nick is the global name where there's no server nickname
+  [snowflake(1)]: { innerText: "Alice\nGreeters", child: "Alice", author: { nick: "Alice", colorString: null } },
+  // a nickname's own brackets stay, on either path; an empty own element falls back
+  [snowflake(4)]: { innerText: "Moon [she/her]", child: "Moon [she/her]" },
+  [snowflake(7)]: { innerText: "Star [he/him] [TAG], \nServer Tag: TAG\nTAG", child: "",
+    author: { id: "2", nick: "Someone Else", colorRoleName: "Admins" } },   // another person's: passed over
+};
+
+let lateLoaded = false;
+const members = {
+  // gone from the store by the save: what was found while scrolling stays
+  get "1"() { return lateLoaded ? undefined : { nick: "Alice Nick", roles: ["r-mod"] }; },
+  "2": { nick: modNick, roles: ["r-mod", "r-late", "r-admin", "r-gone"] },
+  get "4"() { return lateLoaded ? { nick: "Late Nick", roles: ["r-mod"] } : undefined; },
+};
+// r-late reaches the role store only after every message was seen, as in a long scroll
+const roleTable = () => ({
+  "r-admin": { id: "r-admin", name: "Admins", color: 16711680, position: 5 },
+  "r-mod": { id: "r-mod", name: "Moderators", colorString: "#00ff00", position: 3 },
+  ...(lateLoaded ? { "r-late": { id: "r-late", name: "Late Role", color: 255, position: 1 } } : {}),
+});
+// guild-unnamed: a minified build whose stores give no readable name at all
+const UNNAMED = scenario === "guild-unnamed";
+class Store { getName() { return UNNAMED ? undefined : this.constructor.displayName; } }
+class GuildMemberStore extends Store {
+  getMember(g, u) {
+    if (scenario === "guild-throwing-getmember") throw new Error("changed internals");
+    return g === GUILD ? members[u] : undefined;
+  }
+  getMemberIds() { return Object.keys(members); }
+}
+if (scenario === "guild-no-getmember") GuildMemberStore.prototype.getMember = undefined;
+class GuildRoleStore extends Store {
+  getRole(g, r) { return g === GUILD ? roleTable()[r] : undefined; }
+  getRoles(g) { return g === GUILD ? roleTable() : undefined; }
+}
+class GuildStore extends Store {
+  getGuild(g) {
+    return g === GUILD ? { name: "Test Server", roles: scenario === "guild-guildstore-roles" ? roleTable() : undefined } : undefined;
+  }
+  getGuilds() { return { [GUILD]: this.getGuild(GUILD) }; }
+}
+for (const [C, n] of [[GuildMemberStore, "GuildMemberStore"], [GuildRoleStore, "GuildRoleStore"], [GuildStore, "GuildStore"]]) {
+  if (UNNAMED) Object.defineProperty(C, "name", { value: "q" });
+  else C.displayName = n;
+}
+// not Flux, though named like a store and with a static getAll: must not be taken for the registry
+class DecoyStore { getName() { return "DecoyStore"; } static getAll() { return []; } }
+
+// odd modules first: none of them may end the search for the stores after them
+const modules = {
+  1: { get exports() { throw new Error("exports getter that throws"); } },
+  2: { exports: new Proxy({}, { ownKeys() { throw new Error("ownKeys trap that throws"); } }) },
+  3: { exports: null },
+  4: { exports: { get boom() { throw new Error("getter that throws"); } } },
+  5: { exports: new GuildMemberStore() },   // a module whose exports is the store itself
+  6: { exports: { ZP: new GuildStore(), other: 5 } },
+};
+if (scenario !== "guild-guildstore-roles") modules[7] = { exports: { default: new GuildRoleStore() } };
+
+const el = (props = {}) => ({
+  style: {}, children: [], textContent: "",
+  appendChild(c) { this.children.push(c); return c; },
+  remove() {}, click() { if (this.onClickHook) this.onClickHook(this); },
+  ...props,
+});
+const created = [];
+let saved = null;
+const lis = msgs.map((m) => el({
+  id: `chat-messages-${CHANNEL}-${m.id}`,
+  parentElement: null,
+  "__reactFiber$x": { memoizedProps: { message: m }, return: null },
+}));
+// guild-hidden: the message list as a tree, with bars folding a blocked or ignored user's
+// messages (the shape is a guess at Discord's: a bar naming the kind and count, with a
+// Show/Hide button in it). Opening a bar puts its rows in the list after it.
+const ROW = `li[id^="chat-messages-${CHANNEL}-"]`;
+class Node {
+  constructor(props = {}) { Object.assign(this, { children: [], parentElement: null, text: "", style: {} }, props); }
+  get textContent() { return [this.text, ...this.children.map((c) => c.textContent)].join(" "); }
+  get previousElementSibling() {
+    const sibs = this.parentElement ? this.parentElement.children : [];
+    return sibs[sibs.indexOf(this) - 1] || null;
+  }
+  add(c, at) {
+    c.parentElement = this;
+    this.children.splice(at === undefined ? this.children.length : at, 0, c);
+    return c;
+  }
+  all(pred) {
+    const out = [];
+    const walk = (n) => n.children.forEach((c) => { if (pred(c)) out.push(c); walk(c); });
+    walk(this);
+    return out;
+  }
+  querySelectorAll(sel) {
+    if (sel === ROW) return this.all((c) => c.tag === "li");
+    if (sel.includes('[role="button"]')) return this.all((c) => c.role === "button");
+    return [];
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+  click() { if (this.onClick) this.onClick(); }
+}
+const list = new Node({ tag: "ol" });
+const hiddenId = (n, k) => String(BigInt(snowflake(n)) + BigInt(k));
+const rowNode = (m) => new Node({ tag: "li", id: `chat-messages-${CHANNEL}-${m.id}`,
+  "__reactFiber$x": { memoizedProps: { message: m }, return: null } });
+// a bar folding `rows` (none rendered until it opens); one that `sticks` never opens.
+// guild-hidden-inside: each bar is itself a list item with a message-like id but no
+// message, and its rows open inside it
+const INSIDE = scenario === "guild-hidden-inside";
+let barNo = 0;
+const bar = (label, rows, sticks) => {
+  const b = new Node(INSIDE ? { text: label, tag: "li", id: `chat-messages-${CHANNEL}-${hiddenId(9, ++barNo)}` } : { text: label });
+  const button = b.add(new Node({ role: "button", text: rows.length > 1 ? "Show messages" : "Show message" }));
+  button.onClick = () => {
+    if (sticks || button.text.startsWith("Hide")) return;
+    button.text = "Hide messages";
+    if (INSIDE) return rows.forEach((m) => b.add(rowNode(m)));
+    const at = list.children.indexOf(b) + 1;
+    rows.forEach((m, i) => list.add(rowNode(m), at + i));
+  };
+  return b;
+};
+let growing = null, returning = null, redraw = null;
+if (scenario.startsWith("guild-hidden")) {
+  const blocked = { id: "7", username: "blocked_u", globalName: "Blocked" };
+  // one at the top of the loaded range, with no message above it yet
+  list.add(bar("1 blocked message", [{ id: hiddenId(1, -5), author: blocked, content: "top hidden" }]));
+  msgs.slice(0, 3).forEach((m) => list.add(rowNode(m)));
+  // first seen while its group was still loading: "1 blocked message", then 2 by the save
+  growing = list.add(bar("1 blocked message", [1, 2].map((k) => ({ id: hiddenId(3, k), author: blocked, content: `blocked ${k}` }))));
+  msgs.slice(3, 5).forEach((m) => list.add(rowNode(m)));
+  list.add(bar("1 Ignored Message", [{ id: hiddenId(5, 1), author: blocked, content: "ignored 1" }]));
+  list.add(rowNode(msgs[5]));
+  list.add(bar("3 blocked messages", [1, 2, 3].map((k) => ({ id: hiddenId(6, k), author: blocked, content: "never" })), true));
+  // a message that only talks about blocked messages, with a button of its own
+  const decoy = list.add(rowNode(msgs[6]));
+  decoy.add(new Node({ text: "I have 2 blocked messages" })).add(new Node({ role: "button", text: "Show more" }));
+  // a Show button outside any message that names no blocked or ignored messages
+  list.add(new Node({ text: "Something else" })).add(new Node({ role: "button", text: "Show all" }));
+  // guild-hidden-throws: a button whose text can't be read stops the bar search, not the harvest
+  if (scenario === "guild-hidden-throws") {
+    const bad = list.add(new Node({ role: "button" }));
+    Object.defineProperty(bad, "textContent", { get() { throw new Error("detached"); } });
+  }
+  // guild-hidden-returns: a bar whose first click doesn't take, scrolled out of the page and
+  // back before the save, drawn anew (a new element, as a virtualized list remounts it)
+  if (scenario === "guild-hidden-returns") {
+    redraw = (sticks) => bar("1 blocked message", [{ id: hiddenId(7, 1), author: blocked, content: "came back" }], sticks);
+    returning = list.add(redraw(true));
+  }
+}
+const document = {
+  title: title || (IS_DM ? "Discord | @someone" : "Discord | #general | Test Server"),
+  body: el(),
+  querySelectorAll: (sel) => (sel !== ROW ? [] : scenario.startsWith("guild-hidden") ? list.querySelectorAll(ROW) : lis),
+  querySelector: (sel) => (scenario.startsWith("guild-hidden") && sel === '[data-list-id="chat-messages"]' ? list : null),
+  getElementById: (id) => {
+    const m = id.match(/^message-username-(\d+)$/);
+    const r = m && rendered[m[1]];
+    if (!r) return null;
+    const child = r.child !== undefined && el({ innerText: r.child });
+    // the header's props, a level up the fiber, as Discord's message header has them
+    const fiber = { memoizedProps: {}, return: r.author ? { memoizedProps: { author: r.author }, return: null } : null };
+    return el({ innerText: r.innerText, querySelector: (sel) => (child && sel.includes("username") ? child : null),
+      "__reactFiber$y": fiber });
+  },
+  createElement: (tag) => {
+    const e = el({ tag });
+    if (tag === "a") e.onClickHook = (a) => { saved = a.href.parts.join(""); };
+    created.push(e);
+    return e;
+  },
+  createTextNode: (text) => ({ textContent: text }),
+  documentElement: { dataset: process.env.BRIDGE === "1" ? { discordToolsBridge: "1" } : {} },
+};
+let posted = null;
+const observed = [];
+const sandbox = {
+  location: { pathname: `/channels/${IS_DM ? "@me" : GUILD}/${CHANNEL}`, origin: "https://discord.com" },
+  postMessage: (data, origin) => { posted = { data, origin }; },
+  document,
+  alert: (s) => { throw new Error("alert: " + s); },
+  console,
+  getComputedStyle: () => ({ overflowY: "visible" }),
+  requestAnimationFrame: (f) => f(),
+  setTimeout, clearTimeout,
+  // the page's changes are announced by hand (mutated()), as Discord's DOM would
+  MutationObserver: class { constructor(cb) { observed.push(cb); } observe() {} disconnect() {} },
+  Blob: class { constructor(parts) { this.parts = parts; } },
+  URL: { createObjectURL: (b) => b },
+  WheelEvent: class {},
+  BigInt, Date, JSON, Symbol, Map, Object, Array, Number, String,
+};
+sandbox.window = sandbox;
+// guild-no-cache: the build keeps no module cache (req.c), only the factories (req.m);
+// guild-registry: one store is exported, the rest only through Flux's Store.getAll()
+const requireFn = (id) => modules[id].exports;
+// factories as the bundle has them: a store's module names it in its source; another
+// store's name that merely contains it ("SelectedGuildStore") doesn't count
+const storeNames = { 5: "GuildMemberStore", 6: "GuildStore", 7: "GuildRoleStore" };
+requireFn.m = Object.fromEntries(Object.keys(modules).map((id) => [id, storeNames[id]
+  ? new Function(`return ${JSON.stringify(storeNames[id])};`)
+  : () => "SelectedGuildStore"]));
+if (scenario !== "guild-no-cache") {
+  // guild-empty-cache: a cache with no store in it, where the factories must not be run
+  requireFn.c = scenario === "guild-registry" ? { 4: { exports: new DecoyStore() }, 5: modules[5] }
+    : scenario === "guild-empty-cache" ? { 3: modules[3], 4: { exports: { x: 1 } } } : modules;
+}
+if (scenario === "guild-registry") {
+  Store.getAll = () => [modules[5].exports, modules[6].exports.ZP, modules[7].exports.default];
+}
+if (scenario.startsWith("guild") && scenario !== "guild-no-stores") {
+  // guild-two-runtimes: the runtime with the stores calls the callback first, then a
+  // small one (as webpack chains runtimes on one chunk global)
+  const small = (id) => ({ x: id });
+  small.c = { 900: { exports: { x: 1 } } };
+  small.m = { 900: () => {}, 901: () => {} };
+  sandbox.webpackChunkdiscord_app = {
+    push: ([, , cb]) => {
+      cb(requireFn);
+      if (scenario === "guild-two-runtimes") cb(small);
+    },
+    pop: () => {},
+  };
+}
+
+const src = fs.readFileSync(path.join(__dirname, "../../src/collector.js"), "utf8");
+vm.runInNewContext(src, sandbox);
+lateLoaded = true;
+if (growing) growing.text = "2 blocked messages";
+const save = created.find((e) => e.tag === "button" && e.textContent === "Save");
+// a change to the page, then the collector's 300 ms debounce
+const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r) => setTimeout(r, 350)); };
+(async () => {
+  if (returning) {
+    const at = list.children.indexOf(returning);
+    list.children.splice(at, 1);
+    await mutated();
+    list.add(redraw(false), at);
+    await mutated();
+  }
+  await save.onclick();
+  const link = created.find((e) => e.tag === "a");
+  // the panel's divs: the panel, its heading, the status line
+  const status = created.filter((e) => e.tag === "div")[2];
+  const out = posted
+    ? { file: posted.data.file, export: JSON.parse(posted.data.json), posted: { ...posted.data, json: undefined, origin: posted.origin } }
+    : { file: link.download, export: JSON.parse(saved) };
+  process.stdout.write(JSON.stringify({ ...out, status: status.textContent, downloaded: !!link }));
+})();

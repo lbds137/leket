@@ -1,0 +1,164 @@
+// The readable page in the zip: index.html, the conversation as Discord showed it, with
+// the saved attachments inline. It opens offline; nothing on it is fetched from the web.
+import { FOLDER } from "./files.js";
+
+export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
+const VIDEO = /\.(mp4|webm|mov|m4v)$/i;
+const AUDIO = /\.(ogg|oga|mp3|wav|m4a|flac|opus)$/i;
+
+// Discord's own markup in a message: links, mentions, custom emoji, timestamps. Everything
+// else stays as typed (bold, italics and the rest of its markdown are left as the characters).
+const TOKEN = /(https?:\/\/[^\s<>"]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>/g;
+
+export function render(exp, records, { timeZone = "UTC" } = {}) {
+  const day = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const clock = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
+  const stamp = new Intl.DateTimeFormat("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" });
+  const when = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? null : d; };
+
+  const messages = exp.messages || [];
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  const people = new Map();
+  for (const p of exp.participants || []) if (p.id && !p.webhook) people.set(p.id, p);
+  const nameOf = (m) => m.nick || m.author || m.author_username || "unknown";
+  const personName = (id) => {
+    const p = people.get(id);
+    return p ? p.nick || p.global_name || p.username : null;
+  };
+  const files = new Map();
+  for (const r of records || []) {
+    const k = `${r.message_id}|${r.forwarded ?? ""}`;
+    if (!files.has(k)) files.set(k, []);
+    files.get(k).push(r);
+  }
+
+  const inline = (raw) => {
+    let out = "", at = 0;
+    for (const t of String(raw).matchAll(TOKEN)) {
+      out += esc(raw.slice(at, t.index));
+      at = t.index + t[0].length;
+      const [whole, url, user, role, channel, emoji, unix] = t;
+      if (url) {
+        // closing punctuation after a link is the sentence's, not the link's
+        const tail = (url.match(/[).,!?:;'"]+$/) || [""])[0];
+        const link = url.slice(0, url.length - tail.length);
+        out += `<a href="${esc(link)}">${esc(link)}</a>${esc(tail)}`;
+      } else if (user) out += `<span class="mention">@${esc(personName(user) || user)}</span>`;
+      else if (role) out += `<span class="mention">@role</span>`;
+      else if (channel) out += `<span class="mention">#channel</span>`;
+      else if (emoji) out += `<span class="emoji">:${esc(emoji)}:</span>`;
+      else if (unix) {
+        const d = new Date(Number(unix) * 1000);
+        out += Number.isNaN(+d) ? esc(whole) : `<span class="mention">${esc(stamp.format(d))}</span>`;
+      }
+    }
+    return out + esc(raw.slice(at));
+  };
+  // ``` blocks and `code` are shown as typed; the rest gets inline()
+  const text = (raw) => {
+    if (!raw) return "";
+    return String(raw).split(/(```[\s\S]*?```)/).map((part, i) => {
+      if (i % 2) return `<pre>${esc(part.slice(3, -3).replace(/^[\w+-]*\n/, ""))}</pre>`;
+      return part.split(/(`[^`\n]+`)/).map((s, j) => (j % 2 ? `<code>${esc(s.slice(1, -1))}</code>` : inline(s).replace(/\n/g, "<br>"))).join("");
+    }).join("");
+  };
+
+  const attachment = (r) => {
+    if (r.error) return `<div class="file missing">${esc(r.filename)} <em>(not saved: ${esc(r.error)})</em></div>`;
+    const href = `${FOLDER}/${encodeURIComponent(r.file)}`;
+    if (IMAGE.test(r.file)) return `<a class="img" href="${href}"><img loading="lazy" src="${href}" alt="${esc(r.filename)}"></a>`;
+    if (VIDEO.test(r.file)) return `<video controls preload="metadata" src="${href}"></video>`;
+    if (AUDIO.test(r.file)) return `<div class="file"><audio controls preload="metadata" src="${href}"></audio> ${esc(r.filename)}</div>`;
+    return `<div class="file"><a href="${href}">${esc(r.filename)}</a></div>`;
+  };
+  // attachments listed in the export but not in the records: saved without them
+  const listed = (atts, k) => (files.get(k) || (atts || []).map((a) => ({ filename: a.filename, error: "saving attachments was turned off" })))
+    .map(attachment).join("");
+
+  const embed = (e) => {
+    const title = e.title ? (e.url ? `<a href="${esc(e.url)}">${esc(e.title)}</a>` : esc(e.title)) : "";
+    return `<div class="embed">` +
+      (e.author ? `<div class="e-author">${esc(e.author)}</div>` : "") +
+      (title ? `<div class="e-title">${title}</div>` : "") +
+      (e.description ? `<div>${text(e.description)}</div>` : "") +
+      (e.fields || []).map((f) => `<div class="e-field"><b>${esc(f.name)}</b><div>${text(f.value)}</div></div>`).join("") +
+      (e.image ? `<div class="e-img">image: <a href="${esc(e.image)}">${esc(e.image)}</a> (not saved)</div>` : "") +
+      (e.footer ? `<div class="e-footer">${esc(e.footer)}</div>` : "") +
+      `</div>`;
+  };
+
+  const notes = [];
+  if (!exp.reached_start) {
+    notes.push(exp.reached_since ? `Saved from ${esc(exp.reached_since)} on, as asked.`
+      : "The start of the conversation was not reached: older messages may be missing.");
+  }
+  const hg = exp.hidden_groups || {};
+  if (hg.not_opened) notes.push(`${hg.not_opened} group(s) of blocked or ignored messages would not open: their messages are missing.`);
+  const dom = messages.filter((m) => m.from_dom).length;
+  if (dom) notes.push(`${dom} message(s) were saved from the page's text only (no author, no attachments).`);
+  if (exp.forwards_without_snapshot) notes.push(`${exp.forwards_without_snapshot} forwarded message(s) were saved without what was forwarded.`);
+  const failed = (records || []).filter((r) => r.error).length;
+  if (failed) notes.push(`${failed} attachment(s) could not be saved.`);
+
+  let body = "", lastDay = null, last = null;
+  for (const m of messages) {
+    const d = when(m.datetime);
+    const dayText = d ? day.format(d) : "unknown date";
+    if (dayText !== lastDay) {
+      body += `<h2 class="day">${esc(dayText)}</h2>`;
+      lastDay = dayText;
+      last = null;
+    }
+    let reply = "";
+    if (m.reply_to) {
+      const r = byId.get(m.reply_to);
+      reply = r ? `<a class="reply" href="#m${esc(r.id)}">↪ ${esc(nameOf(r))}: ${esc((r.text || "").replace(/\s+/g, " ").slice(0, 100)) || "<em>attachment</em>"}</a>`
+        : `<div class="reply">↪ a message not in this save</div>`;
+    }
+    const sameAuthor = last && last.author_id && last.author_id === m.author_id && !reply
+      && d && when(last.datetime) && d - when(last.datetime) < 7 * 60 * 1000;
+    const head = sameAuthor ? "" : `<div class="head"><span class="name">${esc(nameOf(m))}</span>` +
+      `<span class="time">${d ? esc(clock.format(d)) : ""}</span></div>`;
+    const fwd = (m.forwarded || []).map((f, k) => `<div class="forward"><div class="f-label">Forwarded</div>${text(f.text)}` +
+      listed(f.attachments, `${m.id}|${k}`) + (f.embeds || []).map(embed).join("") + `</div>`).join("") +
+      (m.forward_of && !(m.forwarded || []).length ? `<div class="forward"><em>forwarded message: its content was not found</em></div>` : "");
+    body += `<div class="msg${sameAuthor ? " cont" : ""}" id="m${esc(m.id)}">${reply}${head}` +
+      `<div class="text">${text(m.text)}${m.edited ? ' <span class="edited">(edited)</span>' : ""}</div>` +
+      fwd + listed(m.attachments, `${m.id}|`) + (m.embeds || []).map(embed).join("") + `</div>`;
+    last = m;
+  }
+
+  const title = [exp.channel, exp.guild_name].filter(Boolean).join(" · ") || "Discord conversation";
+  const saved = when(exp.extracted_at);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+:root{--bg:#fff;--fg:#1e1f22;--muted:#5c5e66;--line:#e3e5e8;--card:#f2f3f5;--accent:#5865f2;--warn:#a15c00}
+@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#949ba4;--line:#3f4147;--card:#2b2d31;--accent:#949cf7;--warn:#f0b232}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
+main{max-width:900px;margin:0 auto;padding:16px}
+header h1{font-size:20px;margin:0 0 4px}header p{margin:2px 0;color:var(--muted)}
+.notes{border-left:3px solid var(--warn);padding:4px 10px;margin:10px 0;color:var(--warn)}
+h2.day{font-size:13px;color:var(--muted);text-align:center;border-bottom:1px solid var(--line);padding-bottom:4px;margin:24px 0 8px}
+.msg{padding:2px 0 2px 0;margin-top:10px}.msg.cont{margin-top:0}
+.head .name{font-weight:600;margin-right:8px}.head .time,.edited{font-size:12px;color:var(--muted)}
+.text{white-space:normal;overflow-wrap:anywhere}
+a{color:var(--accent)}.mention{color:var(--accent);font-weight:500}
+.reply{display:block;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:2px}
+pre,code{background:var(--card);border-radius:4px;font:13px ui-monospace,monospace}pre{padding:8px;white-space:pre-wrap}code{padding:1px 4px}
+.img img{max-width:min(100%,520px);max-height:420px;border-radius:6px;margin-top:4px;display:block}
+video{max-width:min(100%,520px);margin-top:4px;display:block}
+.file{margin-top:4px}.missing{color:var(--warn)}
+.embed,.forward{border-left:4px solid var(--line);background:var(--card);border-radius:4px;padding:6px 10px;margin-top:4px;max-width:560px}
+.e-title{font-weight:600}.e-author,.e-footer,.f-label{font-size:12px;color:var(--muted)}.e-field{margin-top:4px}
+</style></head><body><main>
+<header><h1>${esc(title)}</h1>
+<p>${messages.length} messages${saved ? `, saved ${esc(stamp.format(saved))}` : ""} · times in ${esc(timeZone)}</p></header>
+${notes.length ? `<div class="notes">${notes.map((n) => `<div>${n}</div>`).join("")}</div>` : ""}
+${body}
+</main></body></html>
+`;
+}
