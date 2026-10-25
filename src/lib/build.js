@@ -22,8 +22,12 @@ export async function fetchFile(url, { fetchFn = fetch, tries = 4, wait = 3000, 
     try {
       quiet();
       const resp = await fetchFn(url, { credentials: "omit", signal: stop.signal });
-      if (resp.status === 403 || resp.status === 404) return { error: `link expired or gone (HTTP ${resp.status})` };
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) {
+        // let the connection go now rather than at garbage collection
+        resp.body?.cancel().catch(() => {});
+        if (resp.status === 403 || resp.status === 404) return { error: `link expired or gone (HTTP ${resp.status})` };
+        throw new Error(`HTTP ${resp.status}`);
+      }
       const pieces = [];
       let crc = 0, size = 0;
       const reader = resp.body.getReader();

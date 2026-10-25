@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 const SRC = readFileSync(new URL("../src/bridge.js", import.meta.url), "utf8");
 
-function page({ sendFails = false } = {}) {
+function page({ sendFails = false, orphaned = false } = {}) {
   const listeners = [], acks = [];
   let onMessage, ready = [];
   const sandbox = {
@@ -15,7 +15,7 @@ function page({ sendFails = false } = {}) {
     crypto: { randomUUID: (() => { let n = 0; return () => `k${++n}`; })() },
     addEventListener: (type, f) => listeners.push(f),
     postMessage: (data) => acks.push(data),
-    chrome: { runtime: { id: "ext", onMessage: { addListener: (f) => { onMessage = f; } },
+    chrome: { runtime: { get id() { return orphaned ? undefined : "ext"; }, onMessage: { addListener: (f) => { onMessage = f; } },
       sendMessage: async (m) => { if (sendFails) throw new Error("Extension context invalidated"); ready.push(m); return { ok: true }; } } },
   };
   sandbox.window = sandbox;
@@ -60,4 +60,10 @@ test("when the extension can't be reached, the collector is told so", async () =
   const p = page({ sendFails: true });
   await p.post({ type: "discord-tools:export", id: "z", file: "discord-z-1.json", json: "{}" });
   assert.deepEqual(JSON.parse(JSON.stringify(p.acks)), [{ type: "discord-tools:ack", id: "z", ok: false }]);
+});
+
+test("a bridge left behind by an extension reload stays silent", async () => {
+  const p = page({ orphaned: true });
+  await p.post({ type: "discord-tools:export", id: "o", file: "discord-o-1.json", json: "{}" });
+  assert.deepEqual([p.acks.length, p.ready().length], [0, 0]);
 });

@@ -30,6 +30,8 @@
     const d = e.data;
     if (e.source !== window || e.origin !== location.origin || !d || d.type !== "discord-tools:export") return;
     if (typeof d.json !== "string" || typeof d.file !== "string") return;
+    // left behind by a reload: the new bridge beside it answers, this one stays silent
+    if (!window.__discordToolsBridgeAlive()) return;
     const ack = (ok) => window.postMessage({ type: "discord-tools:ack", id: d.id, ok }, location.origin);
     const key = crypto.randomUUID();
     held.set(key, { file: d.file, json: d.json, attachments: !!d.attachments, bounds: bounds(d.json) });

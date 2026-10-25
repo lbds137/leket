@@ -37,9 +37,9 @@ function download(blob, name) {
   try {
     const save = await readSave();
     const { attachments, exp } = save;
-    // the collector's own names are "discord-<name>-<channel>.json"; anything else posted to
-    // the bridge (a path, a name the zip uses itself) is not used as a file name
-    const file = /^discord-[\p{L}\p{N}._-]+\.json$/u.test(save.file) && !save.file.includes("..") ? save.file : "discord-export.json";
+    // the collector's own names are "discord-<name>-<channel id>.json"; anything else posted
+    // to the bridge (a path, a name the zip uses itself) is not used as a file name
+    const file = /^discord-[\p{L}\p{N}._-]+-\d+\.json$/u.test(save.file) ? save.file : "discord-export.json";
     document.title = `Discord tools: ${exp.channel || "saving"}`;
     $("title").textContent = [exp.channel, exp.guild_name].filter(Boolean).join(" · ") || "Discord tools";
     const bar = $("bar");
