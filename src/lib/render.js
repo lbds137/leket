@@ -8,9 +8,8 @@ const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
 const VIDEO = /\.(mp4|webm|mov|m4v)$/i;
 const AUDIO = /\.(ogg|oga|mp3|wav|m4a|flac|opus)$/i;
 
-// Discord's own markup in a message: links, mentions, custom emoji, timestamps. Everything
-// else stays as typed (bold, italics and the rest of its markdown are left as the characters).
-const TOKEN = /(https?:\/\/[^\s<>"]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>/g;
+// Discord's own markup in a message: inline code, links, mentions, custom emoji, timestamps.
+const TOKEN = /`([^`\n]+)`|(https?:\/\/[^\s<>"]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>/g;
 
 export function render(exp, records, { timeZone = "UTC" } = {}) {
   const day = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -35,40 +34,129 @@ export function render(exp, records, { timeZone = "UTC" } = {}) {
   }
 
   const inline = (raw) => {
+    const holds = [];
+    const put = (html) => `\x01${holds.push(html) - 1}\x02`;
+    // U+0001/U+0002 mark the token placeholders restored below; strip them from the text itself
+    raw = String(raw).replace(/[\x01\x02]/g, "");
     let out = "", at = 0;
-    for (const t of String(raw).matchAll(TOKEN)) {
+    for (const t of raw.matchAll(TOKEN)) {
       out += esc(raw.slice(at, t.index));
       at = t.index + t[0].length;
-      const [whole, url, user, role, channel, emoji, unix] = t;
-      if (url) {
-        // closing punctuation after a link is the sentence's, not the link's; a ")" stays
-        // while the link has an unclosed "(" (a wiki address)
+      const [whole, code, url, user, role, channel, emoji, unix] = t;
+      if (code !== undefined) {
+        out += put(`<code>${esc(code)}</code>`);
+      } else if (url) {
+        // closing punctuation or markdown markers after a link belong to the surrounding text;
+        // a ")" stays while the link has an unclosed "(" (a wiki address)
         let link = url;
         for (;;) {
           const c = link.slice(-1);
           const open = (link.match(/\(/g) || []).length, close = (link.match(/\)/g) || []).length;
-          if (!(/[.,!?:;'"]/.test(c) || (c === ")" && close > open))) break;
+          if (!(/[.,!?:;'"*_~|]/.test(c) || (c === ")" && close > open))) break;
           link = link.slice(0, -1);
         }
-        const tail = url.slice(link.length);
-        out += `<a href="${esc(link)}">${esc(link)}</a>${esc(tail)}`;
-      } else if (user) out += `<span class="mention">@${esc(personName(user) || user)}</span>`;
-      else if (role) out += `<span class="mention">@role</span>`;
-      else if (channel) out += `<span class="mention">#channel</span>`;
-      else if (emoji) out += `<span class="emoji">:${esc(emoji)}:</span>`;
+        out += put(`<a href="${esc(link)}">${esc(link)}</a>`) + esc(url.slice(link.length));
+      } else if (user) out += put(`<span class="mention">@${esc(personName(user) || user)}</span>`);
+      else if (role) out += put(`<span class="mention">@role</span>`);
+      else if (channel) out += put(`<span class="mention">#channel</span>`);
+      else if (emoji) out += put(`<span class="emoji">:${esc(emoji)}:</span>`);
       else if (unix) {
         const d = new Date(Number(unix) * 1000);
-        out += Number.isNaN(+d) ? esc(whole) : `<span class="mention">${esc(stamp.format(d))}</span>`;
+        out += Number.isNaN(+d) ? esc(whole) : put(`<span class="mention">${esc(stamp.format(d))}</span>`);
       }
     }
-    return out + esc(raw.slice(at));
+    out += esc(raw.slice(at));
+    out = out
+      .replace(/\|\|(.+?)\|\|/g, '<span class="spoiler" onclick="this.classList.add(\'open\')">$1</span>')
+      .replace(/\*\*\*(?!\s)(.+?)(?<!\s)\*\*\*/g, "<strong><em>$1</em></strong>")
+      .replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, "<strong>$1</strong>")
+      .replace(/__(?!\s)(.+?)(?<!\s)__/g, "<u>$1</u>")
+      .replace(/~~(?!\s)(.+?)(?<!\s)~~/g, "<s>$1</s>")
+      .replace(/(?<!\*)\*(?!\*|\s)(.+?)(?<!\s|\*)\*(?!\*)/g, "<em>$1</em>")
+      .replace(/(?<!\w)_(?!\s|_)(.+?)(?<!\s|_)_(?!\w)/g, "<em>$1</em>");
+    return out.replace(/\x01(\d+)\x02/g, (_, i) => holds[Number(i)]);
   };
-  // ``` blocks and `code` are shown as typed; the rest gets inline()
+  const blocks = (chunk) => {
+    if (!chunk) return "";
+    const lines = chunk.split(/\r?\n/);
+    let out = "", plain = [];
+    const flush = () => {
+      if (plain.length) { out += plain.join("<br>"); plain = []; }
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      let m;
+      if ((m = line.match(/^(#{1,3}) (.*)$/))) {
+        flush();
+        const lvl = m[1].length;
+        out += `<h${lvl + 2} class="md-h${lvl}">${inline(m[2])}</h${lvl + 2}>`;
+      } else if ((m = line.match(/^-# (.*)$/))) {
+        flush();
+        out += `<div class="md-sub">${inline(m[1])}</div>`;
+      } else if ((m = line.match(/^>>>(?: (.*)|$)$/))) {
+        flush();
+        const rest = lines.slice(i + 1);
+        const q = m[1] ? [m[1], ...rest] : (rest.length ? rest : [""]);
+        out += `<blockquote class="md-quote">${q.map(inline).join("<br>")}</blockquote>`;
+        break;
+      } else if (/^> (.*)$/.test(line)) {
+        flush();
+        const q = [];
+        while (i < lines.length && (m = lines[i].match(/^> (.*)$/))) {
+          q.push(inline(m[1]));
+          i++;
+        }
+        i--;
+        out += `<blockquote class="md-quote">${q.join("<br>")}</blockquote>`;
+      } else if (/^([ \t]*)(?:[-*]|(\d{1,9})\.) /.test(line)) {
+        flush();
+        const stack = [];
+        while (i < lines.length && (m = lines[i].match(/^([ \t]*)(?:[-*]|(\d{1,9})\.) (.*)$/))) {
+          const type = m[2] ? "ol" : "ul";
+          const target = Math.min(3, Math.floor(m[1].replace(/\t/g, "  ").length / 2));
+          if (!stack.length) {
+            stack.push(type);
+            out += `<${type}><li>${inline(m[3])}`;
+          } else if (target > stack.length - 1) {
+            while (stack.length - 1 < target) {
+              stack.push(type);
+              out += `<${type}><li>`;
+            }
+            out += inline(m[3]);
+          } else {
+            while (stack.length - 1 > target) out += `</li></${stack.pop()}>`;
+            out += `</li>`;
+            if (stack[stack.length - 1] !== type) {
+              out += `</${stack.pop()}><${type}>`;
+              stack.push(type);
+            }
+            out += `<li>${inline(m[3])}`;
+          }
+          i++;
+        }
+        i--;
+        while (stack.length) out += `</li></${stack.pop()}>`;
+      } else {
+        plain.push(inline(line));
+      }
+    }
+    flush();
+    return out;
+  };
+  // ``` blocks are block-inert; the rest gets line and inline markdown
   const text = (raw) => {
     if (!raw) return "";
-    return String(raw).split(/(```[\s\S]*?```)/).map((part, i) => {
+    // an unclosed fence is closed as Discord closes it, so the tail stays code instead of
+    // turning into headings and lists it was never meant to be
+    let src = String(raw);
+    if ((src.match(/```/g) || []).length % 2) src += "```";
+    const parts = src.split(/(```[\s\S]*?```)/);
+    return parts.map((part, i) => {
       if (i % 2) return `<pre>${esc(part.slice(3, -3).replace(/^[\w+-]*\n/, ""))}</pre>`;
-      return part.split(/(`[^`\n]+`)/).map((s, j) => (j % 2 ? `<code>${esc(s.slice(1, -1))}</code>` : inline(s).replace(/\n/g, "<br>"))).join("");
+      let s = part;
+      if (i > 0) s = s.replace(/^\n/, "");
+      if (i + 1 < parts.length) s = s.replace(/\n$/, "");
+      return blocks(s);
     }).join("");
   };
 
@@ -145,8 +233,8 @@ export function render(exp, records, { timeZone = "UTC" } = {}) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <style>
-:root{--bg:#fff;--fg:#1e1f22;--muted:#5c5e66;--line:#e3e5e8;--card:#f2f3f5;--accent:#5865f2;--warn:#a15c00}
-@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#949ba4;--line:#3f4147;--card:#2b2d31;--accent:#949cf7;--warn:#f0b232}}
+:root{--bg:#fff;--fg:#1e1f22;--muted:#4e5058;--line:#e3e5e8;--card:#f2f3f5;--accent:#3945d1;--warn:#7d4600}
+@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#bec5cd;--line:#3f4147;--card:#2b2d31;--accent:#b6beff;--warn:#f5bc36}}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
 main{max-width:900px;margin:0 auto;padding:16px}
 header h1{font-size:20px;margin:0 0 4px}header p{margin:2px 0;color:var(--muted)}
@@ -155,6 +243,11 @@ h2.day{font-size:13px;color:var(--muted);text-align:center;border-bottom:1px sol
 .msg{padding:2px 0 2px 0;margin-top:10px}.msg.cont{margin-top:0}
 .head .name{font-weight:600;margin-right:8px}.head .time,.edited{font-size:12px;color:var(--muted)}
 .text{white-space:normal;overflow-wrap:anywhere}
+.md-h1,.md-h2,.md-h3{font-weight:700;margin:4px 0 2px}.md-h1{font-size:1.5em}.md-h2{font-size:1.3em}.md-h3{font-size:1.15em}
+.md-sub{font-size:0.8em;color:var(--muted)}
+.md-quote{border-left:4px solid var(--line);margin:4px 0;padding:2px 10px;color:var(--muted)}
+ul,ol{margin:4px 0;padding-left:22px}ul ul,ul ol,ol ul,ol ol{margin:2px 0;padding-left:20px}
+.spoiler{background:var(--card);border-radius:4px;padding:0 3px;filter:blur(4px);cursor:pointer}.spoiler.open{filter:none;cursor:inherit}
 a{color:var(--accent)}.mention{color:var(--accent);font-weight:500}
 .reply{display:block;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:2px}
 pre,code{background:var(--card);border-radius:4px;font:13px ui-monospace,monospace}pre{padding:8px;white-space:pre-wrap}code{padding:1px 4px}

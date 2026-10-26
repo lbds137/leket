@@ -24,13 +24,14 @@ async function readSave() {
 }
 
 function download(blob, name) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = name;
   a.textContent = `${name} (${(blob.size / 1024 / 1024).toFixed(1)} MB)`;
   const li = document.createElement("li");
   li.appendChild(a);
-  return { a, li };
+  return { a, li, url, name };
 }
 
 (async () => {
@@ -60,11 +61,48 @@ function download(blob, name) {
     const links = parts.map(({ blob, name }) => download(blob, name));
     links.forEach(({ li }) => list.appendChild(li));
     $("downloads").replaceChildren(list);
+    const n = (exp.messages || []).length;
+    const savedText = `Saved ${n} messages${records.length ? ` and ${saved} of ${records.length} attachments` : ""}.`;
+    const byUrl = new Map(links.map(({ url, name }) => [url, name]));
+    const names = new Set(links.map(({ name }) => name));
+    const matchPart = (item) => {
+      if (!item) return null;
+      if (byUrl.has(item.url)) return byUrl.get(item.url);
+      const base = String(item.filename || "").split(/[\\/]/).pop();
+      return names.has(base) ? base : null;
+    };
+    const done = new Set();
+    let timer;
+    const stop = () => {
+      clearTimeout(timer);
+      chrome.downloads.onChanged.removeListener(onChanged);
+    };
+    async function onChanged(delta) {
+      const state = delta.state && delta.state.current;
+      if (state !== "complete" && state !== "interrupted") return;
+      const [item] = await chrome.downloads.search({ id: delta.id });
+      const part = matchPart(item);
+      if (!part) return;
+      if (state === "interrupted") {
+        stop();
+        say("The download failed. Click a link below to retry.", "warn");
+        return;
+      }
+      done.add(part);
+      if (done.size < links.length) return;
+      stop();
+      if (!failed.length) window.close();
+      else say(`${savedText} Downloads finished. This tab stays open because ${failed.length} attachment(s) could not be saved.`, "warn");
+    }
+    chrome.downloads.onChanged.addListener(onChanged);
+    timer = setTimeout(() => {
+      stop();
+      say(`${savedText} You can close this tab once your download(s) finish.`, failed.length ? "warn" : "ok");
+    }, 10 * 60 * 1000);
     links.forEach(({ a }) => a.click());
     // kept by the Discord tab until now, so a failed build can be retried by reloading this tab
     ask({ type: "discord-tools:release" }).catch(() => {});
-    const n = (exp.messages || []).length;
-    say(`Saved ${n} messages${records.length ? ` and ${saved} of ${records.length} attachments` : ""}.`, failed.length ? "warn" : "ok");
+    say(failed.length ? savedText : `${savedText} This tab closes when the download(s) finish.`, failed.length ? "warn" : "ok");
     $("detail").innerHTML =
       (parts.length > 1 ? `The save is in ${parts.length} parts: unzip them all into the same folder, then open index.html. ` : "Unzip it and open index.html to read it. ") +
       (parts.length > 1 ? "If Chrome asks whether this page may download several files, allow it; or click each link below."

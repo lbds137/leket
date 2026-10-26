@@ -158,3 +158,69 @@ test("the page escapes what people wrote and shows Discord's markup readably", (
   // nothing on the page reaches out to the web by itself: no remote src
   assert.ok(![...html.matchAll(/\ssrc="([^"]+)"/g)].some(([, s]) => /^https?:/.test(s)));
 });
+
+test("the page renders Discord's markdown subset while keeping code and edge cases literal", () => {
+  const d = exp();
+  d.messages = [
+    {
+      id: "20", datetime: "2021-01-01T10:00:00.000Z", author: "Alice", author_id: "1",
+      text: "a **bold** *star* _under_ __line__ ~~strike~~ ***both*** ||<secret> *ok*|| snake_case_name **unclosed `*not italic*`",
+      attachments: [], embeds: [],
+    },
+    {
+      id: "21", datetime: "2021-01-01T10:01:00.000Z", author: "Bob", author_id: "2",
+      text: [
+        "# Head 1",
+        "## Head 2",
+        "### Head 3",
+        "-# tiny note",
+        "> quoted **bold**",
+        "> second line",
+        "- item a",
+        "  - nested b",
+        "1. first",
+        "  1. sub first",
+        ">>> rest of",
+        "the message",
+      ].join("\n"),
+      attachments: [], embeds: [],
+    },
+  ];
+  const html = render(d, [], { timeZone: "UTC" });
+  assert.ok(html.includes("<strong>bold</strong>"));
+  assert.ok(html.includes("<em>star</em>") && html.includes("<em>under</em>"));
+  assert.ok(html.includes("<u>line</u>") && html.includes("<s>strike</s>"));
+  assert.ok(html.includes("<strong><em>both</em></strong>"));
+  assert.ok(html.includes('<span class="spoiler" onclick="this.classList.add(\'open\')">&lt;secret&gt; <em>ok</em></span>'));
+  assert.ok(html.includes("snake_case_name **unclosed <code>*not italic*</code>"));
+  assert.ok(html.includes('<h3 class="md-h1">Head 1</h3>'));
+  assert.ok(html.includes('<h4 class="md-h2">Head 2</h4>'));
+  assert.ok(html.includes('<h5 class="md-h3">Head 3</h5>'));
+  assert.ok(html.includes('<div class="md-sub">tiny note</div>'));
+  assert.ok(html.includes('<blockquote class="md-quote">quoted <strong>bold</strong><br>second line</blockquote>'));
+  assert.ok(html.includes("<ul><li>item a<ul><li>nested b</li></ul></li></ul>"));
+  assert.ok(html.includes("<ol><li>first<ol><li>sub first</li></ol></li></ol>"));
+  assert.ok(html.includes('<blockquote class="md-quote">rest of<br>the message</blockquote>'));
+  assert.ok(![...html.matchAll(/\ssrc="([^"]+)"/g)].some(([, s]) => /^https?:/.test(s)));
+});
+
+test("review follow-ups: sentinels, unclosed fences, bold links, CRLF, list type switch", () => {
+  const d = exp();
+  const one = (text) => {
+    d.messages = [{ id: "30", datetime: "2021-01-01T10:00:00.000Z", author: "A", author_id: "1", text, attachments: [], embeds: [] }];
+    return render(d, [], { timeZone: "UTC" });
+  };
+  // U+0001/U+0002 are internal placeholders; a message's own ones are stripped, never restored
+  const sent = one("a \x01 42 \x02 b");
+  assert.ok(sent.includes("a  42  b") && !sent.includes("undefined"));
+  // an unclosed fence is closed, its tail stays code
+  const unclosed = one("```js\nlet a = 1;\n# not a heading");
+  assert.ok(unclosed.includes("# not a heading</pre>") && !unclosed.includes('<h3 class="md-h1">'));
+  // bold around a link: the closers are trimmed off the URL and pair with the opener
+  const boldLink = one("**see https://example.com/x**");
+  assert.ok(boldLink.includes('<strong>see <a href="https://example.com/x">https://example.com/x</a></strong>'));
+  // CRLF line endings break lines like LF ones
+  assert.ok(one("# Head\r\nnext").includes('<h3 class="md-h1">Head</h3>'));
+  // a ul switching to an ol at the same level makes sibling lists, not nesting
+  assert.ok(one("- a\n1. b").includes("<ul><li>a</li></ul><ol><li>b</li></ol>"));
+});
