@@ -2,6 +2,8 @@
 // images and videos, already compressed). Entries are kept as Blobs, so a large archive
 // lives in the browser's blob storage rather than in one array in memory. Plain zip, not
 // zip64: a part stays under 4 GiB, and parts() starts a new one past `partLimit` bytes.
+// With an `onPart` callback, each sealed part is handed over the moment it closes and
+// held nowhere, so the caller can download it before the next part fills.
 
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
@@ -30,12 +32,20 @@ function dosTime(d) {
 const MAX = 0xffffffff;
 const UTF8_NAMES = 0x0800;
 
+// the part size both split points agree on (zip.js's default and the "will it stream?"
+// decision in files.js)
+export const PART_LIMIT = 2 * 1024 ** 3;
+
 export class ZipWriter {
-  constructor({ partLimit = 2 * 1024 ** 3, now = new Date() } = {}) {
+  constructor({ partLimit = PART_LIMIT, now = new Date(), onPart } = {}) {
     if (partLimit >= MAX) throw new Error("a part must stay under 4 GiB (no zip64)");
     this.partLimit = partLimit;
     this.stamp = dosTime(now);
     this.done = [];
+    // given: sealed parts go to onPart(blob, number) instead of this.done — the writer
+    // keeps nothing, so only one part ever exists at a time
+    this.onPart = onPart;
+    this.sealed = 0;
     // across every part: the parts are meant to be unpacked into one folder
     this.names = new Set();
     this.open();
@@ -94,7 +104,7 @@ export class ZipWriter {
     this.central.push(new Blob([cen, nameBytes]));
     this.offset += 30 + nameBytes.length + size;
     if (this.offset >= MAX) throw new Error("part grew past 4 GiB");
-    return this.done.length + 1;
+    return (this.onPart ? this.sealed : this.done.length) + 1;
   }
 
   close() {
@@ -106,13 +116,26 @@ export class ZipWriter {
     end.setUint16(10, this.central.length, true);
     end.setUint32(12, size, true);
     end.setUint32(16, this.offset, true);
-    this.done.push(new Blob([...this.blobs, ...this.central, end], { type: "application/zip" }));
+    const part = new Blob([...this.blobs, ...this.central, end], { type: "application/zip" });
     this.open();
+    if (this.onPart) this.onPart(part, ++this.sealed);
+    else this.done.push(part);
   }
 
-  // every part as a Blob; the writer is spent afterwards
+  // every part as a Blob; the writer is spent afterwards. With onPart the parts are already
+  // handed over: this only seals the one still open and returns [].
   parts() {
+    if (this.onPart) {
+      if (this.central.length) this.close();
+      return this.done;
+    }
     if (this.central.length || !this.done.length) this.close();
     return this.done;
+  }
+
+  // drop the part still being filled without sealing or handing it off: a stopped save
+  // keeps nothing in mid-flight. What was sealed already stays handed over.
+  discard() {
+    this.open();
   }
 }

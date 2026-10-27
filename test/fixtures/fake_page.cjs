@@ -6,7 +6,8 @@
 // guild-empty-cache | guild-two-runtimes | guild-hidden | guild-hidden-inside |
 // guild-hidden-throws | guild-hidden-returns | dm | dm-forward). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
-// (posted: the message) instead of downloading it. The stores mimic the shape the collector
+// (posted: the message) instead of downloading it. START_AT fills the start-at box before
+// Save. The stores mimic the shape the collector
 // expects of Discord's; that they match the live client is checked only by a run on the real page.
 const fs = require("fs");
 const path = require("path");
@@ -44,12 +45,13 @@ const msgs = [
 // dm-forward: a reply, a forward as the client holds it (messageSnapshots, a moment-like
 // timestamp), one as the API sends it, and one whose snapshots aren't there
 if (scenario === "dm-forward") {
-  const file = (n) => ({ filename: `f${n}.png`, url: `https://cdn.discordapp.com/attachments/1/${n}/f${n}.png` });
+  const file = (n) => ({ filename: `f${n}.png`, url: `https://cdn.discordapp.com/attachments/1/${n}/f${n}.png`,
+    ...(n === 1 ? { size: 2000000 } : {}) });
   msgs.push(
     { id: snowflake(8), author: users.alice, content: "a reply", messageReference: { type: 0, message_id: snowflake(1) } },
     { id: snowflake(9), author: users.alice, content: "", messageReference: { type: 1, message_id: "77", channel_id: "88", guild_id: "99" },
       messageSnapshots: [{ message: { content: "forwarded words", timestamp: { toISOString: () => "2020-12-01T00:00:00.000Z" },
-        attachments: [file(1)], embeds: [{ rawTitle: "Card" }] } }] },
+        attachments: [file(1), { filename: "g.png", url: "https://cdn.discordapp.com/attachments/1/1/g.png" }], embeds: [{ rawTitle: "Card" }] } }] },
     { id: snowflake(10), author: users.mod, content: "", message_reference: { type: 1, message_id: "78" },
       message_snapshots: [{ message: { content: "api form", timestamp: "2020-12-02T00:00:00+00:00", attachments: [], embeds: [] } }] },
     { id: snowflake(11), author: users.mod, content: "", messageReference: { type: 1, message_id: "79" } },
@@ -127,7 +129,7 @@ const modules = {
 if (scenario !== "guild-guildstore-roles") modules[7] = { exports: { default: new GuildRoleStore() } };
 
 const el = (props = {}) => ({
-  style: {}, children: [], textContent: "",
+  style: {}, children: [], textContent: "", value: "",
   appendChild(c) { this.children.push(c); return c; },
   remove() {}, click() { if (this.onClickHook) this.onClickHook(this); },
   ...props,
@@ -323,13 +325,18 @@ const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r)
     lateSnapshots.messageSnapshots = [{ message: { content: "late words", attachments: [], embeds: [] } }];
     await mutated();
   }
+  if (process.env.START_AT) {
+    const box = created.find((e) => e.tag === "input" && e.placeholder.startsWith("start at"));
+    if (box) box.value = process.env.START_AT;
+  }
+  // the panel's divs: the panel, its heading, the status line — read before Save overwrites it
+  const status = created.filter((e) => e.tag === "div")[2];
+  const panel = status.textContent;
   await save.onclick();
   const link = created.find((e) => e.tag === "a");
-  // the panel's divs: the panel, its heading, the status line
-  const status = created.filter((e) => e.tag === "div")[2];
   const out = link
     ? { file: link.download, export: JSON.parse(saved) }
     : { file: posted.data.file, export: JSON.parse(posted.data.json) };
   if (posted) out.posted = { ...posted.data, json: undefined, origin: posted.origin };
-  process.stdout.write(JSON.stringify({ ...out, status: status.textContent, downloaded: !!link }));
+  process.stdout.write(JSON.stringify({ ...out, status: status.textContent, panel, downloaded: !!link }));
 })();

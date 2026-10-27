@@ -159,7 +159,8 @@ test("a forward keeps what was forwarded; a reply is not a forward", () => {
   assert.equal(fwd.reply_to, null);
   assert.deepEqual(fwd.forward_of, { message_id: "77", channel_id: "88", guild_id: "99" });
   assert.deepEqual(fwd.forwarded, [{ text: "forwarded words", datetime: "2020-12-01T00:00:00.000Z",
-    attachments: [{ filename: "f1.png", url: "https://cdn.discordapp.com/attachments/1/1/f1.png" }], embeds: [{ title: "Card" }] }]);
+    attachments: [{ filename: "f1.png", url: "https://cdn.discordapp.com/attachments/1/1/f1.png", size: 2000000 },
+      { filename: "g.png", url: "https://cdn.discordapp.com/attachments/1/1/g.png" }], embeds: [{ title: "Card" }] }]);
   assert.deepEqual(api.forwarded.map((f) => [f.text, f.datetime]), [["api form", "2020-12-02T00:00:00.000Z"]]);
   assert.deepEqual(bare.forwarded, []);
   // snapshots that arrive after the first read are picked up; the author isn't counted twice
@@ -190,4 +191,24 @@ test("with the bridge's mark, Save posts the export instead of downloading it", 
   const alone = runPage("dm");
   assert.equal(alone.downloaded, true);
   assert.match(alone.status, /^Saved to Downloads\/discord-someone-600\.json/);
+});
+
+test("attachment sizes are kept, the newest edge is in the export, and the panel estimates the total", () => {
+  const page = runPage("dm-forward");
+  const d = page.export;
+  const fwd = d.messages.find((m) => m.forward_of && m.forwarded.length);
+  assert.equal(fwd.forwarded[0].attachments[0].size, 2000000);
+  assert.ok(!("size" in fwd.forwarded[0].attachments[1]), "an attachment without a size stays without one");
+  assert.match(page.panel, /≈ at least 2 MB in 2 attachment files/);
+  assert.equal(d.start_at, null);
+  assert.equal(d.messages_after_start, 0);
+  assert.equal(d.reached_until, d.messages[d.messages.length - 1].datetime);
+});
+
+test("start at records a chunk's newest edge and flags a jump that landed too late", () => {
+  const page = runPage("dm", [], { START_AT: "2021-01-04" });
+  const d = page.export;
+  assert.deepEqual([d.start_at, d.messages_after_start], ["2021-01-04", 4]);
+  assert.match(page.status, /newest 2021-01-07 00:00 UTC/);
+  assert.match(page.status, /4 message\(s\) are dated on or after start-at 2021-01-04 \(UTC days, as "stop at" is\) — check the search jump landed below 2021-01-04/);
 });

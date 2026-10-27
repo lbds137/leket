@@ -3,6 +3,8 @@
 // <date>_<message id>_<n>_<filename>, and discord-attachments.json mapping each file back to
 // its message. A forwarded message's attachments are <date>_<message id>_f<k>_<n>_<filename>.
 
+import { PART_LIMIT } from "./zip.js";
+
 export const FOLDER = "discord-attachments";
 export const MANIFEST = "discord-attachments.json";
 // the only hosts Discord serves attachments from; anything else in an export is not fetched
@@ -30,15 +32,32 @@ export function fetchable(url) {
   }
 }
 
-// one entry per attachment: {message_id, filename, url, file, forwarded?}; file is the name
-// inside FOLDER
+// whether the attachments alone would not comfortably fit one part, so the save streams a
+// part at a time instead of building every part before any is downloaded. A size Discord
+// didn't give makes the estimate untrusted on its own, so the save streams; the 4 MiB per
+// unknown used in the export tab's disk warning lives there, not here. The margin leaves
+// room for the JSON, the page and zip overhead.
+export function needsParts(records, partLimit = PART_LIMIT) {
+  if (!records.length) return false;
+  let bytes = 0;
+  for (const r of records) {
+    if (r.size == null) return true;
+    bytes += Number(r.size) + 128;
+  }
+  return bytes > partLimit - 64 * 1024 * 1024;
+}
+
+// one entry per attachment: {message_id, filename, url, file, size?, forwarded?}; file is
+// the name inside FOLDER, size the bytes Discord said the file is (absent when it didn't
+// say — an old export, or an attachment kind without one)
 export function attachmentList(exp) {
   const out = [];
   for (const m of exp.messages || []) {
     const day = String(m.datetime || "").slice(0, 10);
     const add = (list, mid, extra) => (list || []).forEach((a, n) => {
       out.push({ message_id: m.id, filename: a.filename, url: a.url,
-        file: fileName(`${day}_${m.id}_${mid}${n}_`, a.filename), ...extra });
+        file: fileName(`${day}_${m.id}_${mid}${n}_`, a.filename),
+        ...(a.size != null ? { size: Number(a.size) } : {}), ...extra });
     });
     add(m.attachments, "", {});
     (m.forwarded || []).forEach((f, k) => add(f.attachments, `f${k}_`, { forwarded: k }));

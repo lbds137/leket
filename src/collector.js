@@ -4,10 +4,14 @@
 // DevTools (F12 > Console) instead, it works alone and Save downloads the JSON only.
 //
 // Reads only what the Discord page has already loaded while you scroll up; it makes no
-// API calls of its own. A small panel shows the count and the oldest date. "Auto-scroll"
-// scrolls up gently until the start of the conversation, or until the "stop at" date when
-// one is typed in (for a busy server channel); "Save" hands discord-<name>-<channel>.json
-// to the extension's export tab, which fetches the attachments and saves one zip.
+// API calls of its own. A small panel shows the count, the oldest date and roughly how big
+// the attachments are. "Auto-scroll" scrolls up gently until the start of the conversation,
+// or until the "stop at" date when one is typed in; "start at" names a chunk's newest edge
+// (a very long conversation is saved in chunks: jump to a Discord search result for the
+// upper edge, collect down to "stop at", and let the saves be merged by message id —
+// "start at" only records the edge and warns when the jump landed too late). "Save" hands
+// discord-<name>-<channel>.json to the extension's export tab, which fetches the
+// attachments and saves the zip, in parts when it is large.
 // Text comes from the message object Discord keeps in React (memoizedProps.message), not
 // the rendered DOM, which drops links, custom emoji and markdown.
 // A forwarded message keeps what was forwarded (text, attachments, embeds) in forwarded,
@@ -37,6 +41,11 @@
 
   const isoFromSnowflake = (id) =>
     new Date(Number((BigInt(id) >> 22n) + DISCORD_EPOCH)).toISOString();
+
+  // same format as export.js's copy of this helper: the collector is injected into the
+  // page alone, so the two cannot share an import
+  const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
+    : b >= 1048576 ? `${Math.round(b / 1048576)} MB` : `${Math.ceil(b / 1024)} KB`;
 
   // A message's author is the account (global name), not the server member: the server
   // nickname and roles live in Discord's own Flux stores, found by name in the page's
@@ -464,7 +473,10 @@
     for (const k of Object.keys(out)) if (out[k] === null) delete out[k];
     return out;
   };
-  const attachmentsOf = (m) => (m.attachments || []).map((x) => ({ filename: x.filename, url: x.url }));
+  // size is kept when Discord gives it (bytes): the panel's pre-save estimate and the
+  // export tab's disk check are built from it
+  const attachmentsOf = (m) => (m.attachments || []).map((x) => ({ filename: x.filename, url: x.url,
+    ...(x.size != null ? { size: Number(x.size) } : {}) }));
 
   // A forward is a message whose reference has type 1, or that carries snapshots: what was
   // forwarded sits in its snapshots (the client's record calls them messageSnapshots, the
@@ -569,10 +581,16 @@
   function render() {
     const ids = [...seen.keys()].sort((x, y) => (BigInt(x) < BigInt(y) ? -1 : 1));
     const oldest = ids.length ? seen.get(ids[0]).datetime.slice(0, 10) : "-";
+    let files = 0, sized = 0, fileBytes = 0;
+    for (const m of seen.values()) {
+      for (const a of m.attachments || []) { files++; if (a.size) { sized++; fileBytes += a.size; } }
+      for (const f of m.forwarded || []) for (const a of f.attachments || []) { files++; if (a.size) { sized++; fileBytes += a.size; } }
+    }
     const groups = [...hidden.values()];
     const shut = groups.filter((g) => !g.opened && g.tries >= 3).length;
     status.textContent = `${seen.size} messages, oldest ${oldest}` +
       (fromDom ? ` (${fromDom} from page text only)` : "") +
+      (files && fileBytes >= 1048576 ? `, ≈ ${sized < files ? "at least " : ""}${humanSize(fileBytes)} in ${files} attachment file${files === 1 ? "" : "s"}` : "") +
       (groups.length ? `, ${groups.filter((g) => g.opened).length} blocked/ignored groups opened` : "") +
       (shut ? `, ${shut} WOULD NOT OPEN${whereShut(groups.filter((g) => !g.opened && g.tries >= 3))}` : "") +
       (expandError ? `, ERROR opening blocked/ignored messages: ${expandError}` : "");
@@ -609,6 +627,14 @@
   let reachedStart = false;
   const atStart = (s) => START.test(s.textContent);
 
+  // "start at": the newest edge of a chunk, for a save resumed mid-conversation (jump to a
+  // Discord search result first, then collect down to the "stop at" day). Nothing is
+  // clipped: at Save the export says how many messages sit on or after the day, so a jump
+  // that landed in the wrong place is visible at once.
+  const startAt = document.createElement("input");
+  startAt.placeholder = "start at YYYY-MM-DD (optional)";
+  startAt.style.cssText = "display:block;width:210px";
+  panel.appendChild(startAt);
   // "stop at": in a busy server channel, scroll back only as far as this day
   const since = document.createElement("input");
   since.placeholder = "stop at YYYY-MM-DD (optional)";
@@ -625,6 +651,7 @@
   panel.appendChild(withFiles);
   let reachedSince = null;
   const sinceDay = () => (/^\d{4}-\d{2}-\d{2}$/.test(since.value.trim()) ? since.value.trim() : null);
+  const startAtDay = () => (/^\d{4}-\d{2}-\d{2}$/.test(startAt.value.trim()) ? startAt.value.trim() : null);
   const oldestDay = () => {
     const ids = [...seen.keys()].sort((x, y) => (BigInt(x) < BigInt(y) ? -1 : 1));
     return ids.length ? seen.get(ids[0]).datetime.slice(0, 10) : null;
@@ -737,6 +764,9 @@
       }
     }
     const messages = [...seen.values()].sort((x, y) => (BigInt(x.id) < BigInt(y.id) ? -1 : 1));
+    const startDay = startAtDay();
+    const afterStart = startDay ? messages.filter((m) => String(m.datetime || "").slice(0, 10) >= startDay).length : 0;
+    const newest = messages.length ? messages[messages.length - 1].datetime : null;
     for (const m of messages) {
       const p = m.author_id && people.get(m.author_id);
       if (p) m.nick = p.nick;
@@ -760,6 +790,13 @@
         // may be missing, unless reached_since says the run meant to stop at that day
         reached_start: reachedStart,
         reached_since: reachedSince,
+        // the newest edge of what was collected: a chunk resumed mid-conversation names it,
+        // so gaps between chunks can be checked. start_at is the upper bound that was asked
+        // (null when none was); messages_after_start counts the collected messages on or
+        // after that day — zero unless a search jump landed too late (they are kept anyway)
+        reached_until: newest,
+        start_at: startDay,
+        messages_after_start: afterStart,
         method:
           `Saved by the Discord tools collector on the open ${IS_DM ? "DM" : "server channel"}. ` +
           "Text, author, attachments, embeds (their text fields), reply, forward and edit state come from the React message object; " +
@@ -805,8 +842,10 @@
         ` to Downloads/${OUT}`;
     }
     status.textContent = `${where}: ${messages.length} messages` +
+      (newest ? ` (newest ${newest.slice(0, 16).replace("T", " ")} UTC)` : "") +
       (reachedStart ? "" : reachedSince ? ` (from ${reachedSince} on, as asked)`
         : " — the start was not reached: older messages may be missing") +
+      (afterStart ? `; ${afterStart} message(s) are dated on or after start-at ${startDay} (UTC days, as "stop at" is) — check the search jump landed below ${startDay}` : "") +
       (hiddenGroups.length ? `; ${hiddenGroups.length - notOpened} blocked/ignored groups opened` : "") +
       (notOpened ? `, ${notOpened} WOULD NOT OPEN: their messages are missing` +
         whereShut([...hidden.values()].filter((g) => !g.opened)) : "") +
