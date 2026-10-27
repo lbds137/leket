@@ -25,7 +25,9 @@ async function readSave() {
   return { file: first.file, attachments: first.attachments, exp: JSON.parse(pieces.join("")) };
 }
 
-function download(blob, name) {
+// builds the visible link for one part; chrome.downloads.download does the actual
+// downloading (this anchor is what the user clicks to retry a part by hand)
+function partLink(blob, name) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -100,7 +102,7 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
     // (or no word for a quarter of an hour) the link stays for a retry by hand.
     const downloadPart = async ({ blob, name }) => {
       say(`Saving ${name}…`);
-      const { a, li, url } = download(blob, name);
+      const { a, li, url } = partLink(blob, name);
       list.appendChild(li);
       const ok = await new Promise((resolve) => {
         let id = null;
@@ -203,7 +205,6 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
         : "";
       say(`${savedText} ${badParts.length} part(s) didn't finish — click them above to try again.${stoppedNote}`, "warn");
     } else if (!failed.length) window.close();
-    else if (!failed.length) window.close();
     else say(`${savedText} This tab stays open because ${failed.length} attachment(s) could not be saved.`, "warn");
   } catch (e) {
     $("bar").hidden = true;

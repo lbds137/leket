@@ -216,11 +216,61 @@ test("onPart false stops the save: nothing downloads after the failed part, the 
   assert.deepEqual(Object.keys(text), ["d.json", "index.html"]);
   assert.deepEqual(Object.keys(manifestPart), ["discord-attachments.json"]);
   const manifest = JSON.parse(manifestPart["discord-attachments.json"]);
-  // zipcheck reads zip contents as latin-1, so the em-dash in the marker arrives mangled;
-  // the ASCII prefix pins it
+  // zipcheck reads zip contents as latin-1, so the em-dashes in the markers arrive
+  // mangled; the ASCII prefixes pin them
+  const inFailedPart = manifest.filter((m) => (m.error || "").startsWith("saved into part 2"));
+  assert.equal(inFailedPart.length, 1, "the failed part's file is named by part");
   const unsaved = manifest.filter((m) => (m.error || "").startsWith("not saved"));
-  assert.ok(unsaved.length >= 3, `every attachment not in a downloaded part is listed unsaved (got ${unsaved.length})`);
+  assert.equal(unsaved.length, 2, "everything not in a downloaded part is listed unsaved");
   assert.equal(r.saved, 0);
+  assert.equal(r.failed.length, 4);
+});
+
+test("a fetch in flight when the save stops still counts as failed", async () => {
+  const big = "x".repeat(40000);
+  let release404;
+  const slow404 = new Promise((r) => { release404 = r; });
+  const fetchFn = async (url) => {
+    const u = url.split("?")[0];
+    if (u === `${CDN}/11/gone.mp4`) { await slow404; return new Response("", { status: 404 }); }
+    const v = { [`${CDN}/10/cat.png`]: big, [`${CDN}/12/f.ogg`]: big }[u];
+    if (v === undefined) throw new TypeError("Failed to fetch");
+    return new Response(v, { status: 200, headers: { "content-length": String(Buffer.byteLength(v)) } });
+  };
+  const blobs = [];
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => {
+      blobs.push(p.blob);
+      if (p.index !== 2) return true;
+      // gone's 404 must land after the stop: release it here, with no await before
+      // the false comes back, so the stop is already set when the fetch resumes
+      release404();
+      return false;
+    } });
+  // cat alone is packed into part 2, whose download failed and stopped the save; f.ogg's
+  // add is what seals part 2, so f.ogg sits in the half-filled part 3 that the stop
+  // discards; gone's 404 lands after that stop and must still count as failed; evil
+  // can't be fetched. The manifest still goes out and names every file's fate.
+  assert.equal(r.saved, 0);
+  assert.equal(r.failed.length, 4);
+  assert.equal(r.records.find((m) => m.filename === "gone.mp4").error, "link expired or gone (HTTP 404)");
+  // records are in-process, so unlike the unzipped-manifest asserts below these can
+  // pin the full strings, em-dashes included
+  assert.equal(r.records.find((m) => m.filename === "cat pic.png").error,
+    "saved into part 2, which didn't finish downloading — retry part 2 to get this file");
+  assert.equal(r.records.find((m) => m.filename === "f.ogg").error, "not saved — the save stopped early");
+  assert.deepEqual(r.parts.map((p) => [p.name, p.index]),
+    [["d-part1.zip", 1], ["d-part2.zip", 2], ["d-part3.zip", 3]]);
+  const [text, , manifestPart] = await unzip(blobs.map((blob) => ({ blob })));
+  assert.deepEqual(Object.keys(text), ["d.json", "index.html"]);
+  assert.deepEqual(Object.keys(manifestPart), ["discord-attachments.json"]);
+  const manifest = JSON.parse(manifestPart["discord-attachments.json"]);
+  // zipcheck reads zip contents as latin-1, so the em-dashes in the markers arrive
+  // mangled; the ASCII prefixes pin them
+  const inFailedPart = manifest.filter((m) => (m.error || "").startsWith("saved into part 2"));
+  assert.equal(inFailedPart.length, 1, "the failed part's file is named by part");
+  const unsaved = manifest.filter((m) => (m.error || "").startsWith("not saved"));
+  assert.equal(unsaved.length, 1, "the file that triggered the seal sat in the discarded half-filled part");
 });
 
 test("streamed hand-offs gate the fetches: a failing worker waits, it does not churn on", async () => {
@@ -242,9 +292,11 @@ test("streamed hand-offs gate the fetches: a failing worker waits, it does not c
     attachments: [{ filename: `f${k + 1}.png`, url: `${CDN}/${k + 1}/f.png` }] }));
   let release;
   const gate = new Promise((r) => { release = r; });
+  let reachedGate;
+  const reached = new Promise((r) => { reachedGate = r; });
   const building = build(many, { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
-    onPart: async (p) => { if (p.index === 2) await gate; } });
-  await new Promise((r) => setTimeout(r, 40));   // part 2 sealed and its hand-off gated
+    onPart: async (p) => { if (p.index === 2) { reachedGate(); await gate; } } });
+  await reached;   // part 2 sealed and its hand-off is gated
   // the three initial workers, plus the handful one may have churned before the gate
   // landed; ungated, the 404 workers would run through all 30 records
   assert.ok(fetches <= 10, `fetches stalled near the initial three (got ${fetches})`);

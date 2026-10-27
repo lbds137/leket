@@ -118,6 +118,14 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
           if (ok === false) {
             stopped = true;
             sealedParts.length = 0;
+            // the failed part's own files are named by part, so the manifest line stays
+            // true if that part is retried by hand later
+            for (const i of item.idx) {
+              if (!records[i].error) {
+                records[i].error = `saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} to get this file`;
+                failed++;
+              }
+            }
           } else for (const i of item.idx) sealedSet.add(i);
         }
       } finally {
@@ -142,8 +150,8 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
       const res = fetchable(r.url) ? await fetchFile(r.url, { fetchFn, wait, idle }) : { error: "not a Discord attachment link" };
       if (stopped && !got) {
         // the save stopped while this was being fetched: it never reaches a part
-        if (!res.error) { r.error = STOP_ERROR; failed++; }
-        else r.error = res.error;
+        r.error = res.error || STOP_ERROR;
+        failed++;
       } else if (res.error) {
         r.error = res.error;
         failed++;
@@ -171,19 +179,23 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, records.length) }, worker));
 
-  // the manifest is written once the fetches are over: which files failed is only known
-  // then. Streamed it gets its own small part (the attachment part is sealed first, unless
-  // nothing was fetched), so it survives a big part failing; otherwise it lands between
-  // the page and the files, as it always has. A stopped save discards the part still
-  // being filled and anything already queued behind the failed one — no more multi-GB
-  // downloads — but still writes the manifest out.
+  // streamed, the attachment parts are sealed and handed off before the manifest is
+  // written, so a failure of the last attachment part stops the save while the manifest
+  // can still name that part's files and still goes out; a stop during the fetches
+  // discards the part still being filled; the manifest gets its own small part at the end
+  // either way.
   if (stopped) {
     zip.discard();
     sealedParts.length = 0;
+  } else if (stream && packed > 0) {
+    zip.close();
+    await drain();
+  }
+  if (stopped) {
     for (let i = 0; i < records.length; i++) {
       if (!records[i].error && !sealedSet.has(i)) { records[i].error = STOP_ERROR; failed++; }
     }
-  } else if (stream && packed > 0) zip.close();
+  }
   if (!stream) {
     zip.add(file, enc.encode(JSON.stringify(exp, null, 1)));
     zip.add("index.html", enc.encode(render(exp, records, { timeZone })));
