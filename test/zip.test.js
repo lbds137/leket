@@ -50,6 +50,29 @@ test("a new part starts past the limit, and a file bigger than the limit gets a 
   assert.deepEqual(parts.map((p) => Object.keys(p)), [["one"], ["two"], ["big"], ["three"]]);
 });
 
+test("with onPart, every sealed part is handed over the moment it closes, none held back", async () => {
+  const parts = [];
+  const z = new ZipWriter({ partLimit: 300, onPart: (blob, n) => parts.push({ blob, n }) });
+  assert.equal(z.add("one", new Uint8Array(100)), 1);
+  assert.equal(z.add("two", new Uint8Array(100)), 2);
+  assert.equal(z.add("big", new Uint8Array(1000)), 3);
+  assert.equal(z.add("three", new Uint8Array(10)), 4);
+  assert.deepEqual(z.parts(), []);
+  const files = await read(parts.map((p) => p.blob));
+  assert.deepEqual(files.map((p) => Object.keys(p)), [["one"], ["two"], ["big"], ["three"]]);
+  assert.deepEqual(parts.map((p) => p.n), [1, 2, 3, 4]);
+});
+
+test("with onPart, a single-part writer hands over that one part and nothing else", async () => {
+  const parts = [];
+  const z = new ZipWriter({ onPart: (blob, n) => parts.push({ blob, n }) });
+  z.add("a.json", enc.encode('{"x": 1}'));
+  assert.deepEqual(z.parts(), []);
+  assert.equal(parts.length, 1);
+  const [files] = await read(parts.map((p) => p.blob));
+  assert.deepEqual(Object.keys(files), ["a.json"]);
+});
+
 test("a Blob goes in with the crc32 worked out piece by piece", async () => {
   const a = enc.encode("hello "), b = enc.encode("world");
   assert.equal(crc32(b, crc32(a)), crc32(enc.encode("hello world")));

@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, fetchFile } from "../src/lib/build.js";
-import { attachmentList, fetchable, fileName } from "../src/lib/files.js";
+import { attachmentList, fetchable, fileName, needsParts } from "../src/lib/files.js";
+import { PART_LIMIT } from "../src/lib/zip.js";
 import { render } from "../src/lib/render.js";
 
 const CHECK = fileURLToPath(new URL("./zipcheck.py", import.meta.url));
@@ -58,8 +59,20 @@ test("file names follow the Python fetcher's layout and stay under 240 bytes", (
   assert.deepEqual(list.map((r) => r.file), ["2021-01-01_10_0_cat_pic.png", "2021-01-01_11_0_gone.mp4",
     "2021-01-01_11_1_evil.png", "2021-01-02_12_f0_0_f.ogg"]);
   assert.equal(list[3].forwarded, 0);
+  assert.ok(!("size" in list[0]), "a size the export doesn't carry stays absent");
+  const sized = attachmentList({ messages: [{ id: "9", datetime: "2021-01-01T10:00:00.000Z",
+    attachments: [{ filename: "a.png", url: `${CDN}/a`, size: "123" }] }] });
+  assert.equal(sized[0].size, 123);
   assert.ok(fetchable(`${CDN}/x.png`) && fetchable("https://media.discordapp.net/x.png"));
   assert.ok(!fetchable("https://evil.example/x.png") && !fetchable("http://cdn.discordapp.com/x") && !fetchable("nonsense"));
+});
+
+test("a save streams when the attachments are big, or their sizes unknown", () => {
+  const rec = (size) => ({ url: `${CDN}/x`, size });
+  assert.equal(needsParts([]), false);
+  assert.equal(needsParts([rec(1000)]), false);
+  assert.equal(needsParts([rec(PART_LIMIT)]), true);
+  assert.equal(needsParts([{ url: `${CDN}/x` }]), true, "no size: assume it doesn't fit");
 });
 
 test("an expired link isn't retried; a network error is, then reported", async () => {
@@ -76,6 +89,14 @@ test("an expired link isn't retried; a network error is, then reported", async (
   // a compressed response's length is not the file's
   const gz = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response("abcdef", { headers: { "content-length": "4", "content-encoding": "gzip" } }), wait: 0, tries: 1 });
   assert.equal(await gz.blob.text(), "abcdef");
+  // a CDN 504 stretch gets the default five tries, backing off between them
+  calls = 0;
+  const t1 = Date.now();
+  const timing = await fetchFile(`${CDN}/a`, { fetchFn: async () => { calls++; return new Response("", { status: 504 }); }, wait: 5 });
+  assert.equal(timing.error, "HTTP 504");
+  assert.equal(calls, 5);
+  // the waits back off (5+10+15+20 ms); a flat wait would sum to 20 ms
+  assert.ok(Date.now() - t1 >= 40, "the waits between the tries back off");
 });
 
 test("a download that stalls is dropped after the idle time, and the build goes on", async () => {
@@ -99,6 +120,7 @@ test("the zip holds the JSON, the page, the manifest and the files that came", a
   assert.deepEqual(r.failed.map((f) => [f.filename, f.error]), [["gone.mp4", "link expired or gone (HTTP 404)"],
     ["evil.png", "not a Discord attachment link"]]);
   const [files] = await unzip(r.parts);
+  // small saves pack as they always did: page, manifest, then the files
   assert.deepEqual(Object.keys(files), ["discord-general-600.json", "index.html", "discord-attachments.json",
     "discord-attachments/2021-01-01_10_0_cat_pic.png", "discord-attachments/2021-01-02_12_f0_0_f.ogg"]);
   assert.equal(files["discord-attachments/2021-01-01_10_0_cat_pic.png"], "PNGDATA");
@@ -117,6 +139,11 @@ test("without attachments, nothing is fetched and the page says so", async () =>
   assert.match(files["index.html"], /saving attachments was turned off/);
 });
 
+test("a streamed page names the manifest as its failure list; a small save's page does not", () => {
+  assert.ok(render(exp(), [], { timeZone: "UTC", streamed: true }).includes("files missing here are listed in discord-attachments.json"));
+  assert.ok(!render(exp(), [], { timeZone: "UTC" }).includes("files missing here are listed"));
+});
+
 test("past the part limit the save comes in numbered parts, the page in the first", async () => {
   const big = "x".repeat(40000);
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
@@ -125,6 +152,104 @@ test("past the part limit the save comes in numbered parts, the page in the firs
   const parts = await unzip(r.parts);
   assert.ok("index.html" in parts[0]);
   assert.equal(parts.flatMap((p) => Object.keys(p)).filter((n) => n.startsWith("discord-attachments/")).length, 3);
+});
+
+test("streamed, the text part goes out first and the attachment parts follow, one part at a time", async () => {
+  const big = "x".repeat(40000);
+  const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
+  const blobs = [], handed = [];
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => { blobs.push(p.blob); handed.push(p); } });
+  // the total isn't known while streaming, so names carry only the part number; the
+  // manifest comes last, in its own small part
+  assert.deepEqual(r.parts.map((p) => [p.name, p.index]),
+    [["d-part1.zip", 1], ["d-part2.zip", 2], ["d-part3.zip", 3], ["d-part4.zip", 4], ["d-part5.zip", 5]]);
+  assert.ok(r.parts.every((p) => !("blob" in p)));
+  const [text, catPart, gonePart, oggPart, manifestPart] = await unzip(blobs.map((blob) => ({ blob })));
+  assert.deepEqual(Object.keys(text), ["d.json", "index.html"]);
+  for (const p of [catPart, gonePart, oggPart])
+    assert.ok(Object.keys(p).length === 1 && Object.keys(p)[0].startsWith("discord-attachments/"),
+      "each attachment part holds one file, whichever order the fetches finished in");
+  assert.deepEqual(Object.keys(manifestPart), ["discord-attachments.json"]);
+  assert.equal(r.saved, 3);
+});
+
+test("streamed with nothing fetched (every link gone), the text and the manifest still come out", async () => {
+  const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: 404, [`${CDN}/11/gone.mp4`]: 404, [`${CDN}/12/f.ogg`]: 404 });
+  const blobs = [], handed = [];
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => { blobs.push(p.blob); handed.push(p); } });
+  assert.deepEqual(r.parts.map((p) => p.name), ["d-part1.zip", "d-part2.zip"]);
+  const [text, manifestPart] = await unzip(blobs.map((blob) => ({ blob })));
+  assert.deepEqual(Object.keys(text), ["d.json", "index.html"]);
+  assert.deepEqual(Object.keys(manifestPart), ["discord-attachments.json"]);
+  assert.equal(r.saved, 0);
+});
+
+test("a handed-off part's blob is released once its download is done, mid-build", async () => {
+  const big = "x".repeat(40000);
+  const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
+  const handed = [];
+  let seenReleased = null;
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => {
+      // while part 3's download runs, parts 1 and 2 must already be out of the build's hands
+      if (p.index === 3) seenReleased = handed[0].blob === null && handed[1].blob === null;
+      handed.push(p);
+    } });
+  assert.equal(seenReleased, true, "earlier parts were released while a later one downloaded");
+  assert.ok(handed.every((p) => p.blob === null));
+  assert.ok(r.parts.every((p) => !("blob" in p)));
+});
+
+test("onPart false stops the save: nothing downloads after the failed part, the manifest lists the rest", async () => {
+  const big = "x".repeat(40000);
+  const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
+  const blobs = [], handed = [];
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => { blobs.push(p.blob); handed.push(p); return p.index !== 2; } });
+  // part 1 (text) + part 2 (the failed one) + the manifest part; the half-filled part is
+  // discarded, so nothing after part 2 comes out — and part 3 is the manifest, not files
+  assert.deepEqual(r.parts.map((p) => [p.name, p.index]),
+    [["d-part1.zip", 1], ["d-part2.zip", 2], ["d-part3.zip", 3]]);
+  const [text, , manifestPart] = await unzip(blobs.map((blob) => ({ blob })));
+  assert.deepEqual(Object.keys(text), ["d.json", "index.html"]);
+  assert.deepEqual(Object.keys(manifestPart), ["discord-attachments.json"]);
+  const manifest = JSON.parse(manifestPart["discord-attachments.json"]);
+  // zipcheck reads zip contents as latin-1, so the em-dash in the marker arrives mangled;
+  // the ASCII prefix pins it
+  const unsaved = manifest.filter((m) => (m.error || "").startsWith("not saved"));
+  assert.ok(unsaved.length >= 3, `every attachment not in a downloaded part is listed unsaved (got ${unsaved.length})`);
+  assert.equal(r.saved, 0);
+});
+
+test("streamed hand-offs gate the fetches: a failing worker waits, it does not churn on", async () => {
+  const big = "x".repeat(40000);
+  let fetches = 0;
+  const table = { [`${CDN}/1/f.png`]: big, [`${CDN}/2/f.png`]: big };
+  const fetchFn = async (url) => {
+    fetches++;
+    const v = table[url.split("?")[0]];
+    if (v === undefined) return new Response("", { status: 404 });
+    return new Response(v, { status: 200, headers: { "content-length": String(Buffer.byteLength(v)) } });
+  };
+  // f1 and f2 fill part 2; every record after is a 404, and a worker holding one skips the
+  // post-add drain — only the top-of-loop gate stops it from churning through the rest
+  // while part 2's download is held
+  const many = exp();
+  many.messages = Array.from({ length: 30 }, (_, k) => ({ id: String(k + 1),
+    datetime: `2021-01-01T10:${String(k).padStart(2, "0")}:00.000Z`,
+    attachments: [{ filename: `f${k + 1}.png`, url: `${CDN}/${k + 1}/f.png` }] }));
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const building = build(many, { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => { if (p.index === 2) await gate; } });
+  await new Promise((r) => setTimeout(r, 40));   // part 2 sealed and its hand-off gated
+  // the three initial workers, plus the handful one may have churned before the gate
+  // landed; ungated, the 404 workers would run through all 30 records
+  assert.ok(fetches <= 10, `fetches stalled near the initial three (got ${fetches})`);
+  release();
+  await building;
 });
 
 test("the page escapes what people wrote and shows Discord's markup readably", () => {

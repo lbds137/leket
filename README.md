@@ -1,6 +1,6 @@
 # Discord tools
 
-A Chrome extension that saves a Discord conversation (a DM, a server channel or a thread) with its attachments as one zip. Unzipped, it holds a page you can read offline, the attachments, and the full data as JSON.
+A Chrome extension that saves a Discord conversation (a DM, a server channel or a thread) with its attachments as a zip (in parts when the save is large). Unzipped, it holds a page you can read offline, the attachments, and the full data as JSON.
 
 It reads only what Discord's own page loads while it scrolls back through the conversation. It doesn't log in as you, use a bot, or call Discord's API. That also means it saves only what your account can see.
 
@@ -18,11 +18,13 @@ Chrome may show a banner about developer-mode extensions when it starts. That's 
 
 1. Open the conversation on [discord.com](https://discord.com/app) in Chrome (the desktop app won't work).
 2. Click the **Discord tools** button in the toolbar. A small panel appears at the top right of the page.
-3. Click **Auto-scroll**. It scrolls up through the conversation until it reaches the beginning. Leave the tab alone while it runs. For a busy server channel, type a date into **stop at** first (for example `2024-01-01`) to save only from that day on.
-4. When the panel says it reached the start, click **Save**. A new tab opens and downloads the attachments, then saves the zip to your Downloads folder. Keep that tab open until it says it's done.
+3. Click **Auto-scroll**. It scrolls up through the conversation until it reaches the beginning. Leave the tab alone while it runs. To stop at a date instead — a busy server channel, or one chunk of a very long conversation — type it into **stop at** first (for example `2024-01-01`), so it saves only from that day on. The panel also shows roughly how big the attachments are, before you commit.
+4. When the panel says it reached the start, click **Save**. A new tab opens and saves the zip to your Downloads folder — a large save arrives in parts, downloaded one at a time. Keep that tab open until it says it's done.
 5. Unzip the file and open `index.html`.
 
 If you only want the messages, untick **save attachments too** before clicking Save.
+
+**A conversation too big to save at once**: save it in chunks. Find where the last chunk stopped with a Discord search like `before:2024-01-01`, click **Jump** on one of the results, then click the Discord tools button, type that same date into **start at**, and the date this chunk should reach back to into **stop at**, and auto-scroll. **Start at** clips nothing: it makes the export record the chunk's newest edge (its `reached_until`), and Save warns if any message turned out newer — that means the jump landed in the wrong place. Chunks may overlap slightly where they meet; the message ids in the JSON say what's what when merging them.
 
 ## When something goes wrong
 
@@ -30,7 +32,8 @@ If you only want the messages, untick **save attachments too** before clicking S
 - **"WOULD NOT OPEN"**: a group of messages from someone you blocked or ignored stayed closed. The panel says where it is. Scroll back there so it gets clicked again, then click Save again.
 - **"The extension didn't answer"**: the extension was updated or reloaded after you clicked its button. Your messages were still saved, as a JSON file in Downloads. For the attachments and the readable page, reload the Discord tab, click the button again and collect again.
 - **Attachments that couldn't be saved**: Discord's links to files expire after about a day. Reload the Discord tab, collect again and save again.
-- **A save in several parts** (`…-part1-of-3.zip` and so on): very large saves are split. Unzip all the parts into the same folder, then open `index.html`.
+- **A save in several parts** (`…-part1.zip`, `…-part2.zip` and so on): a large save is split, and the first part holds the readable page and the data, so it arrives even if the rest don't. Unzip all the parts into the same folder, then open `index.html`. A part that didn't finish shows a "click to try again" link in the export tab. Which attachments couldn't be fetched is listed in `discord-attachments.json` — in a streamed save it is the small part at the end. (Rarely the parts come named `…-part1-of-2.zip` instead, when a save splits without streaming: same drill.)
+- **"This save is about … and this page's browser storage reports only about … available"**: the attachments may not all fit. That number is the page's storage quota, which isn't exactly the free space on your disk. Parts download one at a time, so the ones already saved are safe: free up space, then click the part that didn't finish.
 
 ## What's in the zip
 

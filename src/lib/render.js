@@ -11,7 +11,7 @@ const AUDIO = /\.(ogg|oga|mp3|wav|m4a|flac|opus)$/i;
 // Discord's own markup in a message: inline code, links, mentions, custom emoji, timestamps.
 const TOKEN = /`([^`\n]+)`|(https?:\/\/[^\s<>"]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>/g;
 
-export function render(exp, records, { timeZone = "UTC" } = {}) {
+export function render(exp, records, { timeZone = "UTC", streamed = false } = {}) {
   const day = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const clock = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
   const stamp = new Intl.DateTimeFormat("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" });
@@ -198,6 +198,9 @@ export function render(exp, records, { timeZone = "UTC" } = {}) {
   if (exp.forwards_without_snapshot) notes.push(`${exp.forwards_without_snapshot} forwarded message(s) were saved without what was forwarded.`);
   const failed = (records || []).filter((r) => r.error).length;
   if (failed) notes.push(`${failed} attachment(s) could not be saved.`);
+  // a streamed save renders before its attachments are fetched, so it cannot know which
+  // failed; the manifest part is the failure list
+  if (streamed) notes.push("This page was written before its attachments were fetched: files missing here are listed in discord-attachments.json, in the save's final part.");
 
   let body = "", lastDay = null, last = null;
   for (const m of messages) {
