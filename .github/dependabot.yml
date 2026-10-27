@@ -1,10 +1,16 @@
 version: 2
 updates:
+  # These PRs merge on green checks with no review, so each entry waits out the days in
+  # which a hijacked release is usually caught. Security updates ignore the cooldown.
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
