@@ -205,10 +205,19 @@ test("attachment sizes are kept, the newest edge is in the export, and the panel
   assert.equal(d.reached_until, d.messages[d.messages.length - 1].datetime);
 });
 
-test("start at records a chunk's newest edge and flags a jump that landed too late", () => {
+test("start at records a chunk's newest edge and calls the overlap harmless", () => {
   const page = runPage("dm", [], { START_AT: "2021-01-04" });
   const d = page.export;
   assert.deepEqual([d.start_at, d.messages_after_start], ["2021-01-04", 4]);
   assert.match(page.status, /newest 2021-01-07 00:00 UTC/);
-  assert.match(page.status, /4 message\(s\) are dated on or after start-at 2021-01-04 \(UTC days, as "stop at" is\) — check the search jump landed below 2021-01-04/);
+  assert.match(page.status, /; 4 message\(s\) are dated on or after start-at 2021-01-04 \(UTC days, as "stop at" is\): that overlaps the chunk before, nothing is lost/);
+});
+
+test("start at warns when the newest message is more than a day before start-at, not when it is one day before", () => {
+  const gap = runPage("dm", [], { START_AT: "2021-01-10" });
+  assert.deepEqual([gap.export.start_at, gap.export.messages_after_start], ["2021-01-10", 0]);
+  assert.match(gap.status, /; the newest message is dated 2021-01-07, more than a day before start-at 2021-01-10: if the conversation had messages between those days they are NOT in this save \(jump to the newest search result and save again\)/);
+  const oneDay = runPage("dm", [], { START_AT: "2021-01-08" });
+  assert.deepEqual([oneDay.export.start_at, oneDay.export.messages_after_start], ["2021-01-08", 0]);
+  assert.ok(!oneDay.status.includes("NOT in this save"));
 });
