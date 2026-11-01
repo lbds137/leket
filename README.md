@@ -24,7 +24,7 @@ Chrome may show a banner about developer-mode extensions when it starts. That's 
 
 If you only want the messages, untick **save attachments too** before clicking Save.
 
-**A conversation too big to save at once**: save it in chunks. Find where the last chunk stopped with a Discord search like `before:2024-01-01`, click **Jump** on one of the results, then click the Discord tools button, type that same date into **start at**, and the date this chunk should reach back to into **stop at**, and auto-scroll. **Start at** clips nothing: it makes the export record the chunk's newest edge (its `reached_until`), and Save warns if any message turned out newer — that means the jump landed in the wrong place. Chunks may overlap slightly where they meet; the message ids in the JSON say what's what when merging them.
+**A conversation too big to save at once**: save it in chunks. Find where the last chunk stopped with a Discord search like `before:2024-01-01`, click **Jump** on one of the results, then click the Discord tools button, type that same date into **start at**, and the date this chunk should reach back to into **stop at**, and auto-scroll. **Start at** clips nothing: it records the chunk's newest edge (`reached_until`), any messages on or after that date only overlap the previous chunk, and Save warns if the newest message is more than a day older than that date, because messages in between may be missing — click **Jump** on the newest search result and save again. Chunks may overlap slightly where they meet; the message ids in the JSON say what's what when merging them.
 
 ## When something goes wrong
 

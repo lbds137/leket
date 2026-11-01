@@ -8,8 +8,8 @@ const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
 const VIDEO = /\.(mp4|webm|mov|m4v)$/i;
 const AUDIO = /\.(ogg|oga|mp3|wav|m4a|flac|opus)$/i;
 
-// Discord's own markup in a message: inline code, links, mentions, custom emoji, timestamps.
-const TOKEN = /`([^`\n]+)`|(https?:\/\/[^\s<>"]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>/g;
+// Discord's own markup in a message: inline code, links, mentions, custom emoji, timestamps, escapes.
+const TOKEN = /`([^`\n]+)`|(https?:\/\/[^\s<>"`]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>|\\([^0-9A-Za-z\s])/g;
 
 export function render(exp, records, { timeZone = "UTC", streamed = false } = {}) {
   const day = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -42,7 +42,7 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
     for (const t of raw.matchAll(TOKEN)) {
       out += esc(raw.slice(at, t.index));
       at = t.index + t[0].length;
-      const [whole, code, url, user, role, channel, emoji, unix] = t;
+      const [whole, code, url, user, role, channel, emoji, unix, escaped] = t;
       if (code !== undefined) {
         out += put(`<code>${esc(code)}</code>`);
       } else if (url) {
@@ -63,6 +63,8 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
       else if (unix) {
         const d = new Date(Number(unix) * 1000);
         out += Number.isNaN(+d) ? esc(whole) : put(`<span class="mention">${esc(stamp.format(d))}</span>`);
+      } else if (escaped !== undefined) {
+        out += put(esc(escaped));
       }
     }
     out += esc(raw.slice(at));
@@ -111,23 +113,24 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
       } else if (/^([ \t]*)(?:[-*]|(\d{1,9})\.) /.test(line)) {
         flush();
         const stack = [];
+        const open = (type, num) => type === "ol" && Number(num) !== 1 ? `<ol start="${Number(num)}">` : `<${type}>`;
         while (i < lines.length && (m = lines[i].match(/^([ \t]*)(?:[-*]|(\d{1,9})\.) (.*)$/))) {
           const type = m[2] ? "ol" : "ul";
           const target = Math.min(3, Math.floor(m[1].replace(/\t/g, "  ").length / 2));
           if (!stack.length) {
             stack.push(type);
-            out += `<${type}><li>${inline(m[3])}`;
+            out += `${open(type, m[2])}<li>${inline(m[3])}`;
           } else if (target > stack.length - 1) {
             while (stack.length - 1 < target) {
               stack.push(type);
-              out += `<${type}><li>`;
+              out += `${open(type, m[2])}<li>`;
             }
             out += inline(m[3]);
           } else {
             while (stack.length - 1 > target) out += `</li></${stack.pop()}>`;
             out += `</li>`;
             if (stack[stack.length - 1] !== type) {
-              out += `</${stack.pop()}><${type}>`;
+              out += `</${stack.pop()}>${open(type, m[2])}`;
               stack.push(type);
             }
             out += `<li>${inline(m[3])}`;
@@ -152,7 +155,7 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
     if ((src.match(/```/g) || []).length % 2) src += "```";
     const parts = src.split(/(```[\s\S]*?```)/);
     return parts.map((part, i) => {
-      if (i % 2) return `<pre>${esc(part.slice(3, -3).replace(/^[\w+-]*\n/, ""))}</pre>`;
+      if (i % 2) return `<pre>${esc(part.slice(3, -3).replace(/^[\w+-]*\n(?=[\s\S])/, ""))}</pre>`;
       let s = part;
       if (i > 0) s = s.replace(/^\n/, "");
       if (i + 1 < parts.length) s = s.replace(/\n$/, "");
@@ -192,10 +195,10 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
       : "The start of the conversation was not reached: older messages may be missing.");
   }
   const hg = exp.hidden_groups || {};
-  if (hg.not_opened) notes.push(`${hg.not_opened} group(s) of blocked or ignored messages would not open: their messages are missing.`);
+  if (hg.not_opened) notes.push(`${esc(hg.not_opened)} group(s) of blocked or ignored messages would not open: their messages are missing.`);
   const dom = messages.filter((m) => m.from_dom).length;
   if (dom) notes.push(`${dom} message(s) were saved from the page's text only (no author, no attachments).`);
-  if (exp.forwards_without_snapshot) notes.push(`${exp.forwards_without_snapshot} forwarded message(s) were saved without what was forwarded.`);
+  if (exp.forwards_without_snapshot) notes.push(`${esc(exp.forwards_without_snapshot)} forwarded message(s) were saved without what was forwarded.`);
   const failed = (records || []).filter((r) => r.error).length;
   if (failed) notes.push(`${failed} attachment(s) could not be saved.`);
   // a streamed save renders before its attachments are fetched, so it cannot know which

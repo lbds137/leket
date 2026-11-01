@@ -9,7 +9,8 @@
 // or until the "stop at" date when one is typed in; "start at" names a chunk's newest edge
 // (a very long conversation is saved in chunks: jump to a Discord search result for the
 // upper edge, collect down to "stop at", and let the saves be merged by message id —
-// "start at" only records the edge and warns when the jump landed too late). "Save" hands
+// "start at" clips nothing, notes harmless overlap with the chunk before, and warns when
+// the jump landed more than a day back and left a gap). "Save" hands
 // discord-<name>-<channel>.json to the extension's export tab, which fetches the
 // attachments and saves the zip, in parts when it is large.
 // Text comes from the message object Discord keeps in React (memoizedProps.message), not
@@ -629,8 +630,9 @@
 
   // "start at": the newest edge of a chunk, for a save resumed mid-conversation (jump to a
   // Discord search result first, then collect down to the "stop at" day). Nothing is
-  // clipped: at Save the export says how many messages sit on or after the day, so a jump
-  // that landed in the wrong place is visible at once.
+  // clipped: messages on or after the day only overlap the chunk before, and Save warns
+  // when the newest message is more than a day older (a jump that landed too far back and
+  // may have left a gap).
   const startAt = document.createElement("input");
   startAt.placeholder = "start at YYYY-MM-DD (optional)";
   startAt.style.cssText = "display:block;width:210px";
@@ -767,6 +769,8 @@
     const startDay = startAtDay();
     const afterStart = startDay ? messages.filter((m) => String(m.datetime || "").slice(0, 10) >= startDay).length : 0;
     const newest = messages.length ? messages[messages.length - 1].datetime : null;
+    const newestDay = newest ? newest.slice(0, 10) : null;
+    const startGap = !!(startDay && newestDay && Date.parse(startDay) - Date.parse(newestDay) > 86400000);
     for (const m of messages) {
       const p = m.author_id && people.get(m.author_id);
       if (p) m.nick = p.nick;
@@ -793,7 +797,7 @@
         // the newest edge of what was collected: a chunk resumed mid-conversation names it,
         // so gaps between chunks can be checked. start_at is the upper bound that was asked
         // (null when none was); messages_after_start counts the collected messages on or
-        // after that day — zero unless a search jump landed too late (they are kept anyway)
+        // after that day, which overlap the chunk before (they are kept anyway)
         reached_until: newest,
         start_at: startDay,
         messages_after_start: afterStart,
@@ -845,7 +849,8 @@
       (newest ? ` (newest ${newest.slice(0, 16).replace("T", " ")} UTC)` : "") +
       (reachedStart ? "" : reachedSince ? ` (from ${reachedSince} on, as asked)`
         : " — the start was not reached: older messages may be missing") +
-      (afterStart ? `; ${afterStart} message(s) are dated on or after start-at ${startDay} (UTC days, as "stop at" is) — check the search jump landed below ${startDay}` : "") +
+      (afterStart ? `; ${afterStart} message(s) are dated on or after start-at ${startDay} (UTC days, as "stop at" is): that overlaps the chunk before, nothing is lost` : "") +
+      (startGap ? `; the newest message is dated ${newestDay}, more than a day before start-at ${startDay}: if the conversation had messages between those days they are NOT in this save (jump to the newest search result and save again)` : "") +
       (hiddenGroups.length ? `; ${hiddenGroups.length - notOpened} blocked/ignored groups opened` : "") +
       (notOpened ? `, ${notOpened} WOULD NOT OPEN: their messages are missing` +
         whereShut([...hidden.values()].filter((g) => !g.opened)) : "") +

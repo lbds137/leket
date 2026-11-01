@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Discord tools",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Save a Discord DM, channel or thread, with its attachments, as one zip you can open offline.",
   "action": {
     "default_title": "Discord tools: save this conversation",

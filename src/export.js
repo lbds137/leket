@@ -179,10 +179,10 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       }
     }
     bar.hidden = true;
-    // the Discord tab held this save so a failed build could be retried by reloading this
-    // tab; every part is downloaded now, so it can let go
-    ask({ type: "discord-tools:release" }).catch(() => {});
     const badParts = results.filter((r) => !r.ok);
+    // the Discord tab holds the save so that reloading this tab can rebuild it, so it lets
+    // go only once every part is safely downloaded
+    if (!badParts.length) ask({ type: "discord-tools:release" }).catch(() => {});
     const n = (exp.messages || []).length;
     const savedText = `Saved ${n} messages${records.length ? ` and ${saved} of ${records.length} attachments` : ""}.`;
     $("detail").innerHTML =

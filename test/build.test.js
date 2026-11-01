@@ -257,7 +257,7 @@ test("a fetch in flight when the save stops still counts as failed", async () =>
   // records are in-process, so unlike the unzipped-manifest asserts below these can
   // pin the full strings, em-dashes included
   assert.equal(r.records.find((m) => m.filename === "cat pic.png").error,
-    "saved into part 2, which didn't finish downloading — retry part 2 to get this file");
+    "saved into part 2, which didn't finish downloading — retry part 2 in the export tab if it's still open, otherwise save again to get this file");
   assert.equal(r.records.find((m) => m.filename === "f.ogg").error, "not saved — the save stopped early");
   assert.deepEqual(r.parts.map((p) => [p.name, p.index]),
     [["d-part1.zip", 1], ["d-part2.zip", 2], ["d-part3.zip", 3]]);
@@ -302,6 +302,87 @@ test("streamed hand-offs gate the fetches: a failing worker waits, it does not c
   assert.ok(fetches <= 10, `fetches stalled near the initial three (got ${fetches})`);
   release();
   await building;
+});
+
+test("streamed gate: a worker waking at the gate after others claimed the last record stops cleanly", async () => {
+  const four = exp();
+  four.messages = Array.from({ length: 4 }, (_, k) => ({
+    id: String(k + 1),
+    datetime: `2021-01-01T10:0${k}:00.000Z`,
+    attachments: [{ filename: `f${k + 1}.bin`, url: `${CDN}/${k + 1}/f.bin` }],
+  }));
+  const payload = "x".repeat(15000);
+  const blobs = [];
+  const r = await build(four, {
+    file: "d.json",
+    partLimit: 20000,
+    concurrency: 3,
+    wait: 0,
+    fetchFn: async () => new Response(payload, { status: 200, headers: { "content-length": "15000" } }),
+    onPart: async (p) => {
+      blobs.push(p.blob);
+      await new Promise((res) => setTimeout(res, 20));
+    },
+  });
+  assert.equal(r.saved, 4);
+  assert.equal(r.failed.length, 0);
+  const lastPart = (await unzip([{ blob: blobs[blobs.length - 1] }]))[0];
+  assert.deepEqual(Object.keys(lastPart), ["discord-attachments.json"]);
+});
+
+test("a dead link answering while a part downloads parks its worker at the gate; the save still finishes", async () => {
+  const five = exp();
+  five.messages = Array.from({ length: 5 }, (_, k) => ({
+    id: String(k + 1),
+    datetime: `2021-01-01T10:0${k}:00.000Z`,
+    attachments: [{ filename: `f${k + 1}.bin`, url: `${CDN}/${k + 1}/f.bin` }],
+  }));
+  const payload = "x".repeat(15000);
+  // file 2 seals a part at 20 ms and its download holds the drain for 100 ms. File 3's 403 at
+  // 30 ms skips the packing path, so that worker reaches the gate with file 5 still unclaimed;
+  // another worker claims file 5 first when the drain ends, leaving the parked one nothing
+  const delay = { 1: 10, 2: 20, 3: 30, 4: 40, 5: 1 };
+  const names = [];
+  const r = await build(five, {
+    file: "d.json",
+    partLimit: 20000,
+    concurrency: 3,
+    wait: 0,
+    fetchFn: async (url) => {
+      const k = Number(url.split("/")[5]);
+      await new Promise((res) => setTimeout(res, delay[k]));
+      if (k === 3) return new Response("", { status: 403 });
+      return new Response(payload, { status: 200, headers: { "content-length": "15000" } });
+    },
+    onPart: async (p) => {
+      names.push(p.name);
+      await new Promise((res) => setTimeout(res, 100));
+    },
+  });
+  assert.equal(r.saved, 4);
+  assert.deepEqual(r.failed.map((rec) => [rec.filename, rec.error]), [["f3.bin", "link expired or gone (HTTP 403)"]]);
+  assert.equal(names.at(-1), r.parts.at(-1).name);
+});
+
+test("streamed build records a duplicate zip entry name on that record instead of rejecting the build", async () => {
+  const dup = exp();
+  dup.messages = [
+    { id: "10", datetime: "2021-01-01T10:00:00.000Z", attachments: [{ filename: "same.png", url: `${CDN}/10/same.png` }] },
+    { id: "10", datetime: "2021-01-01T10:00:00.000Z", attachments: [{ filename: "same.png", url: `${CDN}/10/same.png` }] },
+  ];
+  const blobs = [];
+  const r = await build(dup, {
+    file: "d.json",
+    fetchFn: fakeFetch({ [`${CDN}/10/same.png`]: "PNGDATA" }),
+    wait: 0,
+    onPart: async (p) => { blobs.push(p.blob); },
+  });
+  assert.equal(r.saved, 1);
+  assert.equal(r.failed.length, 1);
+  const bad = r.records.filter((rec) => (rec.error || "").startsWith("couldn't be added to the zip:"));
+  assert.equal(bad.length, 1);
+  const lastPart = (await unzip([{ blob: blobs[blobs.length - 1] }]))[0];
+  assert.deepEqual(Object.keys(lastPart), ["discord-attachments.json"]);
 });
 
 test("the page escapes what people wrote and shows Discord's markup readably", () => {
@@ -400,4 +481,33 @@ test("review follow-ups: sentinels, unclosed fences, bold links, CRLF, list type
   assert.ok(one("# Head\r\nnext").includes('<h3 class="md-h1">Head</h3>'));
   // a ul switching to an ol at the same level makes sibling lists, not nesting
   assert.ok(one("- a\n1. b").includes("<ul><li>a</li></ul><ol><li>b</li></ol>"));
+});
+
+test("ordered list start numbers, backslash escapes, backtick-bounded URLs, single-line fences and escaped note counts", () => {
+  const d = exp();
+  const one = (text) => {
+    d.messages = [{ id: "30", datetime: "2021-01-01T10:00:00.000Z", author: "A", author_id: "1", text, attachments: [], embeds: [] }];
+    return render(d, [], { timeZone: "UTC" });
+  };
+  assert.ok(one("1998. what a year").includes('<div class="text"><ol start="1998"><li>what a year</li></ol></div>'));
+  assert.ok(one("3. three\n4. four").includes('<div class="text"><ol start="3"><li>three</li><li>four</li></ol></div>'));
+  assert.ok(one("1. a").includes('<div class="text"><ol><li>a</li></ol></div>'));
+  assert.ok(one("0. a").includes('<div class="text"><ol start="0"><li>a</li></ol></div>'));
+  assert.ok(one("- a\n  2. b").includes("<ul><li>a<ol start=\"2\"><li>b</li></ol></li></ul>"));
+  assert.ok(one("- a\n2. b").includes("<ul><li>a</li></ul><ol start=\"2\"><li>b</li></ol>"));
+  assert.ok(one("\\*x\\*").includes('<div class="text">*x*</div>'));
+  assert.ok(one("\\_x\\_").includes('<div class="text">_x_</div>'));
+  assert.ok(one("\\||s\\||").includes('<div class="text">||s||</div>'));
+  assert.ok(one("\\\\").includes('<div class="text">\\</div>'));
+  assert.ok(one("C:\\Users").includes('<div class="text">C:\\Users</div>'));
+  assert.ok(one("`\\*`").includes('<div class="text"><code>\\*</code></div>'));
+  assert.ok(one("see https://x.com/a`b`").includes('<div class="text">see <a href="https://x.com/a">https://x.com/a</a><code>b</code></div>'));
+  assert.ok(one("```hello\n```").includes('<div class="text"><pre>hello\n</pre></div>'));
+  assert.ok(one("```hello\nworld```").includes('<div class="text"><pre>world</pre></div>'));
+  const notesExp = exp();
+  notesExp.hidden_groups = { not_opened: "<b>1</b>" };
+  notesExp.forwards_without_snapshot = "<script>2</script>";
+  const notesHtml = render(notesExp, [], { timeZone: "UTC" });
+  assert.ok(notesHtml.includes("&lt;b&gt;1&lt;/b&gt; group(s)") && !notesHtml.includes("<b>1</b>"));
+  assert.ok(notesHtml.includes("&lt;script&gt;2&lt;/script&gt; forwarded") && !notesHtml.includes("<script>2</script>"));
 });

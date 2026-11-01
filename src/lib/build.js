@@ -118,11 +118,11 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
           if (ok === false) {
             stopped = true;
             sealedParts.length = 0;
-            // the failed part's own files are named by part, so the manifest line stays
-            // true if that part is retried by hand later
+            // the failed part's own files are named by part, and the line must stay true
+            // after the export tab has closed
             for (const i of item.idx) {
               if (!records[i].error) {
-                records[i].error = `saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} to get this file`;
+                records[i].error = `saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} in the export tab if it's still open, otherwise save again to get this file`;
                 failed++;
               }
             }
@@ -143,7 +143,8 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
       // handed off, so a slow download can't pile 2 GiB parts up in memory
       if (!got) {
         while ((draining || sealedParts.length) && !stopped) await drain();
-        if (stopped) break;
+        // others may have claimed the last records while this one waited at the gate
+        if (stopped || next >= records.length) break;
       }
       const i = next++;
       const r = records[i];
@@ -159,7 +160,15 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
         got[i] = res;
       } else {
         // each file goes in as the Blob it was fetched into, not a copy
-        zip.add(`${FOLDER}/${r.file}`, res.blob, res.crc);
+        try {
+          zip.add(`${FOLDER}/${r.file}`, res.blob, res.crc);
+        } catch (e) {
+          r.error = `couldn't be added to the zip: ${(e && e.message) || e}`;
+          failed++;
+          onProgress({ phase: "fetch", done: ++done, total: records.length, failed });
+          await drain();
+          continue;
+        }
         sinceSeal.push(i);
         packed++;
         onProgress({ phase: "zip", done: packed, total: records.length });
