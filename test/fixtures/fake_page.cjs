@@ -4,7 +4,8 @@
 // (guild | guild-guildstore-roles | guild-no-stores | guild-no-getmember |
 // guild-throwing-getmember | guild-no-cache | guild-registry | guild-unnamed |
 // guild-empty-cache | guild-two-runtimes | guild-hidden | guild-hidden-inside |
-// guild-hidden-throws | guild-hidden-returns | dm | dm-forward). With BRIDGE=1 in the
+// guild-hidden-throws | guild-hidden-returns | dm | dm-forward | auto; auto clicks
+// Auto-scroll instead of Save and prints {paces, loads, status}). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
 // (posted: the message) instead of downloading it. START_AT fills the start-at box before
 // Save. The stores mimic the shape the collector
@@ -141,6 +142,27 @@ const lis = msgs.map((m) => el({
   parentElement: null,
   "__reactFiber$x": { memoizedProps: { message: m }, return: null },
 }));
+// auto: the rows sit in a scroller; each wheel turn at its top loads one older message,
+// AUTO_LOADS in all, and the turn after that shows Discord's start-of-channel header.
+// Time is virtual (each timer moves the clock by its delay and fires at once), and the
+// delay before each Auto-scroll step is recorded in `paces`.
+const AUTO = scenario === "auto";
+const AUTO_LOADS = 25;
+let loads = 0, vnow = Date.UTC(2021, 1, 1);
+const paces = [];
+const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, querySelectorAll: () => [],
+  dispatchEvent() {
+    if (loads === AUTO_LOADS) return void (this.textContent = "Welcome to #general!");
+    const m = { id: String(BigInt(snowflake(1)) - BigInt(++loads)), author: users.alice, content: `older ${loads}` };
+    lis.push(el({ id: `chat-messages-${CHANNEL}-${m.id}`, parentElement: this,
+      "__reactFiber$x": { memoizedProps: { message: m }, return: null } }));
+  } });
+if (AUTO) lis.forEach((li) => { li.parentElement = scrollEl; });
+const virtualSetTimeout = (f, ms = 0) => {
+  if (f.name === "step") paces.push(ms);
+  return setTimeout(() => { vnow += ms; f(); }, 0);
+};
+class VirtualDate extends Date { static now() { return vnow; } }
 // guild-hidden: the message list as a tree, with bars folding a blocked or ignored user's
 // messages (the shape is a guess at Discord's: a bar naming the kind and count, with a
 // Show/Hide button in it). Opening a bar puts its rows in the list after it.
@@ -225,7 +247,8 @@ const document = {
   title: title || (IS_DM ? "Discord | @someone" : "Discord | #general | Test Server"),
   body: el(),
   querySelectorAll: (sel) => (sel !== ROW ? [] : scenario.startsWith("guild-hidden") ? list.querySelectorAll(ROW) : lis),
-  querySelector: (sel) => (scenario.startsWith("guild-hidden") && sel === '[data-list-id="chat-messages"]' ? list : null),
+  querySelector: (sel) => (AUTO && sel === ROW ? lis[0]
+    : scenario.startsWith("guild-hidden") && sel === '[data-list-id="chat-messages"]' ? list : null),
   getElementById: (id) => {
     const m = id.match(/^message-username-(\d+)$/);
     const r = m && rendered[m[1]];
@@ -263,15 +286,15 @@ const sandbox = {
   document,
   alert: (s) => { throw new Error("alert: " + s); },
   console,
-  getComputedStyle: () => ({ overflowY: "visible" }),
+  getComputedStyle: (e) => ({ overflowY: AUTO && e === scrollEl ? "auto" : "visible" }),
   requestAnimationFrame: (f) => f(),
-  setTimeout, clearTimeout,
+  setTimeout: AUTO ? virtualSetTimeout : setTimeout, clearTimeout,
   // the page's changes are announced by hand (mutated()), as Discord's DOM would
   MutationObserver: class { constructor(cb) { observed.push(cb); } observe() {} disconnect() {} },
   Blob: class { constructor(parts) { this.parts = parts; } },
   URL: { createObjectURL: (b) => b },
   WheelEvent: class {},
-  BigInt, Date, JSON, Symbol, Map, Object, Array, Number, String,
+  BigInt, Date: AUTO ? VirtualDate : Date, JSON, Symbol, Map, Object, Array, Number, String,
 };
 sandbox.window = sandbox;
 // guild-no-cache: the build keeps no module cache (req.c), only the factories (req.m);
@@ -314,6 +337,13 @@ const save = created.find((e) => e.tag === "button" && e.textContent === "Save")
 // a change to the page, then the collector's 300 ms debounce
 const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r) => setTimeout(r, 350)); };
 (async () => {
+  if (AUTO) {
+    const auto = created.find((e) => e.tag === "button" && e.textContent === "Auto-scroll");
+    auto.onclick();
+    while (auto.textContent !== "Auto-scroll") await new Promise((r) => setTimeout(r, 1));
+    const status = created.filter((e) => e.tag === "div")[2];
+    return void process.stdout.write(JSON.stringify({ paces, loads, status: status.textContent }));
+  }
   if (returning) {
     const at = list.children.indexOf(returning);
     list.children.splice(at, 1);

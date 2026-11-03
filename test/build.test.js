@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build, fetchFile } from "../src/lib/build.js";
+import { build, fetchFile, restBetweenFiles } from "../src/lib/build.js";
 import { attachmentList, fetchable, fileName, needsParts } from "../src/lib/files.js";
 import { PART_LIMIT } from "../src/lib/zip.js";
 import { render } from "../src/lib/render.js";
@@ -114,7 +114,7 @@ test("a download that stalls is dropped after the idle time, and the build goes 
 
 test("the zip holds the JSON, the page, the manifest and the files that came", async () => {
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: "PNGDATA", [`${CDN}/11/gone.mp4`]: 404, [`${CDN}/12/f.ogg`]: "OGG" });
-  const r = await build(exp(), { file: "discord-general-600.json", fetchFn, wait: 0 });
+  const r = await build(exp(), { file: "discord-general-600.json", fetchFn, wait: 0, gap: 0 });
   assert.deepEqual(r.parts.map((p) => p.name), ["discord-general-600.zip"]);
   assert.equal(r.saved, 2);
   assert.deepEqual(r.failed.map((f) => [f.filename, f.error]), [["gone.mp4", "link expired or gone (HTTP 404)"],
@@ -147,7 +147,7 @@ test("a streamed page names the manifest as its failure list; a small save's pag
 test("past the part limit the save comes in numbered parts, the page in the first", async () => {
   const big = "x".repeat(40000);
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000 });
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000 });
   assert.deepEqual(r.parts.map((p) => p.name), ["d-part1-of-3.zip", "d-part2-of-3.zip", "d-part3-of-3.zip"]);
   const parts = await unzip(r.parts);
   assert.ok("index.html" in parts[0]);
@@ -158,7 +158,7 @@ test("streamed, the text part goes out first and the attachment parts follow, on
   const big = "x".repeat(40000);
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
   const blobs = [], handed = [];
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => { blobs.push(p.blob); handed.push(p); } });
   // the total isn't known while streaming, so names carry only the part number; the
   // manifest comes last, in its own small part
@@ -178,7 +178,7 @@ test("streamed, the text part goes out first and the attachment parts follow, on
 test("when the last attachment part fails, nothing is left behind: retrying that part completes the save", async () => {
   const big = "x".repeat(40000);
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => p.index !== 4 });
   assert.deepEqual(r.parts.map((p) => p.index), [1, 2, 3, 4, 5]);
   assert.equal(r.records.filter((m) => (m.error || "").startsWith("saved into part 4")).length, 1);
@@ -188,7 +188,7 @@ test("when the last attachment part fails, nothing is left behind: retrying that
 test("streamed with nothing fetched (every link gone), the text and the manifest still come out", async () => {
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: 404, [`${CDN}/11/gone.mp4`]: 404, [`${CDN}/12/f.ogg`]: 404 });
   const blobs = [], handed = [];
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => { blobs.push(p.blob); handed.push(p); } });
   assert.deepEqual(r.parts.map((p) => p.name), ["d-part1.zip", "d-part2.zip"]);
   const [text, manifestPart] = await unzip(blobs.map((blob) => ({ blob })));
@@ -202,7 +202,7 @@ test("a handed-off part's blob is released once its download is done, mid-build"
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
   const handed = [];
   let seenReleased = null;
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => {
       // while part 3's download runs, parts 1 and 2 must already be out of the build's hands
       if (p.index === 3) seenReleased = handed[0].blob === null && handed[1].blob === null;
@@ -217,7 +217,8 @@ test("onPart false stops the save: nothing downloads after the failed part, the 
   const big = "x".repeat(40000);
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
   const blobs = [], handed = [];
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  // three fetches in flight when part 2 fails: the counts below are for that timing
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, concurrency: 3, partLimit: 60000,
     onPart: async (p) => { blobs.push(p.blob); handed.push(p); return p.index !== 2; } });
   // part 1 (text) + part 2 (the failed one) + the manifest part; the half-filled part is
   // discarded, so nothing after part 2 comes out — and part 3 is the manifest, not files
@@ -249,7 +250,7 @@ test("a fetch in flight when the save stops still counts as failed", async () =>
     return new Response(v, { status: 200, headers: { "content-length": String(Buffer.byteLength(v)) } });
   };
   const blobs = [];
-  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => {
       blobs.push(p.blob);
       if (p.index !== 2) return true;
@@ -310,7 +311,7 @@ test("streamed hand-offs gate the fetches: a failing worker waits, it does not c
   const gate = new Promise((r) => { release = r; });
   let reachedGate;
   const reached = new Promise((r) => { reachedGate = r; });
-  const building = build(many, { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+  const building = build(many, { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => { if (p.index === 2) { reachedGate(); await gate; } } });
   await reached;   // part 2 sealed and its hand-off is gated
   // the three initial workers, plus the handful one may have churned before the gate
@@ -333,7 +334,7 @@ test("streamed gate: a worker waking at the gate after others claimed the last r
     file: "d.json",
     partLimit: 20000,
     concurrency: 3,
-    wait: 0,
+    wait: 0, gap: 0,
     fetchFn: async () => new Response(payload, { status: 200, headers: { "content-length": "15000" } }),
     onPart: async (p) => {
       blobs.push(p.blob);
@@ -372,7 +373,7 @@ test("a dead link answering while a part downloads parks its worker at the gate;
     file: "d.json",
     partLimit: 20000,
     concurrency: 3,
-    wait: 0,
+    wait: 0, gap: 0,
     fetchFn,
     onProgress: ({ phase, done }) => { if (phase === "fetch") fetched = done; else packed = done; },
     onPart: async (p) => {
@@ -416,7 +417,7 @@ test("streamed build records a duplicate zip entry name on that record instead o
   const r = await build(dup, {
     file: "d.json",
     fetchFn: fakeFetch({ [`${CDN}/10/same.png`]: "PNGDATA" }),
-    wait: 0,
+    wait: 0, gap: 0,
     onPart: async (p) => { blobs.push(p.blob); },
   });
   assert.equal(r.saved, 1);
@@ -552,4 +553,37 @@ test("ordered list start numbers, backslash escapes, backtick-bounded URLs, sing
   const notesHtml = render(notesExp, [], { timeZone: "UTC" });
   assert.ok(notesHtml.includes("&lt;b&gt;1&lt;/b&gt; group(s)") && !notesHtml.includes("<b>1</b>"));
   assert.ok(notesHtml.includes("&lt;script&gt;2&lt;/script&gt; forwarded") && !notesHtml.includes("<script>2</script>"));
+});
+
+test("attachments are fetched two at a time by default, each worker resting between files", async () => {
+  const six = exp();
+  six.messages = Array.from({ length: 6 }, (_, k) => ({
+    id: String(k + 1), datetime: `2021-01-01T10:0${k}:00.000Z`,
+    attachments: [{ filename: `f${k + 1}.bin`, url: `${CDN}/${k + 1}/f.bin` }],
+  }));
+  let inFlight = 0, most = 0;
+  const starts = [];
+  const fetchFn = async () => {
+    starts.push(Date.now());
+    most = Math.max(most, ++inFlight);
+    await new Promise((r) => setTimeout(r, 5));
+    inFlight--;
+    return new Response("data", { status: 200 });
+  };
+  const rests = [];
+  const r = await build(six, { file: "d.json", fetchFn, wait: 0, gap: () => { rests.push(1); return 40; } });
+  assert.equal(r.failed.length, 0);
+  assert.equal(most, 2);
+  // a rest before every file but each worker's first: 6 files, 2 workers
+  assert.equal(rests.length, 4);
+  // with the rests, the six requests span at least two rests per worker
+  assert.ok(starts.at(-1) - starts[0] >= 2 * 40 - 5, `requests spread over ${starts.at(-1) - starts[0]} ms`);
+});
+
+test("the default rest between files is 0.5-1 s", () => {
+
+  for (let i = 0; i < 200; i++) {
+    const ms = restBetweenFiles();
+    assert.ok(ms >= 500 && ms < 1000, String(ms));
+  }
 });

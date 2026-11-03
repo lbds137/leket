@@ -18,8 +18,8 @@ Chrome may show a banner about developer-mode extensions when it starts. That's 
 
 1. Open the conversation on [discord.com](https://discord.com/app) in Chrome (the desktop app won't work).
 2. Click the **Discord tools** button in the toolbar. A small panel appears at the top right of the page.
-3. Click **Auto-scroll**. It scrolls up through the conversation until it reaches the beginning. Leave the tab alone while it runs. To stop at a date instead — a busy server channel, or one chunk of a very long conversation — type it into **stop at** first (for example `2024-01-01`), so it saves only from that day on. The panel also shows roughly how big the attachments are, before you commit.
-4. When the panel says it reached the start, click **Save**. A new tab opens and saves the zip to your Downloads folder — a large save arrives in parts, downloaded one at a time. Keep that tab open until it says it's done.
+3. Click **Auto-scroll**. It scrolls up through the conversation until it reaches the beginning. It goes at a reader's pace on purpose — a few seconds per screenful of history, and a rest of under a minute every twenty or so — so a long conversation takes a while (about 5–8 minutes for 4,000 messages); Discord sees each screenful as a request from your account. Leave the tab alone while it runs. To stop at a date instead — a busy server channel, or one chunk of a very long conversation — type it into **stop at** first (for example `2024-01-01`), so it saves only from that day on. The panel also shows roughly how big the attachments are, before you commit.
+4. When the panel says it reached the start, click **Save**. A new tab opens and saves the zip to your Downloads folder — a large save arrives in parts, downloaded one at a time. Attachments are fetched two at a time with a short pause between files, so a save with many of them takes a while. Keep that tab open until it says it's done.
 5. Unzip the file and open `index.html`.
 
 If you only want the messages, untick **save attachments too** before clicking Save.
