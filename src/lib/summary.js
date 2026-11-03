@@ -19,6 +19,18 @@ export function stateStep(state) {
   return "retry";
 }
 
+// how one try's download came out, in time or late: ok is true (finished), false
+// (interrupted or refused) or null (no word within the wait). "save": the part is saved,
+// whichever try it was; "keep": already saved, its label stands; "didnt-finish" /
+// "no-word": the latest try says so, once no newer try is running; "ignore": an older
+// try's failure, or one while a newer try runs, says nothing
+export function endStep({ ok, saved, latest, inFlight }) {
+  if (ok === true) return "save";
+  if (saved) return "keep";
+  if (!latest || inFlight) return "ignore";
+  return ok === false ? "didnt-finish" : "no-word";
+}
+
 // The summary, from where things stand now. results: one { index, ok } per part handed to
 // a download; failed: the build's records with an error; leftBehind: records a stopped
 // streamed save kept out of every part. first: the build has just returned (later calls
