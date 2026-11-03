@@ -79,6 +79,23 @@ test("no word within the timeout settles null: it may still be downloading", asy
   d.fire(9, "complete");   // a late event after the timeout changes nothing
 });
 
+test("with onLate, a download that settles in time stops being watched like any other", async () => {
+  const d = fakeDownloads();
+  const late = [];
+  const p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { onLate: (ok) => late.push(ok) });
+  d.start(2);
+  await settle();
+  d.fire(2, "complete");
+  assert.equal(await p, true);
+  assert.equal(d.listening(), 0);
+  const e = fakeDownloads();
+  const q = trackDownload(e, { url: "blob:x", filename: "a.zip" }, { onLate: (ok) => late.push(ok) });
+  e.refuse();
+  assert.equal(await q, false);
+  assert.equal(e.listening(), 0);
+  assert.deepEqual(late, [], "an in-time end is the promise's, not onLate's");
+});
+
 test("with onLate, a download still going at the timeout is watched to its end", async () => {
   const d = fakeDownloads();
   const late = [];

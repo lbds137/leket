@@ -117,8 +117,9 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
         if (result.ok) return;
         result.ok = true;
         partsSaved++;
-        // the object URL can go, and the dead link becomes a plain label
-        URL.revokeObjectURL(url);
+        // the object URL can go (once no retry is still reading it: attempt() frees it
+        // then), and the dead link becomes a plain label
+        if (!inFlight) URL.revokeObjectURL(url);
         a.removeAttribute("href");
         a.textContent = `${label} — saved`;
         if (render) render();
@@ -128,23 +129,30 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       // may not have come back yet): a click then never starts another
       let inFlight = false;
       const didntFinish = () => { a.textContent = `${label} — didn't finish; click to try again`; };
-      // a download that outlived the quarter-hour wait still ends some time: a finish saves
-      // the part; a failure is said only while it is still the latest try and none is running
-      const onLate = (ok, id) => {
-        if (ok) markSaved();
-        else if (!result.ok && !inFlight && id === lastId) didntFinish();
-      };
+      // each attempt is numbered: an older one whose id or end arrives late (its download()
+      // was held up past the wait) must not take lastId or the label from the latest
+      let tries = 0;
       const attempt = async () => {
+        const mine = ++tries;
         inFlight = true;
         let ok;
         try {
-          ok = await trackDownload(chrome.downloads, { url, filename: name }, { onStart: (id) => { lastId = id; }, onLate });
+          ok = await trackDownload(chrome.downloads, { url, filename: name }, {
+            onStart: (id) => { if (mine === tries) lastId = id; },
+            // a download that outlived the quarter-hour wait still ends some time: a finish
+            // saves the part, whichever try it was; a failure is said only for the latest
+            // try, and only while no retry is running
+            onLate: (late) => {
+              if (late) markSaved();
+              else if (!result.ok && !inFlight && mine === tries) didntFinish();
+            },
+          });
         } finally {
           inFlight = false;
         }
-        // nothing marks a part saved while its attempt runs (a click then only says so),
-        // but a saved label is never overwritten whatever this attempt says
-        if (result.ok) return;
+        // an older try's late finish can save the part while this one runs: its label
+        // stands, and the URL this try was reading can go now
+        if (result.ok) { URL.revokeObjectURL(url); return; }
         if (ok) markSaved();
         else if (ok === false) didntFinish();
         // no word for a quarter of an hour: it may still be downloading, so say that

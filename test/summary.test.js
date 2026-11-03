@@ -86,6 +86,11 @@ test("files left out of every part keep the save held, whatever the parts do", (
     results: [{ index: 1, ok: true }, { index: 2, ok: true }, { index: 3, ok: true }] });
   assert.equal(s.release, false);
   assert.match(s.status, /This tab stays open because 1 attachment\(s\) could not be saved\. The save stopped early, so 4 of them/);
+  assert.match(s.status, /discord-attachments\.json was written before part 2 was saved/);
+  // while a part is still failing, the stop's own advice shows
+  const failing = summarize({ ...streamedFailure(), leftBehind: 4, first: true,
+    results: [{ index: 1, ok: true }, { index: 2, ok: false }, { index: 3, ok: true }] });
+  assert.match(failing.status, /The save stopped there — 4 attachment\(s\) never got into a part/);
 });
 
 test("a save without attachments counts only messages", () => {

@@ -124,7 +124,7 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
             for (const i of item.idx) {
               if (!records[i].error) {
                 records[i].failedPart = entry.index;
-                records[i].error =`saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} in the export tab if it's still open, otherwise save again to get this file`;
+                records[i].error = `saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} in the export tab if it's still open, otherwise save again to get this file`;
                 failed++;
               }
             }
