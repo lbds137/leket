@@ -4,7 +4,7 @@
 // click after the part was saved.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clickStep, stateStep, summarize } from "../src/lib/summary.js";
+import { clickStep, endStep, stateStep, summarize } from "../src/lib/summary.js";
 
 const idle = { busy: false, saved: false, inFlight: false };
 
@@ -27,6 +27,23 @@ test("a retry asks Chrome about the last download first, and downloads again onl
   assert.equal(stateStep(null), "retry", "erased from Chrome's list");
   // the start was refused, so there is no id to ask about
   assert.equal(clickStep({ ...idle, lastId: null }), "retry");
+});
+
+test("a try's end: a finish saves whichever try it was; a failure speaks only for the latest", () => {
+  const latest = { saved: false, latest: true, inFlight: false };
+  assert.equal(endStep({ ...latest, ok: true }), "save");
+  assert.equal(endStep({ ...latest, ok: false }), "didnt-finish");
+  assert.equal(endStep({ ...latest, ok: null }), "no-word");
+  // an older try held up past the wait, finishing while a retry runs: still saves
+  assert.equal(endStep({ ok: true, saved: false, latest: false, inFlight: true }), "save");
+  // ...but its failure must not relabel the retry, nor the latest's own after it
+  assert.equal(endStep({ ok: false, saved: false, latest: false, inFlight: true }), "ignore");
+  assert.equal(endStep({ ok: false, saved: false, latest: false, inFlight: false }), "ignore");
+  // the latest try's late failure while a newer click is starting one is not said either
+  assert.equal(endStep({ ok: false, saved: false, latest: true, inFlight: true }), "ignore");
+  // once saved, a cancelled or late try leaves the label be
+  assert.equal(endStep({ ok: false, saved: true, latest: true, inFlight: false }), "keep");
+  assert.equal(endStep({ ok: null, saved: true, latest: true, inFlight: false }), "keep");
 });
 
 // a streamed save whose part 2 failed: two files in it, one dead link, one left behind
