@@ -223,9 +223,13 @@ test("start at warns when the newest message is more than a day before start-at,
 });
 
 test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 steps", () => {
-  const { paces, loads, status } = runPage("auto");
+  const { paces, restNotes, loads, status } = runPage("auto");
   assert.equal(loads, 25);
   assert.match(status, /reached the start of the channel/);
+  // the long rest says so on the panel, and the note is gone once the climb is over
+  assert.equal(restNotes.length, 1);
+  assert.match(restNotes[0], /resting about \d+ s/);
+  assert.doesNotMatch(status, /resting/);
   // the first step starts at once; then one pause after each step that didn't end the climb
   assert.equal(paces[0], 0);
   const after = paces.slice(1);

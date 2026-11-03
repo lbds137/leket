@@ -5,7 +5,7 @@
 // guild-throwing-getmember | guild-no-cache | guild-registry | guild-unnamed |
 // guild-empty-cache | guild-two-runtimes | guild-hidden | guild-hidden-inside |
 // guild-hidden-throws | guild-hidden-returns | dm | dm-forward | auto; auto clicks
-// Auto-scroll instead of Save and prints {paces, loads, status}). With BRIDGE=1 in the
+// Auto-scroll instead of Save and prints {paces, restNotes, loads, status}). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
 // (posted: the message) instead of downloading it. START_AT fills the start-at box before
 // Save. The stores mimic the shape the collector
@@ -149,7 +149,7 @@ const lis = msgs.map((m) => el({
 const AUTO = scenario === "auto";
 const AUTO_LOADS = 25;
 let loads = 0, vnow = Date.UTC(2021, 1, 1);
-const paces = [];
+const paces = [], restNotes = [];
 const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, querySelectorAll: () => [],
   dispatchEvent() {
     if (loads === AUTO_LOADS) return void (this.textContent = "Welcome to #general!");
@@ -159,7 +159,11 @@ const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, query
   } });
 if (AUTO) lis.forEach((li) => { li.parentElement = scrollEl; });
 const virtualSetTimeout = (f, ms = 0) => {
-  if (f.name === "step") paces.push(ms);
+  if (f.name === "step") {
+    paces.push(ms);
+    // the status line as the long rest begins
+    if (ms >= 30000) restNotes.push(created.filter((e) => e.tag === "div")[2].textContent);
+  }
   return setTimeout(() => { vnow += ms; f(); }, 0);
 };
 class VirtualDate extends Date { static now() { return vnow; } }
@@ -342,7 +346,7 @@ const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r)
     auto.onclick();
     while (auto.textContent !== "Auto-scroll") await new Promise((r) => setTimeout(r, 1));
     const status = created.filter((e) => e.tag === "div")[2];
-    return void process.stdout.write(JSON.stringify({ paces, loads, status: status.textContent }));
+    return void process.stdout.write(JSON.stringify({ paces, restNotes, loads, status: status.textContent }));
   }
   if (returning) {
     const at = list.children.indexOf(returning);

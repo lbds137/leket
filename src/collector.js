@@ -595,7 +595,8 @@
       (files && fileBytes >= 1048576 ? `, ≈ ${sized < files ? "at least " : ""}${humanSize(fileBytes)} in ${files} attachment file${files === 1 ? "" : "s"}` : "") +
       (groups.length ? `, ${groups.filter((g) => g.opened).length} blocked/ignored groups opened` : "") +
       (shut ? `, ${shut} WOULD NOT OPEN${whereShut(groups.filter((g) => !g.opened && g.tries >= 3))}` : "") +
-      (expandError ? `, ERROR opening blocked/ignored messages: ${expandError}` : "");
+      (expandError ? `, ERROR opening blocked/ignored messages: ${expandError}` : "") +
+      (Date.now() < restUntil ? ` — resting about ${Math.ceil((restUntil - Date.now()) / 1000)} s so the history loads at a person's pace` : "");
   }
 
   // where each bar that wouldn't open sits, by the message above it, so it can be scrolled
@@ -697,12 +698,13 @@
         stopAuto();
         status.textContent += ` — reached ${day}`;
       } else if (idle >= 8) {
-        // eight empty tries of ~5 s each
+        // eight empty tries: ~5 s of waiting each, plus the pacing pause after each one
         stopAuto();
         status.textContent += " — STALLED, not at the start: scroll up by hand, then Auto-scroll again";
       } else {
         const ms = pause(++steps);
-        if (ms >= LONG_REST[0]) status.textContent += ` — resting ${Math.round(ms / 1000)} s so the history loads at a person's pace`;
+        // render() keeps the note on through any redraw until the rest is over
+        if (ms >= LONG_REST[0]) { restUntil = Date.now() + ms; render(); }
         timer = setTimeout(step, ms);
       }
     };
@@ -715,7 +717,7 @@
   const SHORT_REST = [2000, 4000], LONG_REST = [30000, 60000], REST_EVERY = 20;
   const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
   const pause = (n) => between(n % REST_EVERY === 0 ? LONG_REST : SHORT_REST);
-  let steps = 0;
+  let steps = 0, restUntil = 0;
   const autoBtn = btn("Auto-scroll", () => {
     if (timer) return stopAuto();
     if (!scroller()) return alert("Open the conversation first, then press Auto-scroll again.");
@@ -727,6 +729,7 @@
   function stopAuto() {
     clearTimeout(timer);
     timer = null;
+    restUntil = 0;
     autoBtn.textContent = "Auto-scroll";
   }
 
