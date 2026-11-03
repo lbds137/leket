@@ -3,7 +3,7 @@
 import { build } from "./lib/build.js";
 import { attachmentList, needsParts } from "./lib/files.js";
 import { PART_LIMIT } from "./lib/zip.js";
-import { trackDownload } from "./lib/download.js";
+import { downloadState, trackDownload } from "./lib/download.js";
 import { esc } from "./lib/render.js";
 
 const $ = (id) => document.getElementById(id);
@@ -98,49 +98,57 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       } catch { /* no estimate to be had; save anyway */ }
     }
 
-    // set once the build is over; until then a retried part only updates its own link
-    let afterRetry = null;
+    // set once the build is over: redraws the summary after a part is saved by a click
+    let render = null;
 
     // one part: hand it to Chrome's downloads API, wait until it is done, then free the
-    // blob. On a failure (or no word for a quarter of an hour) the link stays, and a click
-    // on it downloads it again through the same tracking, so a part saved by hand counts.
-    const downloadPart = async ({ blob, name }) => {
+    // blob. On a failure (or no word for a quarter of an hour) the link stays. A click on
+    // it is never a second, untracked download: it asks Chrome about the latest tracked
+    // one first, and only downloads again (tracked) when that one is over or gone.
+    const downloadPart = async ({ blob, name, index }) => {
       say(`Saving ${name}…`);
       const { a, li, url } = partLink(blob, name);
       const label = a.textContent;
       list.appendChild(li);
-      const result = { name, ok: false };
-      const show = (ok) => {
-        if (ok) {
-          // saved: the object URL can go, and the dead link becomes a plain label
-          URL.revokeObjectURL(url);
-          a.removeAttribute("href");
-          a.textContent = `${label} — saved`;
-        } else if (ok === false) {
-          a.textContent = `${label} — didn't finish; click to try again`;
-        } else {
-          // no word for a quarter of an hour: it may still be downloading, so say that
-          a.textContent = `${label} — still no word that it finished; if it isn't in Downloads, click to try again`;
-        }
-        return ok === true;
+      const result = { name, index, ok: false };
+      let lastId = null;
+      const markSaved = () => {
+        if (result.ok) return;
+        result.ok = true;
+        partsSaved++;
+        // the object URL can go, and the dead link becomes a plain label
+        URL.revokeObjectURL(url);
+        a.removeAttribute("href");
+        a.textContent = `${label} — saved`;
+        if (render) render();
+        else progress();
       };
-      result.ok = show(await trackDownload(chrome.downloads, { url, filename: name }));
-      if (!result.ok) {
-        let busy = false;
-        a.addEventListener("click", async (e) => {
-          e.preventDefault();
-          if (busy || result.ok) return;
-          busy = true;
-          a.textContent = `${label} — saving again…`;
-          const ok = show(await trackDownload(chrome.downloads, { url, filename: name }));
-          busy = false;
-          if (ok) {
-            result.ok = true;
-            partsSaved++;
-            if (afterRetry) afterRetry();
+      const attempt = async () => {
+        const ok = await trackDownload(chrome.downloads, { url, filename: name }, { onStart: (id) => { lastId = id; } });
+        if (ok) markSaved();
+        else if (result.ok) { /* another attempt saved it meanwhile; its label stands */ }
+        else if (ok === false) a.textContent = `${label} — didn't finish; click to try again`;
+        // no word for a quarter of an hour: it may still be downloading, so say that
+        else a.textContent = `${label} — still no word that it finished; if it isn't in Downloads, click to try again`;
+      };
+      let busy = false;
+      a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        if (busy || result.ok) return;
+        busy = true;
+        try {
+          const state = lastId == null ? null : await downloadState(chrome.downloads, lastId);
+          if (state === "complete") markSaved();
+          else if (state === "in_progress") a.textContent = `${label} — still downloading; see Chrome's downloads`;
+          else {
+            a.textContent = `${label} — saving again…`;
+            await attempt();
           }
-        });
-      }
+        } finally {
+          busy = false;
+        }
+      });
+      await attempt();
       return result;
     };
 
@@ -151,14 +159,13 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
         ? "Saving part 1: the messages and the readable page (they are kept whatever happens to the rest)…"
         : `Saving part ${entry.index}…`);
       const result = await downloadPart(entry);
-      if (result.ok) partsSaved++;
       results.push(result);
       progress();
       // false stops the build: the rest of the attachments stay unfetched instead of
       // piling failed 2 GB parts up on a full disk (the manifest lists them unsaved)
       return result.ok;
     } : undefined;
-    const { parts, saved, failed, leftBehind } = await build(exp, {
+    const { parts, failed, leftBehind } = await build(exp, {
       file, attachments, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       onProgress: ({ phase, done, failed: bad }) => {
         if (phase === "fetch") { fetchDone = done; fetchFailed = bad || 0; }
@@ -172,64 +179,60 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       if (parts.length > 1) ensureNote();
       for (const p of parts) {
         const result = await downloadPart(p);
-        if (result.ok) partsSaved++;
         results.push(result);
       }
     }
     bar.hidden = true;
-    const badParts = results.filter((r) => !r.ok);
-    // the Discord tab holds the save so that reloading this tab can rebuild it, so it lets
-    // go only once every part is safely downloaded, now or by a retry, and none of the
-    // attachments was left out by a stopped save (reloading this tab is how to get those)
-    let released = false;
-    const release = () => {
-      if (released || leftBehind || results.some((r) => !r.ok)) return;
-      released = true;
-      ask({ type: "discord-tools:release" }).catch(() => {});
-    };
-    release();
     const n = (exp.messages || []).length;
-    const savedText = `Saved ${n} messages${records.length ? ` and ${saved} of ${records.length} attachments` : ""}.`;
     const intro = results.length > 1 ? `The save is in ${results.length} parts: unzip them all into the same folder, then open index.html. `
       : "Unzip it and open index.html to read it. ";
-    const showDetail = (left) =>
-      $("detail").textContent = intro + (left ? `${left} part(s) above didn't finish — click them to try again. ` : "");
-    showDetail(badParts.length);
-    if (failed.length) {
-      const p = document.createElement("p");
-      p.className = "warn";
-      p.textContent = `${failed.length} attachment(s) could not be saved. Links Discord gives out expire after about a day: reload the Discord tab and save again to retry them.`;
-      const ul = document.createElement("ul");
-      ul.innerHTML = failed.slice(0, 200).map((r) => `<li>${esc(r.filename)}: ${esc(r.error)}</li>`).join("") +
-        (failed.length > 200 ? `<li>… and ${failed.length - 200} more (all listed in discord-attachments.json)</li>` : "");
-      $("problems").appendChild(p);
-      $("problems").appendChild(ul);
-    }
     // a streamed save stops at its first failed part; whether anything was left out of
     // every part depends on how far it had got
     const stoppedNote = !stream ? ""
       : leftBehind ? ` The save stopped there — ${leftBehind} attachment(s) never got into a part and are listed as unsaved in discord-attachments.json. Free up space, then click the part above to try it again, and save again from the Discord tab for the rest.`
       : " Free up space, then click the part above to try it again.";
-    if (badParts.length) {
-      say(`${savedText} ${badParts.length} part(s) didn't finish — click them above to try again.${stoppedNote}`, "warn");
-    } else if (!failed.length) window.close();
-    else say(`${savedText} This tab stays open because ${failed.length} attachment(s) could not be saved.`, "warn");
-
-    // a part retried by hand and saved: its link already says so; bring the rest up to date
-    afterRetry = () => {
-      release();
-      const left = results.filter((r) => !r.ok).length;
-      showDetail(left);
-      if (left) {
-        say(`${left} part(s) still didn't finish — click them above to try again.${stoppedNote}`, "warn");
-      } else if (leftBehind) {
-        say(`Every part is downloaded now, but the save stopped early: ${leftBehind} attachment(s) never got into a part. Save again from the Discord tab for them.`, "warn");
-      } else {
-        // with every part down, the files of a part that failed at first are saved after all
-        const lost = failed.filter((r) => !r.error.startsWith("saved into part ")).length;
-        say(`Every part is downloaded now.${lost ? ` ${lost} attachment(s) could not be saved.` : ""}`, lost ? "warn" : "");
+    // the summary's own spot among the problems, so a redraw leaves the disk warning be
+    const lostBox = document.createElement("div");
+    $("problems").appendChild(lostBox);
+    let released = false;
+    // the summary, from where things stand now: drawn once the build is over, and again
+    // whenever a click saves a part (which may have happened before the build was over)
+    render = (first = false) => {
+      const badParts = results.filter((r) => !r.ok);
+      // a streamed part's files are marked as in it until it downloads: once a click has
+      // saved that part, they are saved after all
+      const savedParts = new Set(results.filter((r) => r.ok && r.index).map((r) => r.index));
+      const lost = failed.filter((r) => {
+        const m = /^saved into part (\d+),/.exec(r.error);
+        return !(m && savedParts.has(Number(m[1])));
+      });
+      // the Discord tab holds the save so that reloading this tab can rebuild it, so it
+      // lets go only once every part is down and nothing was left out of every part by a
+      // stopped save (reloading this tab is how to get those)
+      if (!released && !badParts.length && !leftBehind) {
+        released = true;
+        ask({ type: "discord-tools:release" }).catch(() => {});
       }
+      const savedText = `Saved ${n} messages${records.length ? ` and ${records.length - lost.length} of ${records.length} attachments` : ""}.`;
+      $("detail").textContent = intro + (badParts.length ? `${badParts.length} part(s) above didn't finish — click them to try again. ` : "");
+      lostBox.replaceChildren();
+      if (lost.length) {
+        const p = document.createElement("p");
+        p.className = "warn";
+        p.textContent = `${lost.length} attachment(s) could not be saved. Links Discord gives out expire after about a day: reload the Discord tab and save again to retry them.`;
+        const ul = document.createElement("ul");
+        ul.innerHTML = lost.slice(0, 200).map((r) => `<li>${esc(r.filename)}: ${esc(r.error)}</li>`).join("") +
+          (lost.length > 200 ? `<li>… and ${lost.length - 200} more (all listed in discord-attachments.json)</li>` : "");
+        lostBox.append(p, ul);
+      }
+      if (badParts.length) {
+        say(`${savedText} ${badParts.length} part(s) didn't finish — click them above to try again.${stoppedNote}`, "warn");
+      } else if (!lost.length && first) window.close();
+      // saved by a click: the tab stays, so the click gets an answer
+      else if (!lost.length) say(`${savedText} Every part is downloaded.`);
+      else say(`${savedText} This tab stays open because ${lost.length} attachment(s) could not be saved.`, "warn");
     };
+    render(true);
   } catch (e) {
     $("bar").hidden = true;
     say(`Couldn't save: ${(e && e.message) || e}`, "warn");

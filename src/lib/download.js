@@ -5,8 +5,9 @@ export const NO_WORD_MS = 15 * 60 * 1000;
 
 // Starts the download and waits until THIS one (matched by the id the call returns, never
 // by name) is done: true once it completes, false if it is interrupted or refused, null
-// after `timeout` ms with no word (it may still be downloading).
-export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_MS } = {}) {
+// after `timeout` ms with no word (it may still be downloading). onStart(id) gets the id
+// the moment Chrome gives it, so a later click can ask about this download.
+export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_MS, onStart = () => {} } = {}) {
   return new Promise((resolve) => {
     let id = null;
     let settled = false;
@@ -26,6 +27,7 @@ export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_
     downloads.onChanged.addListener(onChanged);
     downloads.download({ url, filename }).then(async (mid) => {
       id = mid;
+      onStart(mid);
       // a small part can finish before the promise resolved, and its `complete` event
       // was ignored above (no id yet): settle from the download record instead
       try {
@@ -35,4 +37,15 @@ export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_
       } catch { /* the events will tell */ }
     }, () => done(false));
   });
+}
+
+// where a download started earlier stands now: "in_progress", "complete", "interrupted",
+// or null when Chrome no longer knows it (erased from the list) or can't be asked
+export async function downloadState(downloads, id) {
+  try {
+    const [item] = await downloads.search({ id });
+    return (item && item.state) || null;
+  } catch {
+    return null;
+  }
 }
