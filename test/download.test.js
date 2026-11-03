@@ -79,6 +79,52 @@ test("no word within the timeout settles null: it may still be downloading", asy
   d.fire(9, "complete");   // a late event after the timeout changes nothing
 });
 
+test("with onLate, a download still going at the timeout is watched to its end", async () => {
+  const d = fakeDownloads();
+  const late = [];
+  const p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { timeout: 5, onLate: (ok, id) => late.push([ok, id]) });
+  d.start(9);
+  assert.equal(await p, null);
+  assert.equal(d.listening(), 1, "still watching after the timeout");
+  d.fire(3, "complete");   // another download's end is not this one's
+  assert.deepEqual(late, []);
+  d.fire(9, "complete");
+  assert.deepEqual(late, [[true, 9]]);
+  assert.equal(d.listening(), 0);
+  d.fire(9, "interrupted");   // told once
+  assert.deepEqual(late, [[true, 9]]);
+
+  const e = fakeDownloads();
+  const lateE = [];
+  const q = trackDownload(e, { url: "blob:x", filename: "a.zip" }, { timeout: 5, onLate: (ok, id) => lateE.push([ok, id]) });
+  e.start(4);
+  assert.equal(await q, null);
+  e.fire(4, "interrupted");
+  assert.deepEqual(lateE, [[false, 4]]);
+});
+
+test("with onLate, an id or a refusal arriving after the timeout is still handled", async () => {
+  // the id comes back after the timeout, its download already done: read from the record
+  const d = fakeDownloads();
+  const late = [];
+  const p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { timeout: 5, onLate: (ok, id) => late.push([ok, id]) });
+  assert.equal(await p, null);
+  d.set(6, "complete");
+  d.start(6);
+  await settle();
+  assert.deepEqual(late, [[true, 6]]);
+  assert.equal(d.listening(), 0);
+  // refused after the timeout: it didn't finish, and there is nothing left to watch
+  const e = fakeDownloads();
+  const lateE = [];
+  const q = trackDownload(e, { url: "blob:x", filename: "a.zip" }, { timeout: 5, onLate: (ok) => lateE.push(ok) });
+  assert.equal(await q, null);
+  e.refuse();
+  await settle();
+  assert.equal(e.listening(), 0);
+  assert.deepEqual(lateE, [false]);
+});
+
 test("each try is its own download: a retry after a failure can succeed", async () => {
   const d = fakeDownloads();
   const first = trackDownload(d, { url: "blob:x", filename: "a.zip" });

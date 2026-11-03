@@ -6,22 +6,36 @@ export const NO_WORD_MS = 15 * 60 * 1000;
 // Starts the download and waits until THIS one (matched by the id the call returns, never
 // by name) is done: true once it completes, false if it is interrupted or refused, null
 // after `timeout` ms with no word (it may still be downloading). onStart(id) gets the id
-// the moment Chrome gives it, so a later click can ask about this download.
-export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_MS, onStart = () => {} } = {}) {
+// the moment Chrome gives it, so a later click can ask about this download. With onLate,
+// a download still going at the timeout stays watched: onLate(ok, id) gets how it ended.
+export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_MS, onStart = () => {}, onLate = null } = {}) {
   return new Promise((resolve) => {
     let id = null;
     let settled = false;
+    let watching = true;
+    const unwatch = () => {
+      if (!watching) return;
+      watching = false;
+      downloads.onChanged.removeListener(onChanged);
+    };
     const done = (v) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      downloads.onChanged.removeListener(onChanged);
+      if (v !== null || !onLate) unwatch();
       resolve(v);
+    };
+    // this download's end: settles the promise, or after the timeout goes to onLate
+    const ended = (ok) => {
+      if (!settled) return done(ok);
+      if (!watching) return;
+      unwatch();
+      onLate(ok, id);
     };
     const onChanged = (delta) => {
       if (id == null || delta.id !== id) return;
       const state = delta.state && delta.state.current;
-      if (state === "complete" || state === "interrupted") done(state === "complete");
+      if (state === "complete" || state === "interrupted") ended(state === "complete");
     };
     const timer = setTimeout(() => done(null), timeout);
     downloads.onChanged.addListener(onChanged);
@@ -33,9 +47,9 @@ export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_
       try {
         const [item] = await downloads.search({ id });
         const state = item && item.state;
-        if (state === "complete" || state === "interrupted") done(state === "complete");
+        if (state === "complete" || state === "interrupted") ended(state === "complete");
       } catch { /* the events will tell */ }
-    }, () => done(false));
+    }, () => ended(false));
   });
 }
 

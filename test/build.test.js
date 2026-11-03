@@ -269,7 +269,9 @@ test("a fetch in flight when the save stops still counts as failed", async () =>
   // pin the full strings, em-dashes included
   assert.equal(r.records.find((m) => m.filename === "cat pic.png").error,
     "saved into part 2, which didn't finish downloading — retry part 2 in the export tab if it's still open, otherwise save again to get this file");
+  assert.equal(r.records.find((m) => m.filename === "cat pic.png").failedPart, 2);
   assert.equal(r.records.find((m) => m.filename === "f.ogg").error, "not saved — the save stopped early");
+  assert.equal(r.records.find((m) => m.filename === "f.ogg").failedPart, undefined, "in no part at all");
   // f.ogg is in no part, so retrying part 2 can't complete this save
   assert.equal(r.leftBehind, 1);
   assert.deepEqual(r.parts.map((p) => [p.name, p.index]),
@@ -282,6 +284,7 @@ test("a fetch in flight when the save stops still counts as failed", async () =>
   // mangled; the ASCII prefixes pin them
   const inFailedPart = manifest.filter((m) => (m.error || "").startsWith("saved into part 2"));
   assert.equal(inFailedPart.length, 1, "the failed part's file is named by part");
+  assert.ok(manifest.every((m) => !("failedPart" in m)), "the manifest says it in words only");
   const unsaved = manifest.filter((m) => (m.error || "").startsWith("not saved"));
   assert.equal(unsaved.length, 1, "the file that triggered the seal sat in the discarded half-filled part");
 });

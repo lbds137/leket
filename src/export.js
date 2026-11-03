@@ -5,6 +5,7 @@ import { attachmentList, needsParts } from "./lib/files.js";
 import { PART_LIMIT } from "./lib/zip.js";
 import { downloadState, trackDownload } from "./lib/download.js";
 import { esc } from "./lib/render.js";
+import { clickStep, stateStep, summarize } from "./lib/summary.js";
 
 const $ = (id) => document.getElementById(id);
 const say = (text, cls = "") => { $("status").textContent = text; $("status").className = cls; };
@@ -126,37 +127,43 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       // set while a tracked download is under way, from the call until it settles (the id
       // may not have come back yet): a click then never starts another
       let inFlight = false;
+      const didntFinish = () => { a.textContent = `${label} — didn't finish; click to try again`; };
+      // a download that outlived the quarter-hour wait still ends some time: a finish saves
+      // the part; a failure is said only while it is still the latest try and none is running
+      const onLate = (ok, id) => {
+        if (ok) markSaved();
+        else if (!result.ok && !inFlight && id === lastId) didntFinish();
+      };
       const attempt = async () => {
         inFlight = true;
         let ok;
         try {
-          ok = await trackDownload(chrome.downloads, { url, filename: name }, { onStart: (id) => { lastId = id; } });
+          ok = await trackDownload(chrome.downloads, { url, filename: name }, { onStart: (id) => { lastId = id; }, onLate });
         } finally {
           inFlight = false;
         }
+        // nothing marks a part saved while its attempt runs (a click then only says so),
+        // but a saved label is never overwritten whatever this attempt says
+        if (result.ok) return;
         if (ok) markSaved();
-        else if (result.ok) { /* another attempt saved it meanwhile; its label stands */ }
-        else if (ok === false) a.textContent = `${label} — didn't finish; click to try again`;
+        else if (ok === false) didntFinish();
         // no word for a quarter of an hour: it may still be downloading, so say that
         else a.textContent = `${label} — still no word that it finished; if it isn't in Downloads, click to try again`;
       };
       let busy = false;
       a.addEventListener("click", async (e) => {
         e.preventDefault();
-        if (busy || result.ok) return;
-        if (inFlight) {
-          a.textContent = lastId == null
-            ? `${label} — waiting for Chrome to start it; if Chrome asks about downloading files, allow it`
-            : `${label} — still downloading; see Chrome's downloads`;
-          return;
-        }
+        const step = clickStep({ busy, saved: result.ok, inFlight, lastId });
+        if (step === "ignore") return;
+        if (step === "starting") { a.textContent = `${label} — waiting for Chrome to start it; if Chrome asks about downloading files, allow it`; return; }
+        if (step === "downloading") { a.textContent = `${label} — still downloading; see Chrome's downloads`; return; }
         busy = true;
         try {
-          const state = lastId == null ? null : await downloadState(chrome.downloads, lastId);
+          const next = step === "retry" ? "retry" : stateStep(await downloadState(chrome.downloads, lastId));
           // saved or restarted by another path while Chrome was being asked
           if (result.ok || inFlight) return;
-          if (state === "complete") markSaved();
-          else if (state === "in_progress") a.textContent = `${label} — still downloading; see Chrome's downloads`;
+          if (next === "saved") markSaved();
+          else if (next === "downloading") a.textContent = `${label} — still downloading; see Chrome's downloads`;
           else {
             a.textContent = `${label} — saving again…`;
             await attempt();
@@ -200,38 +207,24 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       }
     }
     bar.hidden = true;
-    const n = (exp.messages || []).length;
-    const intro = results.length > 1 ? `The save is in ${results.length} parts: unzip them all into the same folder, then open index.html. `
-      : "Unzip it and open index.html to read it. ";
-    // a streamed save stops at its first failed part; whether anything was left out of
-    // every part depends on how far it had got
-    const stoppedNote = !stream ? ""
-      : leftBehind ? ` The save stopped there — ${leftBehind} attachment(s) never got into a part (discord-attachments.json lists them as unsaved). If your disk is full, free up space first; then click the part above to try it again, and save again from the Discord tab for the rest.`
-      : " If your disk is full, free up space first; then click the part above to try it again.";
     // the summary's own spot among the problems, so a redraw leaves the disk warning be
     const lostBox = document.createElement("div");
     $("problems").appendChild(lostBox);
     let released = false;
     // the summary, from where things stand now: drawn once the build is over, and again
-    // whenever a click saves a part (which may have happened before the build was over)
+    // whenever a click or a late finish saves a part (perhaps before the build was over)
     render = (first = false) => {
-      const badParts = results.filter((r) => !r.ok);
-      // a streamed part's files are marked as in it until it downloads: once a click has
-      // saved that part, they are saved after all
-      const savedParts = new Set(results.filter((r) => r.ok && r.index).map((r) => r.index));
-      const lost = failed.filter((r) => {
-        const m = /^saved into part (\d+),/.exec(r.error);
-        return !(m && savedParts.has(Number(m[1])));
-      });
+      const { lost, release, close, detail, status, warn } = summarize({
+        results, failed, leftBehind, messages: (exp.messages || []).length,
+        attachments: records.length, streamed: stream, first });
       // the Discord tab holds the save so that reloading this tab can rebuild it, so it
       // lets go only once every part is down and nothing was left out of every part by a
       // stopped save (reloading this tab is how to get those)
-      if (!released && !badParts.length && !leftBehind) {
+      if (!released && release) {
         released = true;
         ask({ type: "discord-tools:release" }).catch(() => {});
       }
-      const savedText = `Saved ${n} messages${records.length ? ` and ${records.length - lost.length} of ${records.length} attachments` : ""}.`;
-      $("detail").textContent = intro + (badParts.length ? `${badParts.length} part(s) above didn't finish — click them to try again. ` : "");
+      $("detail").textContent = detail;
       lostBox.replaceChildren();
       if (lost.length) {
         const p = document.createElement("p");
@@ -242,15 +235,8 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
           (lost.length > 200 ? `<li>… and ${lost.length - 200} more (all listed in discord-attachments.json)</li>` : "");
         lostBox.append(p, ul);
       }
-      if (badParts.length) {
-        say(`${savedText} ${badParts.length} part(s) didn't finish — click them above to try again.${stoppedNote}`, "warn");
-      } else if (!lost.length && first) window.close();
-      // saved by a click: the tab stays, so the click gets an answer
-      else if (!lost.length) say(`${savedText} Every part is downloaded.`);
-      else {
-        const stopped = leftBehind ? ` The save stopped early, so ${leftBehind} of them never got into a part: save again from the Discord tab for those.` : "";
-        say(`${savedText} This tab stays open because ${lost.length} attachment(s) could not be saved.${stopped}`, "warn");
-      }
+      if (close) window.close();
+      else say(status, warn ? "warn" : "");
     };
     render(true);
   } catch (e) {

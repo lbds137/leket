@@ -119,10 +119,12 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
             stopped = true;
             sealedParts.length = 0;
             // the failed part's own files are named by part, and the line must stay true
-            // after the export tab has closed
+            // after the export tab has closed; failedPart is the same fact for the export
+            // tab to read (the manifest doesn't carry it)
             for (const i of item.idx) {
               if (!records[i].error) {
-                records[i].error = `saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} in the export tab if it's still open, otherwise save again to get this file`;
+                records[i].failedPart = entry.index;
+                records[i].error =`saved into part ${entry.index}, which didn't finish downloading — retry part ${entry.index} in the export tab if it's still open, otherwise save again to get this file`;
                 failed++;
               }
             }
