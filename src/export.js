@@ -3,6 +3,7 @@
 import { build } from "./lib/build.js";
 import { attachmentList, needsParts } from "./lib/files.js";
 import { PART_LIMIT } from "./lib/zip.js";
+import { trackDownload } from "./lib/download.js";
 import { esc } from "./lib/render.js";
 
 const $ = (id) => document.getElementById(id);
@@ -97,53 +98,50 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       } catch { /* no estimate to be had; save anyway */ }
     }
 
-    // one part: hand it to Chrome's downloads API, wait until THIS download (matched by
-    // the id the call returns, never by name) is done, then free the blob. On a failure
-    // (or no word for a quarter of an hour) the link stays for a retry by hand.
+    // set once the build is over; until then a retried part only updates its own link
+    let afterRetry = null;
+
+    // one part: hand it to Chrome's downloads API, wait until it is done, then free the
+    // blob. On a failure (or no word for a quarter of an hour) the link stays, and a click
+    // on it downloads it again through the same tracking, so a part saved by hand counts.
     const downloadPart = async ({ blob, name }) => {
       say(`Saving ${name}…`);
       const { a, li, url } = partLink(blob, name);
+      const label = a.textContent;
       list.appendChild(li);
-      const ok = await new Promise((resolve) => {
-        let id = null;
-        let settled = false;
-        const done = (v) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          chrome.downloads.onChanged.removeListener(onChanged);
-          resolve(v);
-        };
-        const onChanged = (delta) => {
-          if (id == null || delta.id !== id) return;
-          const state = delta.state && delta.state.current;
-          if (state === "complete" || state === "interrupted") done(state === "complete");
-        };
-        const timer = setTimeout(() => done(null), 15 * 60 * 1000);
-        chrome.downloads.onChanged.addListener(onChanged);
-        chrome.downloads.download({ url, filename: name }).then(async (mid) => {
-          id = mid;
-          // a small part can finish before the promise resolved, and its `complete` event
-          // was ignored above (no id yet): settle from the download record instead
-          try {
-            const [item] = await chrome.downloads.search({ id });
-            const state = item && item.state;
-            if (state === "complete" || state === "interrupted") done(state === "complete");
-          } catch { /* the events will tell */ }
-        }, () => done(false));
-      });
-      if (ok) {
-        // saved: the object URL can go, and the dead link becomes a plain label
-        URL.revokeObjectURL(url);
-        a.removeAttribute("href");
-        a.textContent += " — saved";
-      } else if (ok === false) {
-        a.textContent += " — didn't finish; click to try again";
-      } else {
-        // no word for a quarter of an hour: it may still be downloading, so say that
-        a.textContent += " — still no word that it finished; if it isn't in Downloads, click to try again";
+      const result = { name, ok: false };
+      const show = (ok) => {
+        if (ok) {
+          // saved: the object URL can go, and the dead link becomes a plain label
+          URL.revokeObjectURL(url);
+          a.removeAttribute("href");
+          a.textContent = `${label} — saved`;
+        } else if (ok === false) {
+          a.textContent = `${label} — didn't finish; click to try again`;
+        } else {
+          // no word for a quarter of an hour: it may still be downloading, so say that
+          a.textContent = `${label} — still no word that it finished; if it isn't in Downloads, click to try again`;
+        }
+        return ok === true;
+      };
+      result.ok = show(await trackDownload(chrome.downloads, { url, filename: name }));
+      if (!result.ok) {
+        let busy = false;
+        a.addEventListener("click", async (e) => {
+          e.preventDefault();
+          if (busy || result.ok) return;
+          busy = true;
+          a.textContent = `${label} — saving again…`;
+          const ok = show(await trackDownload(chrome.downloads, { url, filename: name }));
+          busy = false;
+          if (ok) {
+            result.ok = true;
+            partsSaved++;
+            if (afterRetry) afterRetry();
+          }
+        });
       }
-      return ok === true;
+      return result;
     };
 
     say(attachments ? "Saving the attachments… keep this tab open." : "Building the zip…");
@@ -152,15 +150,15 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       say(entry.index === 1
         ? "Saving part 1: the messages and the readable page (they are kept whatever happens to the rest)…"
         : `Saving part ${entry.index}…`);
-      const ok = await downloadPart(entry);
-      if (ok) partsSaved++;
-      results.push({ name: entry.name, ok });
+      const result = await downloadPart(entry);
+      if (result.ok) partsSaved++;
+      results.push(result);
       progress();
       // false stops the build: the rest of the attachments stay unfetched instead of
       // piling failed 2 GB parts up on a full disk (the manifest lists them unsaved)
-      return ok === true;
+      return result.ok;
     } : undefined;
-    const { parts, saved, failed } = await build(exp, {
+    const { parts, saved, failed, leftBehind } = await build(exp, {
       file, attachments, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       onProgress: ({ phase, done, failed: bad }) => {
         if (phase === "fetch") { fetchDone = done; fetchFailed = bad || 0; }
@@ -173,22 +171,30 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       // a small save: the parts come back as Blobs and download here
       if (parts.length > 1) ensureNote();
       for (const p of parts) {
-        const ok = await downloadPart(p);
-        if (ok) partsSaved++;
-        results.push({ name: p.name, ok });
+        const result = await downloadPart(p);
+        if (result.ok) partsSaved++;
+        results.push(result);
       }
     }
     bar.hidden = true;
     const badParts = results.filter((r) => !r.ok);
     // the Discord tab holds the save so that reloading this tab can rebuild it, so it lets
-    // go only once every part is safely downloaded
-    if (!badParts.length) ask({ type: "discord-tools:release" }).catch(() => {});
+    // go only once every part is safely downloaded, now or by a retry, and none of the
+    // attachments was left out by a stopped save (reloading this tab is how to get those)
+    let released = false;
+    const release = () => {
+      if (released || leftBehind || results.some((r) => !r.ok)) return;
+      released = true;
+      ask({ type: "discord-tools:release" }).catch(() => {});
+    };
+    release();
     const n = (exp.messages || []).length;
     const savedText = `Saved ${n} messages${records.length ? ` and ${saved} of ${records.length} attachments` : ""}.`;
-    $("detail").innerHTML =
-      (results.length > 1 ? `The save is in ${results.length} parts: unzip them all into the same folder, then open index.html. `
-        : "Unzip it and open index.html to read it. ") +
-      (badParts.length ? `${badParts.length} part(s) above didn't finish — click them to try again. ` : "");
+    const intro = results.length > 1 ? `The save is in ${results.length} parts: unzip them all into the same folder, then open index.html. `
+      : "Unzip it and open index.html to read it. ";
+    const showDetail = (left) =>
+      $("detail").textContent = intro + (left ? `${left} part(s) above didn't finish — click them to try again. ` : "");
+    showDetail(badParts.length);
     if (failed.length) {
       const p = document.createElement("p");
       p.className = "warn";
@@ -199,13 +205,31 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       $("problems").appendChild(p);
       $("problems").appendChild(ul);
     }
+    // a streamed save stops at its first failed part; whether anything was left out of
+    // every part depends on how far it had got
+    const stoppedNote = !stream ? ""
+      : leftBehind ? ` The save stopped there — ${leftBehind} attachment(s) never got into a part and are listed as unsaved in discord-attachments.json. Free up space, then click the part above to try it again, and save again from the Discord tab for the rest.`
+      : " Free up space, then click the part above to try it again.";
     if (badParts.length) {
-      const stoppedNote = stream
-        ? " The save stopped there — the rest of the attachments are listed as unsaved in discord-attachments.json. Free up space, then click the part above to try it again, or save again from the Discord tab for the rest."
-        : "";
       say(`${savedText} ${badParts.length} part(s) didn't finish — click them above to try again.${stoppedNote}`, "warn");
     } else if (!failed.length) window.close();
     else say(`${savedText} This tab stays open because ${failed.length} attachment(s) could not be saved.`, "warn");
+
+    // a part retried by hand and saved: its link already says so; bring the rest up to date
+    afterRetry = () => {
+      release();
+      const left = results.filter((r) => !r.ok).length;
+      showDetail(left);
+      if (left) {
+        say(`${left} part(s) still didn't finish — click them above to try again.${stoppedNote}`, "warn");
+      } else if (leftBehind) {
+        say(`Every part is downloaded now, but the save stopped early: ${leftBehind} attachment(s) never got into a part. Save again from the Discord tab for them.`, "warn");
+      } else {
+        // with every part down, the files of a part that failed at first are saved after all
+        const lost = failed.filter((r) => !r.error.startsWith("saved into part ")).length;
+        say(`Every part is downloaded now.${lost ? ` ${lost} attachment(s) could not be saved.` : ""}`, lost ? "warn" : "");
+      }
+    };
   } catch (e) {
     $("bar").hidden = true;
     say(`Couldn't save: ${(e && e.message) || e}`, "warn");

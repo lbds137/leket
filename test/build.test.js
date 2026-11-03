@@ -172,6 +172,17 @@ test("streamed, the text part goes out first and the attachment parts follow, on
       "each attachment part holds one file, whichever order the fetches finished in");
   assert.deepEqual(Object.keys(manifestPart), ["discord-attachments.json"]);
   assert.equal(r.saved, 3);
+  assert.equal(r.leftBehind, 0);
+});
+
+test("when the last attachment part fails, nothing is left behind: retrying that part completes the save", async () => {
+  const big = "x".repeat(40000);
+  const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: big, [`${CDN}/11/gone.mp4`]: big, [`${CDN}/12/f.ogg`]: big });
+  const r = await build(exp(), { file: "d.json", fetchFn, wait: 0, partLimit: 60000,
+    onPart: async (p) => p.index !== 4 });
+  assert.deepEqual(r.parts.map((p) => p.index), [1, 2, 3, 4, 5]);
+  assert.equal(r.records.filter((m) => (m.error || "").startsWith("saved into part 4")).length, 1);
+  assert.equal(r.leftBehind, 0);
 });
 
 test("streamed with nothing fetched (every link gone), the text and the manifest still come out", async () => {
@@ -259,6 +270,8 @@ test("a fetch in flight when the save stops still counts as failed", async () =>
   assert.equal(r.records.find((m) => m.filename === "cat pic.png").error,
     "saved into part 2, which didn't finish downloading — retry part 2 in the export tab if it's still open, otherwise save again to get this file");
   assert.equal(r.records.find((m) => m.filename === "f.ogg").error, "not saved — the save stopped early");
+  // f.ogg is in no part, so retrying part 2 can't complete this save
+  assert.equal(r.leftBehind, 1);
   assert.deepEqual(r.parts.map((p) => [p.name, p.index]),
     [["d-part1.zip", 1], ["d-part2.zip", 2], ["d-part3.zip", 3]]);
   const [text, , manifestPart] = await unzip(blobs.map((blob) => ({ blob })));
@@ -338,30 +351,56 @@ test("a dead link answering while a part downloads parks its worker at the gate;
     attachments: [{ filename: `f${k + 1}.bin`, url: `${CDN}/${k + 1}/f.bin` }],
   }));
   const payload = "x".repeat(15000);
-  // file 2 seals a part at 20 ms and its download holds the drain for 100 ms. File 3's 403 at
-  // 30 ms skips the packing path, so that worker reaches the gate with file 5 still unclaimed;
-  // another worker claims file 5 first when the drain ends, leaving the parked one nothing
-  const delay = { 1: 10, 2: 20, 3: 30, 4: 40, 5: 1 };
+  // every fetch answers when the test says, and part 2's download is held until the test
+  // lets it go, so the steps below happen in this order whatever the machine's speed
+  const answer = {}, asked = [];
+  const fetchFn = (url) => {
+    const k = Number(url.split("/")[5]);
+    asked.push(k);
+    return new Promise((res) => { answer[k] = res; });
+  };
+  const ok = (k) => answer[k](new Response(payload, { status: 200, headers: { "content-length": "15000" } }));
+  const dead = (k) => answer[k](new Response("", { status: 403 }));
+  let letPart2Go;
+  const part2Held = new Promise((res) => { letPart2Go = res; });
   const names = [];
-  const r = await build(five, {
+  let fetched = 0, packed = 0;
+  const building = build(five, {
     file: "d.json",
     partLimit: 20000,
     concurrency: 3,
     wait: 0,
-    fetchFn: async (url) => {
-      const k = Number(url.split("/")[5]);
-      await new Promise((res) => setTimeout(res, delay[k]));
-      if (k === 3) return new Response("", { status: 403 });
-      return new Response(payload, { status: 200, headers: { "content-length": "15000" } });
-    },
+    fetchFn,
+    onProgress: ({ phase, done }) => { if (phase === "fetch") fetched = done; else packed = done; },
     onPart: async (p) => {
       names.push(p.name);
-      await new Promise((res) => setTimeout(res, 100));
+      if (p.index === 2) await part2Held;
     },
   });
+  // the build's own steps run on promise callbacks; this waits them out, never a clock
+  const until = async (cond, what) => {
+    for (let i = 0; i < 1000 && !cond(); i++) await new Promise((res) => setImmediate(res));
+    assert.ok(cond(), `never got to: ${what}`);
+  };
+  await until(() => asked.length === 3, "three workers fetching");
+  ok(1);
+  await until(() => asked.includes(4), "file 1 packed, its worker on to file 4");
+  ok(2);   // file 2 doesn't fit beside file 1: part 2 seals, and its download is held
+  await until(() => names.length === 2, "part 2 handed over");
+  dead(3); // the dead link skips the packing path, so its worker goes straight to the gate
+  // the count and the gate come in one step, so once file 3 is counted its worker is parked
+  await until(() => fetched === 2, "file 3 counted");
+  assert.deepEqual(asked, [1, 2, 3, 4], "parked at the gate with file 5 still unclaimed");
+  ok(4);   // file 4 seals file 2's part behind part 2's held download
+  await until(() => packed === 3, "file 4 packed");
+  letPart2Go();
+  await until(() => asked.length === 5, "file 5 claimed once the gate opens");
+  ok(5);
+  const r = await building;
   assert.equal(r.saved, 4);
   assert.deepEqual(r.failed.map((rec) => [rec.filename, rec.error]), [["f3.bin", "link expired or gone (HTTP 403)"]]);
-  assert.equal(names.at(-1), r.parts.at(-1).name);
+  assert.deepEqual(names, r.parts.map((p) => p.name));
+  assert.equal(r.leftBehind, 0);
 });
 
 test("streamed build records a duplicate zip entry name on that record instead of rejecting the build", async () => {

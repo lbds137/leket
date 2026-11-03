@@ -71,8 +71,12 @@ export class ZipWriter {
     if (isBlob && typeof crc !== "number") throw new Error(`${name}: a Blob needs its crc32`);
     if (size >= MAX) throw new Error(`${name} is 4 GiB or larger: too big for a zip without zip64`);
     const nameBytes = new TextEncoder().encode(name);
-    this.room(30 + nameBytes.length + size + 46 + nameBytes.length);
+    // every refusal comes before any change: a refused entry seals no part early and
+    // leaves its name free
     if (this.names.has(name)) throw new Error(`two entries named ${name}`);
+    this.room(30 + nameBytes.length + size + 46 + nameBytes.length);
+    // only a file within bytes of 4 GiB, alone in its part, gets here past the limit
+    if (this.offset + 30 + nameBytes.length + size >= MAX) throw new Error(`${name}: its part would grow past 4 GiB`);
     this.names.add(name);
     if (!isBlob) crc = crc32(data);
     const local = new DataView(new ArrayBuffer(30));
@@ -103,7 +107,6 @@ export class ZipWriter {
     this.blobs.push(new Blob([local, nameBytes, data]));
     this.central.push(new Blob([cen, nameBytes]));
     this.offset += 30 + nameBytes.length + size;
-    if (this.offset >= MAX) throw new Error("part grew past 4 GiB");
     return (this.onPart ? this.sealed : this.done.length) + 1;
   }
 
