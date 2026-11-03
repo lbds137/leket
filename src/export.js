@@ -155,6 +155,8 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       };
       const attempt = async () => {
         const mine = ++tries;
+        // the previous try's id is not this one's: until Chrome gives one, a click says so
+        lastId = null;
         inFlight = true;
         running.add(mine);
         let ok;
@@ -189,6 +191,9 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
           if (next === "saved") { over(lastTry); markSaved(); }
           else if (next === "downloading") a.textContent = `${label} — still downloading; see Chrome's downloads`;
           else {
+            // Chrome says the last try is interrupted or gone (an erase sends it no end):
+            // it reads the URL no longer
+            if (step === "ask") over(lastTry);
             a.textContent = `${label} — saving again…`;
             await attempt();
           }
