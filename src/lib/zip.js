@@ -1,7 +1,9 @@
 // A zip writer for files stored as they are (no compression: attachments are mostly
 // images and videos, already compressed). Entries are kept as Blobs, so a large archive
 // lives in the browser's blob storage rather than in one array in memory. Plain zip, not
-// zip64: a part stays under 4 GiB, and parts() starts a new one past `partLimit` bytes.
+// zip64: every offset in a part stays under 4 GiB (a part holding one file of nearly 4 GiB
+// can end a few hundred bytes past it, which a plain zip allows), and a new part starts
+// past `partLimit` bytes.
 // With an `onPart` callback, each sealed part is handed over the moment it closes and
 // held nowhere, so the caller can download it before the next part fills.
 

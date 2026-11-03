@@ -75,7 +75,7 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
     const ensureNote = () => {
       if (note) return;
       note = document.createElement("p");
-      note.textContent = "If Chrome asks anything about downloading files, allow it; if a part below doesn't start, click it to try again.";
+      note.textContent = "If Chrome asks anything about downloading files, allow it; if a part below says it didn't finish, click it to try again.";
       $("downloads").replaceChildren(note, list);
     };
     $("downloads").replaceChildren(list);
@@ -123,8 +123,17 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
         if (render) render();
         else progress();
       };
+      // set while a tracked download is under way, from the call until it settles (the id
+      // may not have come back yet): a click then never starts another
+      let inFlight = false;
       const attempt = async () => {
-        const ok = await trackDownload(chrome.downloads, { url, filename: name }, { onStart: (id) => { lastId = id; } });
+        inFlight = true;
+        let ok;
+        try {
+          ok = await trackDownload(chrome.downloads, { url, filename: name }, { onStart: (id) => { lastId = id; } });
+        } finally {
+          inFlight = false;
+        }
         if (ok) markSaved();
         else if (result.ok) { /* another attempt saved it meanwhile; its label stands */ }
         else if (ok === false) a.textContent = `${label} — didn't finish; click to try again`;
@@ -135,9 +144,17 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       a.addEventListener("click", async (e) => {
         e.preventDefault();
         if (busy || result.ok) return;
+        if (inFlight) {
+          a.textContent = lastId == null
+            ? `${label} — waiting for Chrome to start it; if Chrome asks about downloading files, allow it`
+            : `${label} — still downloading; see Chrome's downloads`;
+          return;
+        }
         busy = true;
         try {
           const state = lastId == null ? null : await downloadState(chrome.downloads, lastId);
+          // saved or restarted by another path while Chrome was being asked
+          if (result.ok || inFlight) return;
           if (state === "complete") markSaved();
           else if (state === "in_progress") a.textContent = `${label} — still downloading; see Chrome's downloads`;
           else {
@@ -189,8 +206,8 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
     // a streamed save stops at its first failed part; whether anything was left out of
     // every part depends on how far it had got
     const stoppedNote = !stream ? ""
-      : leftBehind ? ` The save stopped there — ${leftBehind} attachment(s) never got into a part and are listed as unsaved in discord-attachments.json. Free up space, then click the part above to try it again, and save again from the Discord tab for the rest.`
-      : " Free up space, then click the part above to try it again.";
+      : leftBehind ? ` The save stopped there — ${leftBehind} attachment(s) never got into a part (discord-attachments.json lists them as unsaved). If your disk is full, free up space first; then click the part above to try it again, and save again from the Discord tab for the rest.`
+      : " If your disk is full, free up space first; then click the part above to try it again.";
     // the summary's own spot among the problems, so a redraw leaves the disk warning be
     const lostBox = document.createElement("div");
     $("problems").appendChild(lostBox);
@@ -230,7 +247,10 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       } else if (!lost.length && first) window.close();
       // saved by a click: the tab stays, so the click gets an answer
       else if (!lost.length) say(`${savedText} Every part is downloaded.`);
-      else say(`${savedText} This tab stays open because ${lost.length} attachment(s) could not be saved.`, "warn");
+      else {
+        const stopped = leftBehind ? ` The save stopped early, so ${leftBehind} of them never got into a part: save again from the Discord tab for those.` : "";
+        say(`${savedText} This tab stays open because ${lost.length} attachment(s) could not be saved.${stopped}`, "warn");
+      }
     };
     render(true);
   } catch (e) {
