@@ -314,9 +314,9 @@ test("streamed hand-offs gate the fetches: a failing worker waits, it does not c
   const building = build(many, { file: "d.json", fetchFn, wait: 0, gap: 0, partLimit: 60000,
     onPart: async (p) => { if (p.index === 2) { reachedGate(); await gate; } } });
   await reached;   // part 2 sealed and its hand-off is gated
-  // the three initial workers, plus the handful one may have churned before the gate
+  // the initial workers (two by default), plus the handful one may have churned before the gate
   // landed; ungated, the 404 workers would run through all 30 records
-  assert.ok(fetches <= 10, `fetches stalled near the initial three (got ${fetches})`);
+  assert.ok(fetches <= 10, `fetches stalled near the initial workers (got ${fetches})`);
   release();
   await building;
 });
@@ -586,4 +586,26 @@ test("the default rest between files is 0.5-1 s", () => {
     const ms = restBetweenFiles();
     assert.ok(ms >= 500 && ms < 1000, String(ms));
   }
+});
+
+test("with no gap given, a worker rests at least half a second between files", async () => {
+  const two = exp();
+  two.messages = [1, 2].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k}:00.000Z`,
+    attachments: [{ filename: `f${k}.bin`, url: `${CDN}/${k}/f.bin` }] }));
+  const starts = [];
+  const fetchFn = async () => { starts.push(Date.now()); return new Response("data", { status: 200 }); };
+  const r = await build(two, { file: "d.json", fetchFn, wait: 0, concurrency: 1 });
+  assert.equal(r.failed.length, 0);
+  assert.ok(starts[1] - starts[0] >= 490, `second file started ${starts[1] - starts[0]} ms after the first`);
+});
+
+test("a worker that rests past the last file stops there: an odd count with two workers", async () => {
+  const three = exp();
+  three.messages = [1, 2, 3].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k}:00.000Z`,
+    attachments: [{ filename: `f${k}.bin`, url: `${CDN}/${k}/f.bin` }] }));
+  let calls = 0;
+  const fetchFn = async () => { calls++; return new Response("data", { status: 200 }); };
+  const r = await build(three, { file: "d.json", fetchFn, wait: 0, gap: 20 });
+  assert.equal(r.failed.length, 0);
+  assert.equal(calls, 3);
 });

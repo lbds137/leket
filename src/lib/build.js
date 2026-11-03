@@ -147,9 +147,11 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   const worker = async () => {
     let fetchedLast = false;
     while (next < records.length && !stopped) {
-      // paced: a worker rests between its requests to the CDN
-      if (fetchedLast) {
-        await sleep(typeof gap === "function" ? gap() : gap);
+      // paced: a worker rests between its requests to the CDN (no rest, no timer: a gap of
+      // 0 moves on within the same turn, as the gate tests expect)
+      const rest = fetchedLast ? (typeof gap === "function" ? gap() : gap) : 0;
+      if (rest > 0) {
+        await sleep(rest);
         if (stopped || next >= records.length) break;
       }
       // streamed: before fetching more, wait until every part already sealed has been
