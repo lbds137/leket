@@ -7,6 +7,11 @@ import { render } from "./render.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Pacing for the attachment fetches (build's concurrency and gap): two at a time, each
+// worker resting a jittered 0.5-1 s between files, so a large save doesn't pull from the
+// CDN as fast as it answers. The requests carry no login, but they all come from one address.
+export const restBetweenFiles = () => 500 + Math.random() * 500;
+
 // One file as a Blob with its crc32, read piece by piece. A download that sends nothing for
 // `idle` ms is dropped and tried again (a stalled connection never ends by itself); an
 // expired or deleted link (403, 404) is not tried again. Discord's CDN answers 503/504 for
@@ -74,7 +79,7 @@ export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, 
 // end, in both cases. Parts are named <base>-partN.zip: the total isn't known until the
 // last one seals.
 export async function build(exp, { file, attachments = true, timeZone = "UTC", partLimit, fetchFn, wait, idle,
-  concurrency = 3, onProgress = () => {}, onPart } = {}) {
+  concurrency = 2, gap = restBetweenFiles, onProgress = () => {}, onPart } = {}) {
   const records = attachments ? attachmentList(exp) : [];
   const stream = !!onPart && records.length > 0;
   const STOP_ERROR = "not saved — the save stopped early";
@@ -140,7 +145,13 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   let next = 0, done = 0, failed = 0, packed = 0;
   const got = stream ? null : new Array(records.length);
   const worker = async () => {
+    let fetchedLast = false;
     while (next < records.length && !stopped) {
+      // paced: a worker rests between its requests to the CDN
+      if (fetchedLast) {
+        await sleep(typeof gap === "function" ? gap() : gap);
+        if (stopped || next >= records.length) break;
+      }
       // streamed: before fetching more, wait until every part already sealed has been
       // handed off, so a slow download can't pile 2 GiB parts up in memory
       if (!got) {
@@ -150,7 +161,8 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
       }
       const i = next++;
       const r = records[i];
-      const res = fetchable(r.url) ? await fetchFile(r.url, { fetchFn, wait, idle }) : { error: "not a Discord attachment link" };
+      fetchedLast = fetchable(r.url);
+      const res = fetchedLast ? await fetchFile(r.url, { fetchFn, wait, idle }) : { error: "not a Discord attachment link" };
       if (stopped && !got) {
         // the save stopped while this was being fetched: it never reaches a part
         r.error = res.error || STOP_ERROR;

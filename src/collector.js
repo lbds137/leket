@@ -5,7 +5,8 @@
 //
 // Reads only what the Discord page has already loaded while you scroll up; it makes no
 // API calls of its own. A small panel shows the count, the oldest date and roughly how big
-// the attachments are. "Auto-scroll" scrolls up gently until the start of the conversation,
+// the attachments are. "Auto-scroll" scrolls up gently, at a paced 2-4 s a page with a
+// longer rest every 20 pages, until the start of the conversation,
 // or until the "stop at" date when one is typed in; "start at" names a chunk's newest edge
 // (a very long conversation is saved in chunks: jump to a Discord search result for the
 // upper edge, collect down to "stop at", and let the saves be merged by message id —
@@ -700,15 +701,26 @@
         stopAuto();
         status.textContent += " — STALLED, not at the start: scroll up by hand, then Auto-scroll again";
       } else {
-        timer = setTimeout(step, 400);
+        const ms = pause(++steps);
+        if (ms >= LONG_REST[0]) status.textContent += ` — resting ${Math.round(ms / 1000)} s so the history loads at a person's pace`;
+        timer = setTimeout(step, ms);
       }
     };
     timer = setTimeout(wait, 250);
   };
+  // Pacing: each history page Discord loads is a request on the account, so the climb goes
+  // at a reader's pace rather than as fast as Discord answers: 2-4 s between steps, and a
+  // 30-60 s rest every 20 steps (Discord loads ~50 messages a page, so about every
+  // thousand). Jittered, so the requests don't tick like a clock.
+  const SHORT_REST = [2000, 4000], LONG_REST = [30000, 60000], REST_EVERY = 20;
+  const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
+  const pause = (n) => between(n % REST_EVERY === 0 ? LONG_REST : SHORT_REST);
+  let steps = 0;
   const autoBtn = btn("Auto-scroll", () => {
     if (timer) return stopAuto();
     if (!scroller()) return alert("Open the conversation first, then press Auto-scroll again.");
     idle = 0;
+    steps = 0;
     autoBtn.textContent = "Stop";
     timer = setTimeout(step, 0);
   });

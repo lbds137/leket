@@ -221,3 +221,17 @@ test("start at warns when the newest message is more than a day before start-at,
   assert.deepEqual([oneDay.export.start_at, oneDay.export.messages_after_start], ["2021-01-08", 0]);
   assert.ok(!oneDay.status.includes("NOT in this save"));
 });
+
+test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 steps", () => {
+  const { paces, loads, status } = runPage("auto");
+  assert.equal(loads, 25);
+  assert.match(status, /reached the start of the channel/);
+  // the first step starts at once; then one pause after each step that didn't end the climb
+  assert.equal(paces[0], 0);
+  const after = paces.slice(1);
+  assert.equal(after.length, 26, "25 loading steps and one empty one before the start is confirmed");
+  after.forEach((ms, k) => {
+    const [lo, hi] = (k + 1) % 20 === 0 ? [30000, 60000] : [2000, 4000];
+    assert.ok(ms >= lo && ms < hi, `pause after step ${k + 1}: ${ms} ms`);
+  });
+});
