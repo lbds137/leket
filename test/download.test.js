@@ -2,7 +2,7 @@
 // chrome.downloads that the test drives by hand.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { trackDownload } from "../src/lib/download.js";
+import { downloadState, trackDownload } from "../src/lib/download.js";
 
 // a chrome.downloads stand-in: download() resolves when the test says, with the id the test
 // picks; search() reports whatever state the test set; fire() sends an onChanged event
@@ -92,4 +92,20 @@ test("each try is its own download: a retry after a failure can succeed", async 
   d.fire(2, "complete");
   assert.equal(await again, true);
   assert.equal(d.calls.length, 2);
+});
+
+test("onStart gets the id, so a later click can ask Chrome where that download stands", async () => {
+  const d = fakeDownloads();
+  let started = null;
+  const p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { timeout: 5, onStart: (id) => { started = id; } });
+  d.set(4, "in_progress");
+  d.start(4);
+  assert.equal(await p, null, "no word in time");
+  assert.equal(started, 4);
+  assert.equal(await downloadState(d, 4), "in_progress");
+  d.set(4, "complete");
+  assert.equal(await downloadState(d, 4), "complete", "a late finish is still found");
+  assert.equal(await downloadState(d, 99), null, "a download Chrome no longer lists");
+  const broken = { search: async () => { throw new Error("no"); } };
+  assert.equal(await downloadState(broken, 4), null);
 });

@@ -58,9 +58,10 @@ export class ZipWriter {
   }
 
   // the part that would hold `size` more bytes: a new one once the current would pass the
-  // limit (a part never ends up empty, so one file larger than the limit gets a part alone)
+  // limit (a part never ends up empty, so one file larger than the limit gets a part alone),
+  // or would hold 0xffff entries — that count is zip64's marker, not a plain zip's
   room(size) {
-    if (this.central.length && (this.offset + size > this.partLimit || this.central.length === 0xffff)) this.close();
+    if (this.central.length && (this.offset + size > this.partLimit || this.central.length === 0xfffe)) this.close();
   }
 
   // data: the file's content, a Uint8Array, or a Blob with its crc32 given (so a large file
@@ -74,9 +75,10 @@ export class ZipWriter {
     // every refusal comes before any change: a refused entry seals no part early and
     // leaves its name free
     if (this.names.has(name)) throw new Error(`two entries named ${name}`);
+    // a file within bytes of 4 GiB: even alone in a part, its header pushes the part past
+    // what a plain zip can address (a smaller file that doesn't fit gets a new part instead)
+    if (30 + nameBytes.length + size >= MAX) throw new Error(`${name}: its part would grow past 4 GiB`);
     this.room(30 + nameBytes.length + size + 46 + nameBytes.length);
-    // only a file within bytes of 4 GiB, alone in its part, gets here past the limit
-    if (this.offset + 30 + nameBytes.length + size >= MAX) throw new Error(`${name}: its part would grow past 4 GiB`);
     this.names.add(name);
     if (!isBlob) crc = crc32(data);
     const local = new DataView(new ArrayBuffer(30));

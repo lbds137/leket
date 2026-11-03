@@ -91,6 +91,15 @@ test("an empty writer still gives one valid zip; a name used twice is refused", 
   assert.throws(() => z.add("x", new Uint8Array(40)), /two entries named x/);
 });
 
+test("a part holds at most 0xfffe entries: a count of 0xffff would read as zip64's marker", () => {
+  const counts = [];
+  const z = new ZipWriter({ onPart: (blob, n) => counts.push(n) });
+  const empty = new Uint8Array();
+  for (let i = 0; i < 0xffff; i++) z.add(String(i), empty);
+  assert.deepEqual(counts, [1], "entry 0xffff starts part 2");
+  assert.equal(z.central.length, 1);
+});
+
 test("a refused entry leaves the writer as it was: no part sealed early, its name still free", async () => {
   const sealed = [];
   const z = new ZipWriter({ partLimit: 50, onPart: (blob, n) => sealed.push(n) });
@@ -100,11 +109,15 @@ test("a refused entry leaves the writer as it was: no part sealed early, its nam
   assert.deepEqual(sealed, []);
   // a file within a few bytes of 4 GiB: its own headers push the part past what a plain
   // zip can address. Its size is all that is read before the refusal, so a stand-in will do.
+  // Refused after a file is already in the open part, so a part sealed early would show.
   class NearlyFourGiB extends Blob { get size() { return 0xffffffff - 20; } }
-  const w = new ZipWriter();
-  assert.throws(() => w.add("big.bin", new NearlyFourGiB([]), 0), /4 GiB/);
+  const wSealed = [];
+  const w = new ZipWriter({ onPart: (blob) => wSealed.push(blob) });
   w.add("small.txt", enc.encode("ok"));
+  assert.throws(() => w.add("big.bin", new NearlyFourGiB([]), 0), /4 GiB/);
+  assert.equal(wSealed.length, 0, "the open part is not sealed by a refused entry");
   w.add("big.bin", enc.encode("a later file may take the name"));
-  const [files] = await read(w.parts());
+  w.parts();
+  const [files] = await read(wSealed);
   assert.deepEqual(Object.keys(files), ["small.txt", "big.bin"]);
 });
