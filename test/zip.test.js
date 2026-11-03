@@ -90,3 +90,21 @@ test("an empty writer still gives one valid zip; a name used twice is refused", 
   z.add("x", new Uint8Array(40));
   assert.throws(() => z.add("x", new Uint8Array(40)), /two entries named x/);
 });
+
+test("a refused entry leaves the writer as it was: no part sealed early, its name still free", async () => {
+  const sealed = [];
+  const z = new ZipWriter({ partLimit: 50, onPart: (blob, n) => sealed.push(n) });
+  z.add("x", new Uint8Array(40));
+  // a duplicate that would not fit the open part: refused before it seals that part
+  assert.throws(() => z.add("x", new Uint8Array(40)), /two entries named x/);
+  assert.deepEqual(sealed, []);
+  // a file within a few bytes of 4 GiB: its own headers push the part past what a plain
+  // zip can address. Its size is all that is read before the refusal, so a stand-in will do.
+  class NearlyFourGiB extends Blob { get size() { return 0xffffffff - 20; } }
+  const w = new ZipWriter();
+  assert.throws(() => w.add("big.bin", new NearlyFourGiB([]), 0), /4 GiB/);
+  w.add("small.txt", enc.encode("ok"));
+  w.add("big.bin", enc.encode("a later file may take the name"));
+  const [files] = await read(w.parts());
+  assert.deepEqual(Object.keys(files), ["small.txt", "big.bin"]);
+});

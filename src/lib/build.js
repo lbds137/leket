@@ -224,8 +224,11 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   }
   const parts = zip.parts();
   await drain(stopped);   // after a stop, only the manifest part is left to hand over
+  // leftBehind: records the stop kept out of every part. Retrying the failed parts can't
+  // save them, so a save with any of these isn't complete however the retries go.
   if (stream) return { parts: handedOff.map(({ name, index }) => ({ name, index })), records,
-    saved: records.length - failed, failed: records.filter((r) => r.error) };
+    saved: records.length - failed, failed: records.filter((r) => r.error),
+    leftBehind: records.filter((r) => r.error === STOP_ERROR).length };
   const named = parts.map((blob, i) => ({ blob, name: parts.length === 1 ? `${base}.zip` : `${base}-part${i + 1}-of-${parts.length}.zip` }));
-  return { parts: named, records, saved: records.length - failed, failed: records.filter((r) => r.error) };
+  return { parts: named, records, saved: records.length - failed, failed: records.filter((r) => r.error), leftBehind: 0 };
 }
