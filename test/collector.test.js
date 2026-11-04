@@ -1,4 +1,4 @@
-// src/collector.js on a fake Discord page (test/fixtures/fake_page.cjs).
+// src/modules/discord/collector.js on a fake Discord page (test/fixtures/fake_page.cjs).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

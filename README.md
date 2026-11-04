@@ -46,16 +46,16 @@ If you only want the messages, untick **save attachments too** before clicking S
 
 ## Without installing anything
 
-`src/collector.js` also works on its own: paste its contents into Chrome's DevTools console (F12, Console tab) on an open conversation. Save then downloads the JSON alone, without attachments or the readable page.
+`src/modules/discord/collector.js` also works on its own: paste its contents into Chrome's DevTools console (F12, Console tab) on an open conversation. Save then downloads the JSON alone, without attachments or the readable page.
 
 ## For developers
 
 `npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies. Layout:
 
 - `src/background.js`: the toolbar button; it injects the bridge and the collector, and opens the export tab.
-- `src/collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
-- `src/bridge.js`: hands the collector's export from the page to the export tab, in pieces.
-- `src/export.html`, `src/export.js`, `src/lib/`: fetch the attachments, write `index.html`, and build the zip.
+- `src/modules/discord/collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
+- `src/modules/discord/bridge.js`: hands the collector's export from the page to the export tab, in pieces.
+- `src/modules/discord/export.html`, `src/modules/discord/export.js`, `src/lib/`: fetch the attachments, write `index.html`, and build the zip.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 
 ## License

@@ -1,4 +1,4 @@
-// Runs src/collector.js against a fake Discord page and prints the file name and JSON its
+// Runs src/modules/discord/collector.js against a fake Discord page and prints the file name and JSON its
 // Save button hands over, as {"file": …, "export": …, "status": …, "posted": …}.
 // Usage: node fake_page.cjs <scenario> [tab title] [mod nick]
 // (guild | guild-guildstore-roles | guild-no-stores | guild-no-getmember |
@@ -360,7 +360,7 @@ if (scenario.startsWith("guild") && scenario !== "guild-no-stores") {
   };
 }
 
-const src = fs.readFileSync(path.join(__dirname, "../../src/collector.js"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "../../src/modules/discord/collector.js"), "utf8");
 vm.runInNewContext(src, sandbox);
 lateLoaded = true;
 if (growing) growing.text = "2 blocked messages";

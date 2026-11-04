@@ -16,10 +16,10 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
   try {
     // the bridge first: the collector looks for its mark when Save is pressed
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/bridge.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/modules/discord/bridge.js"] });
     // the page's own world: Discord's message objects live on its React elements, which a
     // content script's isolated world can't see
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/collector.js"], world: "MAIN" });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/modules/discord/collector.js"], world: "MAIN" });
     await flag(tab.id, "", "Discord tools: save this conversation");
   } catch (e) {
     await flag(tab.id, "!", `Discord tools couldn't start on this tab: ${(e && e.message) || e}. Reload the tab and try again.`);
@@ -29,7 +29,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!msg || msg.type !== "discord-tools:ready" || !sender.tab) return;
   const q = new URLSearchParams({ tab: String(sender.tab.id), key: msg.key });
-  chrome.tabs.create({ url: chrome.runtime.getURL(`src/export.html?${q}`), index: sender.tab.index + 1, windowId: sender.tab.windowId })
+  chrome.tabs.create({ url: chrome.runtime.getURL(`src/modules/discord/export.html?${q}`), index: sender.tab.index + 1, windowId: sender.tab.windowId })
     .then(() => reply({ ok: true }), () => reply({ ok: false }));
   // the answer comes after the tab is opened
   return true;
