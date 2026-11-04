@@ -52,7 +52,10 @@ If you only want the messages, untick **save attachments too** before clicking S
 
 `npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies. Layout:
 
-- `src/background.js`: the toolbar button; it injects the bridge and the collector, and opens the export tab.
+- `src/popup/popup.html`, `src/popup/popup.js`: the toolbar popup. It detects what the active tab supports and renders that module's card.
+- `src/modules/registry.js`: the supported sites, matched by URL.
+- `src/modules/discord/launch.js`: the Discord module's commands — what the popup's buttons do.
+- `src/background.js`: the service worker. It carries the Discord module's launch (the popup hands the click over) and opens the export tab when the collector's Save hands over.
 - `src/modules/discord/collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
 - `src/modules/discord/bridge.js`: hands the collector's export from the page to the export tab, in pieces.
 - `src/modules/discord/export.html`, `src/modules/discord/export.js`, `src/lib/`: fetch the attachments, write `index.html`, and build the zip.
