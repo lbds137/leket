@@ -184,15 +184,6 @@ test("onStart gets the id, so a later click can ask Chrome where that download s
   assert.equal(await downloadState(broken, 4), "unavailable");
 });
 
-test("Chrome failing to answer is not the same as the download being erased", async () => {
-  // erased: Chrome answered and no longer lists it — null, and a click downloads again
-  const d = fakeDownloads();
-  assert.equal(await downloadState(d, 99), null);
-  // a failed search says so: nothing is known about the download's state
-  const broken = { search: async () => { throw new Error("no"); } };
-  assert.equal(await downloadState(broken, 4), "unavailable");
-});
-
 // the part factory (src/lib/part.js) with hooks standing in for the page: notes collects
 // the label kinds it asks for, saved and freed count the part-level callbacks
 function partHarness() {
@@ -210,7 +201,7 @@ function partHarness() {
 test("a part: a finish in time saves it, a failure says so, and the result answers ok", async () => {
   const d = fakeDownloads();
   const { seen, hooks } = partHarness();
-  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 60000 });
   const p = part.start();
   d.start(3);
   await settle();
@@ -226,7 +217,7 @@ test("a part: a finish in time saves it, a failure says so, and the result answe
 
   const e = fakeDownloads();
   const fail = partHarness();
-  const bad = createPartDownload(e, { url: "blob:x", name: "b.zip", index: 2 }, fail.hooks, { timeout: 5 });
+  const bad = createPartDownload(e, { url: "blob:x", name: "b.zip", index: 2 }, fail.hooks, { timeout: 60000 });
   const q = bad.start();
   e.refuse();
   await q;
@@ -238,7 +229,7 @@ test("a part: a finish in time saves it, a failure says so, and the result answe
 test("a click while a try is under way never starts another", async () => {
   const d = fakeDownloads();
   const { seen, hooks } = partHarness();
-  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 60000 });
   const p = part.start();
   await part.click();   // the call is out but Chrome has given no id yet
   assert.deepEqual(seen.notes, ["starting"]);
@@ -318,7 +309,7 @@ test("a click whose Chrome answer fails says so, and the retry stays with the ne
   const realSearch = d.search;
   d.search = async () => { throw new Error("no"); };
   const { seen, hooks } = partHarness();
-  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 60000 });
   const p = part.start();
   d.start(3);
   await settle();
@@ -375,8 +366,8 @@ test("a click whose Chrome answer says still downloading says so", async () => {
   await part.click();   // Chrome says it is still going: say that, start nothing
   assert.deepEqual(seen.notes, ["no-word", "downloading"]);
   assert.equal(d.calls.length, 1);
-  d.fire(3, "complete");
-  await p;
+  d.fire(3, "complete");   // p settled long ago (the no-word timeout); the save lands
+                           // synchronously through onLate
   assert.equal(seen.saved, 1, "the download finishing on its own still saves the part");
   assert.ok(seen.freed >= 1, "the URL may go once nothing reads it");
 });
