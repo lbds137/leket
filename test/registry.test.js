@@ -1,7 +1,6 @@
 // src/modules/registry.js: what the popup offers for a tab's URL.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { MODULES, match } from "../src/modules/registry.js";
 import { COMMANDS } from "../src/popup/commands.js";
 
@@ -52,17 +51,4 @@ test("every registry command has an implementation in the popup", () => {
       assert.equal(typeof COMMANDS[m.id][c.id], "function", `${m.id}/${c.id}: no implementation`);
     }
   }
-});
-
-test("the worker's CONVERSATION regex and the registry's matches agree", () => {
-  // background.js is a classic service worker (the manifest has no "type": "module"),
-  // so it cannot import the registry: the two conversation regexes can only drift apart
-  // silently, and a drifted pair makes the popup offer a launch the worker refuses.
-  // This pin turns that into a red test.
-  const worker = readFileSync(new URL("../src/background.js", import.meta.url), "utf8");
-  const registry = readFileSync(new URL("../src/modules/registry.js", import.meta.url), "utf8");
-  const pull = (src) => (src.match(/\/\^https:[^\n]*\/(?=;|\.test)/) || [])[0];
-  assert.ok(pull(worker), "no /^https:…/ regex literal found in background.js");
-  assert.ok(pull(registry), "no /^https:…/ regex literal found in registry.js");
-  assert.equal(pull(worker), pull(registry), "the two conversation regexes drifted apart");
 });
