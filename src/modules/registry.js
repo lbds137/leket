@@ -6,9 +6,9 @@ export const MODULES = [
   {
     id: "discord",
     // a DM (@me), a server channel or a thread: /channels/<guild>/<channel>[/<thread>].
-    // A command the worker runs itself (an injection) is also checked by hand in
-    // src/background.js launch(): register it in both places, and in
-    // src/popup/commands.js — test/registry.test.js only pins registry↔commands.js
+    // A worker-run command lives in three places: here, src/popup/commands.js (via the
+    // module's launch.js), and the command check in src/background.js launch() —
+    // test/registry.test.js pins only the first two.
     matches: (url) => /^https:\/\/discord\.com\/channels\/(@me|\d+)\/\d+/.test(url),
     title: "Discord",
     blurb: "Save this DM, channel or thread, with its attachments, as one zip you can open offline.",
