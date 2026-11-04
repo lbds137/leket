@@ -114,7 +114,7 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       "starting": "— waiting for Chrome to start it; if Chrome asks about downloading files, allow it",
       "downloading": "— still downloading; see Chrome's downloads",
       "saving-again": "— saving again…",
-      "unavailable": "— Chrome couldn't be asked where its last try stands; click to try again",
+      "unavailable": "— Chrome couldn't be asked where its last try stands; click to ask again",
     };
     const downloadPart = async ({ blob, name, index }) => {
       say(`Saving ${name}…`);
