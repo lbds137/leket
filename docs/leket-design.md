@@ -109,7 +109,10 @@ The headline: **the CLI tools change nothing.**
 | `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical) |
 
 `chrome.downloads.download` with `saveAs: false` lands in ~/Downloads under the given
-filename — the same place the scripts' Blob-plus-click put it. The paste payloads keep
+filename — the same place the scripts' Blob-plus-click put it. (Chrome's own
+ask-where-to-save setting still prompts when it is on — `saveAs: false` cannot suppress
+the user's setting, runtime-confirmed 11-04; answering it once lets the save land.)
+The paste payloads keep
 their exact shapes so Deck's generators emit the same lines; the input boxes accept both
 the bare JSON and the full `window.X = {...};` line and parse the payload out.
 
