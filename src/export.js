@@ -134,7 +134,12 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
         free: () => URL.revokeObjectURL(url),
       });
       // the part decides what a click does; the page only hands the click over
-      a.addEventListener("click", (e) => { e.preventDefault(); part.click(); });
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        // a hook throwing inside the click must not become an unhandled rejection
+        // (the old async listener had the same exposure); keep the signal on the console
+        part.click().catch((err) => console.error(`${name} click failed:`, err));
+      });
       await part.start();
       return part.result;
     };
