@@ -5,9 +5,9 @@
 //
 // Reads only what the Discord page has already loaded while you scroll up; it makes no
 // API calls of its own. A small panel shows the count, the oldest date and roughly how big
-// the attachments are. "Auto-scroll" scrolls up gently, at a paced 2-4 s a page with a
-// longer rest every 20 pages, until the start of the conversation,
-// or until the "stop at" date when one is typed in; "start at" names a chunk's newest edge
+// the attachments are. "Auto-scroll" scrolls up gently, 2-4 s a page with a longer rest
+// every 20 pages, until the start of the conversation, or until the "stop at" date when
+// one is typed in; "start at" names a chunk's newest edge
 // (a very long conversation is saved in chunks: jump to a Discord search result for the
 // upper edge, collect down to "stop at", and let the saves be merged by message id —
 // "start at" clips nothing, notes harmless overlap with the chunk before, and warns when
@@ -596,7 +596,7 @@
       (groups.length ? `, ${groups.filter((g) => g.opened).length} blocked/ignored groups opened` : "") +
       (shut ? `, ${shut} WOULD NOT OPEN${whereShut(groups.filter((g) => !g.opened && g.tries >= 3))}` : "") +
       (expandError ? `, ERROR opening blocked/ignored messages: ${expandError}` : "") +
-      (Date.now() < restUntil ? ` — resting about ${Math.ceil((restUntil - Date.now()) / 1000)} s so the history loads at a person's pace` : "");
+      (Date.now() < restUntil ? " — resting for up to a minute so the history loads at a person's pace" : "");
   }
 
   // where each bar that wouldn't open sits, by the message above it, so it can be scrolled
@@ -717,19 +717,22 @@
   const SHORT_REST = [2000, 4000], LONG_REST = [30000, 60000], REST_EVERY = 20;
   const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
   const pause = (n) => between(n % REST_EVERY === 0 ? LONG_REST : SHORT_REST);
+  // steps counts across Stop and Auto-scroll again, so a restart doesn't skip the long rest
   let steps = 0, restUntil = 0;
   const autoBtn = btn("Auto-scroll", () => {
     if (timer) return stopAuto();
     if (!scroller()) return alert("Open the conversation first, then press Auto-scroll again.");
     idle = 0;
-    steps = 0;
     autoBtn.textContent = "Stop";
     timer = setTimeout(step, 0);
   });
+  // a stop during a rest drops the rest note at once; callers append their own words after
   function stopAuto() {
     clearTimeout(timer);
     timer = null;
+    const wasResting = Date.now() < restUntil;
     restUntil = 0;
+    if (wasResting) render();
     autoBtn.textContent = "Auto-scroll";
   }
 
