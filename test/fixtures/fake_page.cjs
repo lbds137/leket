@@ -7,8 +7,8 @@
 // guild-hidden-throws | guild-hidden-returns | dm | dm-forward | auto; auto clicks
 // Auto-scroll instead of Save and prints {paces, restNotes, restLoads, loads, status}; with
 // AUTO_STOP_REST=1 it presses Stop as the long rest begins, with AUTO_RESTART it presses
-// Stop and Auto-scroll again, with AUTO_STOP_WAIT=N the same in the wait after step N's
-// nudge, see there). With BRIDGE=1 in the
+// Stop and Auto-scroll again, with AUTO_STOP_WAIT=N the same on step N's wait timer (what
+// N names past the loading steps: see there). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
 // (posted: the message) instead of downloading it. START_AT fills the start-at box before
 // Save. The stores mimic the shape the collector
