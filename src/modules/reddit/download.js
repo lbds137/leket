@@ -6,8 +6,10 @@ import { trackDownload } from "../../lib/download.js";
 // still be reading the blob, so it fires only then — the worker uses it to ask the
 // document to revoke).
 export async function downloadPrepared(downloads, { url, name }, { timeout, onSettled } = {}) {
-  // saveAs is pinned off: a dialog would park the save on a prompt instead of landing
-  // the file in ~/Downloads under the CLI's expected name. conflictAction is pinned to
+  // saveAs is pinned off so the save never raises a prompt of its own; Chrome's own
+  // "ask where to save each file" setting still asks when it is on — the API flag
+  // can't suppress the user's setting (runtime-confirmed 11-04) — and the save lands
+  // under the CLI's expected name once it is answered. conflictAction is pinned to
   // overwrite so a re-save of the same post updates that one file — with Chrome's
   // default (uniquify) a re-save would land as reddit-<id> (1).json and the CLI would
   // go on reading the stale original.
