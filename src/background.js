@@ -5,6 +5,7 @@
 // two that can drift.
 import { match } from "./modules/registry.js";
 import { downloadPrepared } from "./modules/reddit/download.js";
+import { SAVE_PAGE_SILENT } from "./modules/reddit/json.js";
 
 // flags the toolbar icon on this tab alone: what happened, for when the popup is gone
 const flag = async (tabId, text, title) => {
@@ -71,9 +72,12 @@ const redditSave = async (tabUrl) => {
     return { ok: false, error: "This tab is no longer a reddit post page — open the post and click again." };
   }
   await ensureOffscreen();
+  // a broadcast: every extension page gets it, and today only the offscreen document
+  // answers a reddit-save-run. No other page may grow a listener that replies to it —
+  // the worker would read that reply as the save's result.
   const prep = await chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-run", tabUrl });
   if (!prep || !prep.ok) {
-    return { ok: false, error: (prep && prep.error) || "The extension's save page didn't answer — try again; if it repeats, reload the extension." };
+    return { ok: false, error: (prep && prep.error) || SAVE_PAGE_SILENT };
   }
   const done = await downloadPrepared(chrome.downloads, prep, {
     onSettled: () => chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-revoke", url: prep.url }).catch(() => {}),

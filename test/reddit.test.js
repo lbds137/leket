@@ -117,7 +117,17 @@ test("a post's json is fetched once, from the tab's own origin, with the login r
     assert.equal(calls[0].url, `${origin}/comments/abc123.json?raw_json=1&limit=500`);
     // the whole point of the port: the fetch goes out as the logged-in browser
     assert.equal(calls[0].opts.credentials, "include");
+    // a stalled reddit must not park the popup on "Working…" forever
+    assert.ok(calls[0].opts.signal instanceof AbortSignal, "the fetch carries an abort timeout");
   }
+});
+
+test("a fetch that times out reads as an unreachable reddit", async () => {
+  const fetch = async () => { throw new DOMException("The operation timed out.", "TimeoutError"); };
+  await assert.rejects(
+    preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch }),
+    /Couldn't reach reddit/,
+  );
 });
 
 test("a post outside www and old reddit is refused before anything is fetched", async () => {

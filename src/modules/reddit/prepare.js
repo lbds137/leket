@@ -18,10 +18,11 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   const id = here.pathname.match(POST_PATHNAME);
   if (!id) throw new Error("Not a post page: open the post itself (its address has /comments/ in it).");
   // the script fetches a relative path from the post's own page; the port fetches the
-  // same origin the tab is on (www or old), so the same logged-in session answers
+  // same origin the tab is on (www or old), so the same logged-in session answers.
+  // A timeout, so a stalled reddit says "unreachable" instead of parking the popup.
   let r;
   try {
-    r = await doFetch(`${here.origin}/comments/${id[1]}.json?raw_json=1&limit=500`, { credentials: "include" });
+    r = await doFetch(`${here.origin}/comments/${id[1]}.json?raw_json=1&limit=500`, { credentials: "include", signal: AbortSignal.timeout(60_000) });
   } catch (e) {
     throw new Error(`Couldn't reach reddit to fetch this post's JSON — check the connection, then click Save again. (${(e && e.message) || e})`);
   }

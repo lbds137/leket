@@ -141,3 +141,7 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
   as the pluggable hook described under the module.
 - **Out of scope by spec**: youtube-extractor-guide.md stays a guide, not a module — noted
   here so it isn't lost; promoting it is Lila's call.
+- **Release note at the rename (PR7)**: this fold-in adds `www`/`old.reddit.com` host
+  permissions and the `offscreen` permission — on update, Chrome disables the extension
+  for installed users until they re-approve. Say so in the notes so the disable doesn't
+  read as breakage.
