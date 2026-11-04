@@ -340,3 +340,43 @@ test("a click whose Chrome answer fails says so, and the retry stays with the ne
   await again;
   assert.equal(seen.saved, 1, "the retried try saves the part");
 });
+
+test("a click whose Chrome answer says complete saves the part", async () => {
+  // the click can be the one that discovers the save: the start got no word in time and
+  // no late word ever comes — the click itself asks Chrome
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const p = part.start();
+  d.start(3);
+  await settle();
+  await p;
+  assert.deepEqual(seen.notes, ["no-word"]);
+  d.set(3, "complete");
+  await part.click();   // Chrome says complete: the click saves it and closes the try out
+  assert.deepEqual(d.searches.slice(-1), [3], "the click asked Chrome about the tracked download");
+  assert.equal(seen.saved, 1);
+  assert.equal(part.result.ok, true);
+  assert.ok(seen.freed >= 1, "no try left reading the blob: the page may revoke the URL");
+  d.fire(3, "interrupted");   // a late word now lands: the label stands, nothing changes
+  assert.equal(seen.saved, 1, "saved stays saved");
+  assert.deepEqual(seen.notes, ["no-word"]);
+});
+
+test("a click whose Chrome answer says still downloading says so", async () => {
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const p = part.start();
+  d.start(3);
+  await settle();
+  await p;
+  d.set(3, "in_progress");
+  await part.click();   // Chrome says it is still going: say that, start nothing
+  assert.deepEqual(seen.notes, ["no-word", "downloading"]);
+  assert.equal(d.calls.length, 1);
+  d.fire(3, "complete");
+  await p;
+  assert.equal(seen.saved, 1, "the download finishing on its own still saves the part");
+  assert.ok(seen.freed >= 1, "the URL may go once nothing reads it");
+});
