@@ -24,7 +24,7 @@ Spec: dev-docs BACKLOG.md Inbox, "One browser-tools extension" (Lila 11-04).
         claude-sessions/   — export.js, rename.js, delete.js
         claude-chat/       — outputs.js
         reddit/            — json.js
-        etsy/              — messages.js (recipe from Jackalope; script text pending)
+        etsy/              — messages.js (from Jackalope's recipe)
       lib/                 — build, download, files, render, summary, zip (today's lib)
                              + paging.js (cursor/offset loops), rest.js (jitter + rest, from #16–18)
 
@@ -69,9 +69,17 @@ evidence.
   /mnt/user-data/outputs/ files, text inline, the rest base64, into one dated JSON.
 - **Reddit** (post pages) — fetch `/comments/<id>.json?raw_json=1&limit=500`, save
   `reddit-<id>.json`. Runs in the popup.
-- **Etsy** — pages the same-origin message-list API (`offset` + `fetch_older`, dedupe on
-  `conversation_message_id`), saves one JSON per conversation via a download. Script text
-  pending from Jackalope; personal-data specifics get parameterized, not copied.
+- **Etsy** — pages Etsy's own read-only message-list endpoint
+  (`/api/v3/ajax/member/conversations/detail/<id>/message-list` with `offset` +
+  `fetch_older=true`), dedupes on `conversation_message_id`, stops only after two
+  consecutive pages bring nothing new (offset pages overlap), keeps the script's flat
+  400 ms pause between pages, and downloads one `etsy-conversations-<date>.json`.
+  Conversation ids come from a popup input, else the open `/messages/<id>` address.
+  Redaction is a pluggable `redact(text)` hook: the configured name, short form and
+  mishearing set build one regex that runs over the whole serialized JSON — which is why
+  it must also catch `\n` and `\uXXXX` escapes; an empty config redacts nothing.
+  Script received from Jackalope 11-04 with its personal-data literals flagged out;
+  changes to the Etsy logic go back to Jackalope as a diff, same as collector.js.
 
 ## The popup
 
@@ -92,6 +100,7 @@ The headline: **the CLI tools change nothing.**
 | `claude-sessions-<run>-partNN.jsonl`, `-done.json` | bin/claude-sessions-weekly → claude-sessions-split |
 | `reddit-<post id>.json` | `reddit-export --from-json` |
 | `claude-chat-outputs-<date>.json` | read directly (no tool wired yet) |
+| `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical) |
 
 `chrome.downloads.download` with `saveAs: false` lands in ~/Downloads under the given
 filename — the same place the scripts' Blob-plus-click put it. The paste payloads keep
@@ -109,7 +118,10 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
 5. Delete: dry run by default; the confirm count must match the current count; the first
    delete is verified gone before the rest run.
 6. Pacing (`rest.js`) defaults to off for the ported modules, matching the scripts'
-   behavior today; the Discord module keeps its proven #16–18 defaults.
+   behavior today; the Discord module keeps its proven #16–18 defaults, and Etsy keeps
+   its flat 400 ms pause. Moving any of them onto `rest.js` waits for evidence.
+7. Etsy: the stop condition is two consecutive pages adding nothing — one empty-ish page
+   is normal overlap, not the end.
 
 ## Open
 
@@ -117,7 +129,8 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
   "no breakage": an unpacked extension's identity is its local path, so Charles's installed
   0.2.4 keeps working untouched; a later Leket install appears as a new entry and the old
   folder gets removed. Her decision is what Charles receives, and when.
-- **Etsy script text** — requested from Jackalope (its repo is personal-data; never read
-  from this session).
+- **Etsy script text** — received from Jackalope 11-04 (its repo is personal-data; never
+  read from this session). Its deadname-guard literals stay out of Leket; the guard ships
+  as the pluggable hook described under the module.
 - **Out of scope by spec**: youtube-extractor-guide.md stays a guide, not a module — noted
   here so it isn't lost; promoting it is Lila's call.
