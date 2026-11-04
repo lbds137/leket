@@ -63,7 +63,8 @@ evidence.
     line). First rename must be a real change — otherwise the read-back proves nothing —
     and every rename is read back.
   - *Delete*: title-prefix input; dry run always first, confirm by the count it printed
-    (a stale count refuses), first delete verified gone by read-back before the rest.
+    and bound to that dry run (its prefix and exact session ids must still match), first
+    delete verified gone by read-back before the rest.
 - **Claude chat outputs** (claude.ai/chat pages) — paste the generated chat list
   (`window.CLAUDE_OUTPUT_CHATS` line); lists and downloads each chat's
   /mnt/user-data/outputs/ files, text inline, the rest base64, into one dated JSON.
@@ -124,8 +125,9 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
 3. The done marker is written last — a pause mid-export never splits half a run.
 4. Rename: the first rename must change a title; every rename is read back; a failed
    first rename stops the list.
-5. Delete: dry run by default; the confirm count must match the current count; the first
-   delete is verified gone before the rest run.
+5. Delete: dry run by default; the confirm must match the dry run — the count it
+   printed, its prefix, and its exact session ids; the first delete is verified gone
+   before the rest run.
 6. Pacing (`rest.js`) defaults to off for the ported modules, matching the scripts'
    behavior today; the Discord module keeps its proven #16–18 defaults, and Etsy keeps
    its flat 400 ms pause. Moving any of them onto `rest.js` waits for evidence.

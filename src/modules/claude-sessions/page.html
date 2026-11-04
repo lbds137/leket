@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude sessions</title>
+<style>
+:root{--bg:#fff;--fg:#1e1f22;--muted:#4e5058;--line:#e3e5e8;--warn:#7d4600;--ok:#116329;--accent:#3945d1}
+@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#bec5cd;--line:#3f4147;--warn:#f5bc36;--ok:#6ede75;--accent:#b6beff}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px}
+section{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+h1,h2{font-size:20px;margin:0 0 8px}
+.flash{outline:2px solid var(--accent)}
+.advice{color:var(--muted)}
+textarea{width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;margin:8px 0}
+input{font:inherit;margin:4px 0}
+button{font:inherit;margin:4px 12px 4px 0}
+#rename-status,#delete-status{font-size:15px}
+.warn{color:var(--warn)}.ok{color:var(--ok)}
+progress{width:100%;margin:8px 0}
+ul{padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>Claude sessions</h1>
+
+<section id="rename">
+<h2>Rename sessions</h2>
+<p class="advice">Paste the generated rename list — the bare JSON array of [id, title] pairs, or the whole window.CLAUDE_RENAMES = [...]; line. The first rename must be a real change, and every rename is read back.</p>
+<textarea id="renames" rows="8" placeholder='[["cse_…", "New title"], …]'></textarea>
+<button id="rename-run">Rename sessions</button>
+<p id="rename-status" hidden></p>
+<progress id="rename-bar" hidden></progress>
+<ul id="rename-failures"></ul>
+</section>
+
+<section id="delete">
+<h2>Delete sessions</h2>
+<p class="advice">Archive transcripts locally (sessions export + claude-sessions-split) before deleting.</p>
+<p>Title prefix <input id="prefix" size="40" placeholder="sessions whose title starts with this"> <button id="dry-run">Dry run</button></p>
+<p>Confirm count <input id="delete-confirm" size="6" inputmode="numeric"> <button id="delete-run">Delete</button></p>
+<p class="advice">The dry run lists and counts only. To delete, type the count it printed — a count that no longer matches deletes nothing. The first delete is read back before the rest run.</p>
+<p id="delete-status" hidden></p>
+<progress id="delete-bar" hidden></progress>
+<ul id="delete-failures"></ul>
+</section>
+</main>
+<script type="module" src="page.js"></script>
+</body>
+</html>
