@@ -68,7 +68,13 @@ evidence.
   (`window.CLAUDE_OUTPUT_CHATS` line); lists and downloads each chat's
   /mnt/user-data/outputs/ files, text inline, the rest base64, into one dated JSON.
 - **Reddit** (post pages) — fetch `/comments/<id>.json?raw_json=1&limit=500`, save
-  `reddit-<id>.json`. Runs in the popup.
+  `reddit-<id>.json`. The save runs in the module's offscreen document, not the popup
+  (owner call 11-04, after review rounds 1–2: a popup dies on focus loss, and a
+  data:-URL download caps at Chrome's 2 MB URL limit — an offscreen page has neither
+  problem, and blob URLs it makes live for the whole save). The popup hands the save to
+  the worker and stays open to show the result; closing it mid-save costs only the
+  result line, never the file. Chrome floor 109 (the offscreen API's own floor, per its
+  reference page; `hasDocument()` keeps it there — `getContexts()` would force 116).
 - **Etsy** — pages Etsy's own read-only message-list endpoint
   (`/api/v3/ajax/member/conversations/detail/<id>/message-list` with `offset` +
   `fetch_older=true`), dedupes on `conversation_message_id`, stops only after two
