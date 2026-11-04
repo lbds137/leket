@@ -624,6 +624,9 @@ test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fe
   // post-add rest, so the stop lands mid-rest: it must wake, see the stop, and claim
   // nothing more. Its own file sits in the discarded half-filled part, so only the file
   // inside the handed part counts as saved.
+  // The stop checks live in three places (the worker's while condition, the post-rest
+  // break, the streamed-gate break), so this pins the invariant — no claim once the stop
+  // has landed — not any one line: killing all three reddens it, each alone stays green.
   const handed = [];
   const r = await build(four, { file: "d.json", fetchFn, wait: 0, gap: 250, partLimit: 60000, concurrency: 2,
     onPart: async (p) => { handed.push(p.index); return p.index !== 2; } });
@@ -638,6 +641,55 @@ test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fe
   assert.equal(r.records.filter((m) => m.failedPart === 2).length, 1,
     "the file inside the refused part is named by part, retryable there");
   for (const name of ["f3.bin", "f4.bin"]) {
+    assert.equal(r.records.find((m) => m.filename === name).error, "not saved — the save stopped early");
+    assert.equal(r.records.find((m) => m.filename === name).failedPart, undefined, `${name} is in no part`);
+  }
+});
+
+test("a stop landing while a worker parks at the streamed gate ends it: it claims nothing more", async () => {
+  const big = "x".repeat(40000);
+  const four = exp();
+  four.messages = [1, 2, 3, 4].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k - 1}:00.000Z`,
+    attachments: [{ filename: `f${k}.bin`, url: `${CDN}/${k}/f.bin` }] }));
+  const fetched = [];
+  let releaseFirst, releasePart2;
+  const firstHeld = new Promise((r) => { releaseFirst = r; });
+  const part2Held = new Promise((r) => { releasePart2 = r; });
+  let reachedPart2;
+  const reached = new Promise((r) => { reachedPart2 = r; });
+  const fetchFn = async (url) => {
+    const u = url.split("?")[0];
+    fetched.push(u);
+    if (u === `${CDN}/1/f.bin`) await firstHeld;   // worker 1 parks in this fetch the whole time
+    return new Response(big, { status: 200, headers: { "content-length": String(Buffer.byteLength(big)) } });
+  };
+  // gap 0 as a function, exercising that branch: no rests anywhere. Worker 1 parks in its
+  // gated f1 fetch; worker 2 claims f2, whose add fills part 2, then claims f3, whose add
+  // seals part 2 — and parks inside the held hand-off at the streamed gate. Releasing it
+  // lands the stop while worker 2 sits in drain(); only then f1 is released, too late to
+  // be added. Neither worker may claim f4. (The same three-layer note as the rest test;
+  // with gap 0 the rest break never fires, so here the while and gate breaks enforce.)
+  const handed = [];
+  const building = build(four, { file: "d.json", fetchFn, wait: 0, gap: () => 0, partLimit: 60000, concurrency: 2,
+    onPart: async (p) => {
+      handed.push(p.index);
+      if (p.index === 2) { reachedPart2(); await part2Held; return false; }
+      return true;
+    } });
+  await reached;          // worker 2 is parked inside the held hand-off
+  releasePart2();         // the hand-off says false: the stop lands while it is parked
+  await new Promise((r) => setTimeout(r, 0));   // let the stop flush before f1 resolves
+  releaseFirst();
+  const r = await building;
+  assert.deepEqual(handed, [1, 2, 3], "text, the refused part, then the manifest");
+  assert.deepEqual(fetched.slice().sort(), [`${CDN}/1/f.bin`, `${CDN}/2/f.bin`, `${CDN}/3/f.bin`],
+    "f4 was never claimed, least of all by the worker parked at the gate");
+  assert.equal(r.saved, 0);
+  assert.equal(r.failed.length, 4);
+  assert.equal(r.leftBehind, 3);
+  assert.equal(r.records.find((m) => m.filename === "f2.bin").failedPart, 2,
+    "part 2 held f2 alone, and its refusal names it");
+  for (const name of ["f1.bin", "f3.bin", "f4.bin"]) {
     assert.equal(r.records.find((m) => m.filename === name).error, "not saved — the save stopped early");
     assert.equal(r.records.find((m) => m.filename === name).failedPart, undefined, `${name} is in no part`);
   }
