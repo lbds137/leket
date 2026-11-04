@@ -1,10 +1,10 @@
-// src/bridge.js with stand-ins for the page window and chrome.runtime.
+// src/modules/discord/bridge.js with stand-ins for the page window and chrome.runtime.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-const SRC = readFileSync(new URL("../src/bridge.js", import.meta.url), "utf8");
+const SRC = readFileSync(new URL("../src/modules/discord/bridge.js", import.meta.url), "utf8");
 
 function page({ sendFails = false, orphaned = false } = {}) {
   const listeners = [], acks = [];

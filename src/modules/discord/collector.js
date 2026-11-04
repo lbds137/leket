@@ -853,7 +853,7 @@
       null,
       1,
     );
-    // The extension's bridge (src/bridge.js, in the content-script world) marks the page and
+    // The extension's bridge (src/modules/discord/bridge.js, in the content-script world) marks the page and
     // answers a handoff once the export tab is on its way. Pasted into DevTools without it, or
     // with no answer (the extension reloaded since the button was clicked), Save downloads
     // the JSON alone, so no collected messages are lost.

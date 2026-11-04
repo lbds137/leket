@@ -1,11 +1,11 @@
 // The export tab: reads the save from the Discord tab's bridge, fetches its attachments,
 // builds the zip and downloads it. It stays open with what happened.
-import { build } from "./lib/build.js";
-import { attachmentList, needsParts } from "./lib/files.js";
-import { PART_LIMIT } from "./lib/zip.js";
-import { createPartDownload } from "./lib/part.js";
-import { esc } from "./lib/render.js";
-import { summarize } from "./lib/summary.js";
+import { build } from "../../lib/build.js";
+import { attachmentList, needsParts } from "../../lib/files.js";
+import { PART_LIMIT } from "../../lib/zip.js";
+import { createPartDownload } from "../../lib/part.js";
+import { esc } from "../../lib/render.js";
+import { summarize } from "../../lib/summary.js";
 
 const $ = (id) => document.getElementById(id);
 const say = (text, cls = "") => { $("status").textContent = text; $("status").className = cls; };
