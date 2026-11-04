@@ -8,24 +8,23 @@ import { COMMANDS } from "./commands.js";
 
 const card = document.getElementById("card");
 
-// the module decides what a command does; the popup only shows what came of it
-const run = async (module, command, tab) => {
+// the module decides what a command does; the popup only shows what came of it.
+// One status line per card, reused — errors don't stack — and the button sleeps
+// while its launch is in flight
+const run = async (module, command, tab, button, show) => {
   const handler = COMMANDS[module.id] && COMMANDS[module.id][command.id];
   if (!handler) {
-    const err = document.createElement("p");
-    err.className = "warn";
-    err.textContent = `${module.title}: this command has no implementation yet — that is a bug in the extension.`;
-    card.appendChild(err);
+    show(`${module.title}: this command has no implementation yet — that is a bug in the extension.`, true);
     return;
   }
+  button.disabled = true;
   try {
+    show("Working…");
     await handler(tab);
     window.close(); // launched: the collector's panel is on the tab now
   } catch (e) {
-    const err = document.createElement("p");
-    err.className = "warn";
-    err.textContent = `Couldn't start: ${(e && e.message) || e}`;
-    card.appendChild(err);
+    show(`Couldn't start: ${(e && e.message) || e}`, true);
+    button.disabled = false;
   }
 };
 
@@ -54,18 +53,32 @@ const renderCard = (module, tab) => {
   p.className = "blurb";
   p.textContent = module.blurb;
   const bar = document.createElement("div");
+  const line = document.createElement("p");
+  line.hidden = true;
+  const show = (text, warn = false) => {
+    line.textContent = text;
+    line.className = warn ? "warn" : "blurb";
+    line.hidden = false;
+  };
   for (const command of module.commands) {
     const button = document.createElement("button");
     button.textContent = command.label;
-    button.addEventListener("click", () => run(module, command, tab));
+    button.addEventListener("click", () => run(module, command, tab, button, show));
     bar.appendChild(button);
   }
-  card.replaceChildren(h, p, bar);
+  card.replaceChildren(h, p, bar, line);
 };
 
 (async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const module = tab && tab.url ? match(tab.url) : null;
-  if (!module) return renderSupported();
-  renderCard(module, tab);
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const module = tab && tab.url ? match(tab.url) : null;
+    if (!module) return renderSupported();
+    renderCard(module, tab);
+  } catch (e) {
+    const err = document.createElement("p");
+    err.className = "warn";
+    err.textContent = `Couldn't read this tab: ${(e && e.message) || e}`;
+    card.replaceChildren(err);
+  }
 })();
