@@ -125,10 +125,11 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
 
 ## Open
 
-- **The rename** (repo + manifest name → Leket): waits on Lila. The technical answer is
-  "no breakage": an unpacked extension's identity is its local path, so Charles's installed
-  0.2.4 keeps working untouched; a later Leket install appears as a new entry and the old
-  folder gets removed. Her decision is what Charles receives, and when.
+- **The rename** (Lila 11-04, ruled): nothing breaks — Charles never installed 0.2.4
+  (it was never sent) and he now holds for Leket. Split: everything inside the repo
+  (manifest name, extension strings, docs) renames as part of the module work; Deck
+  renames the GitHub repo, the ~/Projects folder, the role file and the session at a
+  clean break this session signals ("ready for rename"). The built 0.2.4 zip is moot.
 - **Etsy script text** — received from Jackalope 11-04 (its repo is personal-data; never
   read from this session). Its deadname-guard literals stay out of Leket; the guard ships
   as the pluggable hook described under the module.
