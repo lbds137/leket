@@ -247,3 +247,26 @@ test("Stop during the long rest takes the rest note off the panel at once", () =
   assert.ok(paces.at(-1) >= 30000);
   assert.doesNotMatch(status, /resting/);
 });
+
+test("Stop and Auto-scroll again mid-climb keep counting toward the long rest", () => {
+  const plain = runPage("auto");
+  const restarted = runPage("auto", [], { AUTO_RESTART: "10" });
+  // the rest still comes once 20 steps have loaded, not 20 steps after the restart
+  assert.deepEqual(plain.restLoads, [20]);
+  assert.deepEqual(restarted.restLoads, [20]);
+  assert.equal(restarted.loads, 25);
+  // the restart waits out the pause the Stop cut short: no pause under 2 s after the first
+  assert.ok(restarted.paces.slice(1).every((ms) => ms >= 2000), restarted.paces.join(","));
+});
+
+test("Stop and Auto-scroll again during the long rest wait out the rest", () => {
+  const { paces, restNotes, loads, status } = runPage("auto", [], { AUTO_RESTART: "rest" });
+  const long = paces.filter((ms) => ms >= 30000);
+  // the rest, then what was left of it (all of it: the clock hadn't moved) after the restart
+  assert.equal(long.length, 2, paces.join(","));
+  assert.ok(Math.abs(long[1] - long[0]) < 1, paces.join(","));
+  assert.equal(restNotes.length, 2);
+  assert.match(restNotes[1], /resting for up to a minute/);
+  assert.equal(loads, 25);
+  assert.match(status, /reached the start of the channel/);
+});
