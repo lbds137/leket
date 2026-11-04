@@ -608,3 +608,37 @@ test("a worker that rests past the last file stops there: an odd count with two 
   assert.equal(r.failed.length, 0);
   assert.equal(calls, 3);
 });
+
+test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fetches nothing more", async () => {
+  const big = "x".repeat(40000);
+  const four = exp();
+  four.messages = [1, 2, 3, 4].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k - 1}:00.000Z`,
+    attachments: [{ filename: `f${k}.bin`, url: `${CDN}/${k}/f.bin` }] }));
+  const fetched = [];
+  const fetchFn = async (url) => {
+    fetched.push(url.split("?")[0]);
+    return new Response(big, { status: 200, headers: { "content-length": String(Buffer.byteLength(big)) } });
+  };
+  // both workers fetch in parallel; the second add is what seals part 2 (around the
+  // first file), and its hand-off returns false. By then the other worker is inside its
+  // post-add rest, so the stop lands mid-rest: it must wake, see the stop, and claim
+  // nothing more. Its own file sits in the discarded half-filled part, so only the file
+  // inside the handed part counts as saved.
+  const handed = [];
+  const r = await build(four, { file: "d.json", fetchFn, wait: 0, gap: 250, partLimit: 60000, concurrency: 2,
+    onPart: async (p) => { handed.push(p.index); return p.index !== 2; } });
+  assert.deepEqual(handed, [1, 2, 3], "text, the part whose hand-off stopped the save, then the manifest");
+  assert.deepEqual(fetched.slice().sort(), [`${CDN}/1/f.bin`, `${CDN}/2/f.bin`],
+    "only the first two files were fetched; the resting worker claimed no more");
+  // which of the two fetched files sits in part 2 follows the add race; either way that
+  // part's hand-off said false, so nothing counts as saved (as in the onPart-false test)
+  assert.equal(r.saved, 0);
+  assert.equal(r.failed.length, 4);
+  assert.equal(r.leftBehind, 3);
+  assert.equal(r.records.filter((m) => m.failedPart === 2).length, 1,
+    "the file inside the refused part is named by part, retryable there");
+  for (const name of ["f3.bin", "f4.bin"]) {
+    assert.equal(r.records.find((m) => m.filename === name).error, "not saved — the save stopped early");
+    assert.equal(r.records.find((m) => m.filename === name).failedPart, undefined, `${name} is in no part`);
+  }
+});
