@@ -1,25 +1,36 @@
-// src/lib/download.js: one download followed until it ends, with a stand-in for
-// chrome.downloads that the test drives by hand.
+// src/lib/download.js and src/lib/part.js: downloads followed until they end, and one
+// part's tries across them, with a stand-in for chrome.downloads that the test drives by
+// hand.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { downloadState, trackDownload } from "../src/lib/download.js";
+import { createPartDownload } from "../src/lib/part.js";
 
 // a chrome.downloads stand-in: download() resolves when the test says, with the id the test
-// picks; search() reports whatever state the test set; fire() sends an onChanged event
+// picks (calls queue up, so an older held-up call can be resolved after a newer one);
+// search() reports whatever state the test set; fire() sends an onChanged event
 function fakeDownloads() {
   const listeners = new Set();
   const states = new Map();
-  let answer;
+  const answers = [];
   const api = {
     calls: [],
+    searches: [],
+    cancelled: [],
     onChanged: { addListener: (f) => listeners.add(f), removeListener: (f) => listeners.delete(f) },
     download(opts) {
       api.calls.push(opts);
-      return new Promise((resolve, reject) => { answer = { resolve, reject }; });
+      return new Promise((resolve, reject) => { answers.push({ resolve, reject }); });
     },
-    search: async ({ id }) => (states.has(id) ? [{ id, state: states.get(id) }] : []),
-    start: (id) => answer.resolve(id),
-    refuse: () => answer.reject(new Error("refused")),
+    search: async ({ id }) => {
+      api.searches.push(id);
+      return states.has(id) ? [{ id, state: states.get(id) }] : [];
+    },
+    // start(id) resolves the oldest held-up call; start(id, n) the n-th, for an id that
+    // must arrive out of order
+    start: (id, at) => (at === undefined ? answers.shift() : answers.splice(at, 1)[0]).resolve(id),
+    refuse: () => answers.shift().reject(new Error("refused")),
+    cancel: async (id) => { api.cancelled.push(id); },
     set: (id, state) => states.set(id, state),
     fire: (id, state) => { for (const f of [...listeners]) f({ id, state: { current: state } }); },
     listening: () => listeners.size,
@@ -170,5 +181,162 @@ test("onStart gets the id, so a later click can ask Chrome where that download s
   assert.equal(await downloadState(d, 4), "complete", "a late finish is still found");
   assert.equal(await downloadState(d, 99), null, "a download Chrome no longer lists");
   const broken = { search: async () => { throw new Error("no"); } };
-  assert.equal(await downloadState(broken, 4), null);
+  assert.equal(await downloadState(broken, 4), "unavailable");
+});
+
+test("Chrome failing to answer is not the same as the download being erased", async () => {
+  // erased: Chrome answered and no longer lists it — null, and a click downloads again
+  const d = fakeDownloads();
+  assert.equal(await downloadState(d, 99), null);
+  // a failed search says so: nothing is known about the download's state
+  const broken = { search: async () => { throw new Error("no"); } };
+  assert.equal(await downloadState(broken, 4), "unavailable");
+});
+
+// the part factory (src/lib/part.js) with hooks standing in for the page: notes collects
+// the label kinds it asks for, saved and freed count the part-level callbacks
+function partHarness() {
+  const seen = { notes: [], saved: 0, freed: 0 };
+  return {
+    seen,
+    hooks: {
+      label: (kind) => seen.notes.push(kind),
+      saved: () => { seen.saved++; },
+      free: () => { seen.freed++; },
+    },
+  };
+}
+
+test("a part: a finish in time saves it, a failure says so, and the result answers ok", async () => {
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const p = part.start();
+  d.start(3);
+  await settle();
+  d.fire(3, "complete");
+  await p;
+  assert.equal(part.result.ok, true, "the finish lands in the result the page reads");
+  assert.equal(seen.saved, 1);
+  // the page may be told more than once (the save's own free, then the end's): revoking
+  // a blob URL twice is harmless
+  assert.ok(seen.freed >= 1, "nothing else reads the blob: the page may revoke the URL");
+  assert.deepEqual(seen.notes, [], "a clean finish needs no label");
+  assert.deepEqual(part.result, { name: "a.zip", index: 1, ok: true });
+
+  const e = fakeDownloads();
+  const fail = partHarness();
+  const bad = createPartDownload(e, { url: "blob:x", name: "b.zip", index: 2 }, fail.hooks, { timeout: 5 });
+  const q = bad.start();
+  e.refuse();
+  await q;
+  assert.equal(bad.result.ok, false, "a refused start lands in the result too");
+  assert.deepEqual(fail.seen.notes, ["didnt-finish"]);
+  assert.deepEqual(bad.result, { name: "b.zip", index: 2, ok: false });
+});
+
+test("a click while a try is under way never starts another", async () => {
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const p = part.start();
+  await part.click();   // the call is out but Chrome has given no id yet
+  assert.deepEqual(seen.notes, ["starting"]);
+  assert.equal(d.calls.length, 1, "no second download");
+  d.start(3);
+  await settle();       // id 3 is in; the download itself is still going
+  await part.click();
+  assert.deepEqual(seen.notes, ["starting", "downloading"]);
+  assert.equal(d.calls.length, 1);
+  d.fire(3, "complete");
+  await p;
+  assert.equal(part.result.ok, true);
+  assert.equal(seen.saved, 1);
+  assert.deepEqual(seen.notes, ["starting", "downloading"]);
+});
+
+test("an id held up past the wait must not take lastId from the latest try", async () => {
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  await part.start();   // try 1: its download() call is held up, no id ever came in time
+  assert.deepEqual(seen.notes, ["no-word"]);
+  await part.click();   // no id to ask Chrome about: download again (try 2; the click's
+                        // own wait for try 2 then adds its no-word note)
+  assert.deepEqual(seen.notes, ["no-word", "saving-again", "no-word"]);
+  d.start(9);           // try 1's held-up call lands at last, after try 2 began
+  await settle();
+  assert.deepEqual(d.cancelled, [], "the part is not saved: the late id is only bookkept");
+  const searches = d.searches.length;
+  await part.click();
+  assert.equal(d.searches.length, searches, "the late id did not become lastId: no ask, straight to a retry");
+  assert.equal(d.calls.length, 3, "it downloads again, as try 3");
+  assert.deepEqual(seen.notes, ["no-word", "saving-again", "no-word", "saving-again", "no-word"]);
+});
+
+test("a late end after the no-word timeout saves the part and stops a try still running", async () => {
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  await part.start();   // try 1: no word in time (it is download 7 once started)
+  d.start(7);
+  await settle();
+  d.set(7, "interrupted");
+  await part.click();   // Chrome says interrupted: save again (try 2; the click's own
+                        // wait for try 2 then adds its no-word note)
+  assert.deepEqual(d.searches.slice(-1), [7], "the click asked Chrome about try 1's download");
+  assert.deepEqual(seen.notes, ["no-word", "saving-again", "no-word"]);
+  d.start(8);           // try 2 is download 8, still going
+  await settle();
+  assert.deepEqual(d.cancelled, []);
+  d.fire(7, "complete");   // try 1's late end: it finished after all
+  assert.equal(seen.saved, 1, "the late finish saves the part");
+  assert.deepEqual(d.cancelled, [8], "try 2 is stopped: it would only land a second copy");
+  d.fire(8, "interrupted");   // try 2 dies of the cancel
+  assert.equal(seen.freed, 1, "with no try left reading the blob, the page may revoke the URL");
+  assert.deepEqual(seen.notes, ["no-word", "saving-again", "no-word"]);
+});
+
+test("a try whose id arrives after another try saved the part is cancelled", async () => {
+  const d = fakeDownloads();
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  await part.start();   // try 1: held-up call, no word
+  await part.click();   // try 2 begins
+  d.start(10, 1);       // try 2 (the second call) gets id 10 and saves
+  await settle();
+  d.fire(10, "complete");
+  assert.equal(seen.saved, 1);
+  d.start(11);          // try 1's call lands at last: id 11, after the part was saved
+  await settle();
+  assert.deepEqual(d.cancelled, [11], "it would only land a second copy");
+  assert.equal(seen.saved, 1, "the cancelled try does not save twice");
+});
+
+test("a click whose Chrome answer fails says so, and the retry stays with the next click", async () => {
+  const d = fakeDownloads();
+  const realSearch = d.search;
+  d.search = async () => { throw new Error("no"); };
+  const { seen, hooks } = partHarness();
+  const part = createPartDownload(d, { url: "blob:x", name: "a.zip", index: 1 }, hooks, { timeout: 5 });
+  const p = part.start();
+  d.start(3);
+  await settle();
+  d.fire(3, "interrupted");
+  await p;
+  assert.equal(part.result.ok, false);
+  await part.click();   // asks Chrome; Chrome can't be asked
+  assert.deepEqual(seen.notes, ["didnt-finish", "unavailable"]);
+  assert.equal(d.calls.length, 1, "no new download starts on a guess");
+  d.search = realSearch;
+  d.set(3, "interrupted");
+  const again = part.click();   // the affordance remains: a further click tries again
+  await settle();               // Chrome answers interrupted: the label goes up, try 2 starts
+  assert.deepEqual(seen.notes, ["didnt-finish", "unavailable", "saving-again"]);
+  assert.equal(d.calls.length, 2);
+  d.start(4);
+  await settle();
+  d.fire(4, "complete");
+  await again;
+  assert.equal(seen.saved, 1, "the retried try saves the part");
 });
