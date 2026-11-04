@@ -7,7 +7,8 @@
 // guild-hidden-throws | guild-hidden-returns | dm | dm-forward | auto; auto clicks
 // Auto-scroll instead of Save and prints {paces, restNotes, restLoads, loads, status}; with
 // AUTO_STOP_REST=1 it presses Stop as the long rest begins, with AUTO_RESTART it presses
-// Stop and Auto-scroll again, see there). With BRIDGE=1 in the
+// Stop and Auto-scroll again, with AUTO_STOP_WAIT=N the same in the wait after step N's
+// nudge, see there). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
 // (posted: the message) instead of downloading it. START_AT fills the start-at box before
 // Save. The stores mimic the shape the collector
@@ -164,8 +165,9 @@ const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, query
   } });
 if (AUTO) lis.forEach((li) => { li.parentElement = scrollEl; });
 // AUTO_RESTART=N presses Stop and then Auto-scroll once, in the pause after step N;
-// AUTO_RESTART=rest does it as the long rest begins
-let restarted = false;
+// AUTO_RESTART=rest does it as the long rest begins; AUTO_STOP_WAIT=N does it in the
+// wait after step N's nudge (the clock hasn't moved past the nudge when it fires)
+let restarted = false, waitStops = 0;
 const virtualSetTimeout = (f, ms = 0) => {
   if (f.name === "step") {
     paces.push(ms);
@@ -181,6 +183,11 @@ const virtualSetTimeout = (f, ms = 0) => {
       restarted = true;
       setTimeout(() => { const b = autoButton(); b.onclick(); b.onclick(); }, 0);
     }
+  }
+  // one wait timer per step (each nudge lands its message on the first tick)
+  const waitAt = process.env.AUTO_STOP_WAIT;
+  if (f.name === "wait" && waitAt && ++waitStops === Number(waitAt)) {
+    setTimeout(() => { const b = autoButton(); b.onclick(); b.onclick(); }, 0);
   }
   return setTimeout(() => { vnow += ms; f(); }, 0);
 };

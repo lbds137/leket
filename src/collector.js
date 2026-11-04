@@ -709,6 +709,9 @@
         timer = setTimeout(step, ms);
       }
     };
+    // the pacing gap runs from the nudge on: a Stop in the wait, then Auto-scroll again,
+    // waits out what is left of it (the pause chosen below replaces this once it is known)
+    nextStepAt = Date.now() + between(SHORT_REST);
     timer = setTimeout(wait, 250);
   };
   // Pacing: each history page Discord loads is a request on the account, so the climb goes
@@ -719,7 +722,8 @@
   const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
   const pause = (n) => between(n % REST_EVERY === 0 ? LONG_REST : SHORT_REST);
   // Stop and Auto-scroll again skip no pacing: steps keeps counting toward the next long
-  // rest, and a restart first waits out whatever pause the Stop cut short (nextStepAt)
+  // rest, and a restart first waits out whatever pacing the Stop cut short (nextStepAt:
+  // the gap since the last nudge, then the pause that follows it)
   let steps = 0, restUntil = 0, nextStepAt = 0, restCut = false;
   const autoBtn = btn("Auto-scroll", () => {
     if (timer) return stopAuto();

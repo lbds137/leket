@@ -257,6 +257,17 @@ test("Stop and Auto-scroll again mid-climb keep counting toward the long rest", 
   assert.equal(restarted.loads, 25);
   // the restart waits out the pause the Stop cut short: no pause under 2 s after the first
   assert.ok(restarted.paces.slice(1).every((ms) => ms >= 2000), restarted.paces.join(","));
+  // and it is exactly the cut pause (all of it: the clock hadn't moved when Stop landed)
+  assert.ok(Math.abs(restarted.paces[11] - restarted.paces[10]) < 1, restarted.paces.join(","));
+});
+
+test("Stop in the wait after a nudge, and Auto-scroll again, wait out the pacing gap", () => {
+  const restarted = runPage("auto", [], { AUTO_STOP_WAIT: "3" });
+  assert.equal(restarted.loads, 25);
+  assert.match(restarted.status, /reached the start of the channel/);
+  // Stop lands in the wait after step 3's nudge, with the clock still at the nudge: the
+  // restart's own step waits the unexpired 2-4 s gap out, it doesn't nudge at once
+  assert.ok(restarted.paces[3] >= 2000 && restarted.paces[3] < 4000, restarted.paces.join(","));
 });
 
 test("Stop and Auto-scroll again during the long rest wait out the rest", () => {
