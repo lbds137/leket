@@ -13,7 +13,8 @@ import { clickStep, endStep, stateStep } from "./summary.js";
 //   where the last try stands)
 // - saved(): the part is saved, whichever try landed it — count it, turn the link into a
 //   plain label, redraw
-// - free(): no download of this part reads the blob URL any more — revoke it
+// - free(): no download of this part reads the blob URL any more — revoke it; may be
+//   called more than once (revoking twice is harmless)
 export function createPartDownload(downloads, { url, name, index }, hooks, { timeout = NO_WORD_MS } = {}) {
   const result = { name, index, ok: false };
   // the latest try's download id, and that try's number
@@ -29,11 +30,12 @@ export function createPartDownload(downloads, { url, name, index }, hooks, { tim
   const markSaved = () => {
     if (result.ok) return;
     result.ok = true;
-    hooks.saved();
     // any other try still downloading would only land a second copy: stop it (its
-    // end then frees the URL)
+    // end then frees the URL). The page's saved hook goes last, so a throw in its
+    // redraw cannot skip the cancels or the revoke — the old code's order too.
     for (const id of runningIds.values()) downloads.cancel(id).catch(() => {});
     free();
+    hooks.saved();
   };
   // set while a tracked download is under way, from the call until it settles (the id
   // may not have come back yet): a click then never starts another
