@@ -1,8 +1,10 @@
 // The toolbar popup: detects what the active tab supports, renders that module's card,
 // and hands the click to the module's command. A popup closes the moment it loses
-// focus, so nothing long runs in here — a one-shot command may, and anything longer
-// opens the module's own page beside the tab. No match: the list of what this
-// extension supports.
+// focus, so a command does one of three things: runs its seconds-long self here, hands
+// its run to the worker (reddit: the worker downloads from the module's offscreen
+// document, which outlives this popup), or opens the module's own page beside the tab.
+// `stay` commands keep the card open for what came of it. No match: the list of what
+// this extension supports.
 import { MODULES, match } from "../modules/registry.js";
 import { COMMANDS } from "./commands.js";
 
@@ -17,13 +19,22 @@ const run = async (module, command, tab, button, show) => {
     show(`${module.title}: this command has no implementation yet — that is a bug in the extension.`, true);
     return;
   }
-  button.disabled = true;
+  button.disabled = true; // until the handler settles, whatever it is and however long
   try {
     show("Working…");
-    await handler(tab);
-    window.close(); // launched: the collector's panel is on the tab now
+    const done = await handler(tab);
+    if (command.stay) {
+      // the command has a result to show: keep the card open with what came of it
+      // (its message, or its error) instead of closing over the result
+      show(done || "Done");
+      button.disabled = false;
+    } else {
+      window.close(); // launched: the collector's panel is on the tab now
+    }
   } catch (e) {
-    show(`Couldn't start: ${(e && e.message) || e}`, true);
+    // a stay command owns its whole run, so its error text stands alone; a launch
+    // command's failure is a start failure, and says so
+    show(command.stay ? String((e && e.message) || e) : `Couldn't start: ${(e && e.message) || e}`, true);
     button.disabled = false;
   }
 };

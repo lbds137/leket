@@ -4,11 +4,13 @@
 export const NO_WORD_MS = 15 * 60 * 1000;
 
 // Starts the download and waits until THIS one (matched by the id the call returns, never
-// by name) is done: true once it completes, false if it is interrupted or refused, null
-// after `timeout` ms with no word (it may still be downloading). onStart(id) gets the id
-// the moment Chrome gives it, so a later click can ask about this download. With onLate,
-// a download still going at the timeout stays watched: onLate(ok, id) gets how it ended.
-export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_MS, onStart = () => {}, onLate = null } = {}) {
+// by name) is done. saveAs passes through to chrome.downloads.download only when a caller
+// sets it — a caller that omits it gets Chrome's own default, as before. The promise is
+// true once it completes, false if it is interrupted or refused, and null after `timeout`
+// ms with no word (it may still be downloading). onStart(id) gets the id the moment Chrome
+// gives it, so a later click can ask about this download. With onLate, a download still
+// going at the timeout stays watched: onLate(ok, id) gets how it ended.
+export function trackDownload(downloads, { url, filename, saveAs, conflictAction }, { timeout = NO_WORD_MS, onStart = () => {}, onLate = null } = {}) {
   return new Promise((resolve) => {
     let id = null;
     let settled = false;
@@ -39,7 +41,10 @@ export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_
     };
     const timer = setTimeout(() => done(null), timeout);
     downloads.onChanged.addListener(onChanged);
-    downloads.download({ url, filename }).then(async (mid) => {
+    const request = { url, filename };
+    if (saveAs !== undefined) request.saveAs = saveAs;
+    if (conflictAction !== undefined) request.conflictAction = conflictAction;
+    downloads.download(request).then(async (mid) => {
       id = mid;
       onStart(mid);
       // a small part can finish before the promise resolved, and its `complete` event
