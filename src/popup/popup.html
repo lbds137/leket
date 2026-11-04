@@ -11,7 +11,8 @@ main{padding:14px}
 h1{font-size:16px;margin:0 0 4px}
 .blurb{color:var(--muted);margin:0 0 10px}
 button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--muted);background:transparent;color:var(--fg);cursor:pointer}
-button:hover{border-color:var(--accent)}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.6;cursor:default}
 .warn{color:var(--warn)}
 ul{padding-left:18px;margin:6px 0}
 li{margin:4px 0}

@@ -5,7 +5,10 @@
 export const MODULES = [
   {
     id: "discord",
-    // a DM (@me), a server channel or a thread: /channels/<guild>/<channel>[/<thread>]
+    // a DM (@me), a server channel or a thread: /channels/<guild>/<channel>[/<thread>].
+    // A command the worker runs itself (an injection) is also checked by hand in
+    // src/background.js launch(): register it in both places, and in
+    // src/popup/commands.js — test/registry.test.js only pins registry↔commands.js
     matches: (url) => /^https:\/\/discord\.com\/channels\/(@me|\d+)\/\d+/.test(url),
     title: "Discord",
     blurb: "Save this DM, channel or thread, with its attachments, as one zip you can open offline.",
