@@ -5,7 +5,8 @@
 // guild-throwing-getmember | guild-no-cache | guild-registry | guild-unnamed |
 // guild-empty-cache | guild-two-runtimes | guild-hidden | guild-hidden-inside |
 // guild-hidden-throws | guild-hidden-returns | dm | dm-forward | auto; auto clicks
-// Auto-scroll instead of Save and prints {paces, restNotes, loads, status}). With BRIDGE=1 in the
+// Auto-scroll instead of Save and prints {paces, restNotes, loads, status}; with
+// AUTO_STOP_REST=1 it presses Stop as the long rest begins). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
 // (posted: the message) instead of downloading it. START_AT fills the start-at box before
 // Save. The stores mimic the shape the collector
@@ -136,6 +137,9 @@ const el = (props = {}) => ({
   ...props,
 });
 const created = [];
+// the panel's status line, found by its words ("N messages, oldest …"), not its position
+const statusLine = () => created.find((e) => e.tag === "div" && /^\d+ messages, oldest/.test(e.textContent));
+const autoButton = () => created.find((e) => e.tag === "button" && (e.textContent === "Auto-scroll" || e.textContent === "Stop"));
 let saved = null;
 const lis = msgs.map((m) => el({
   id: `chat-messages-${CHANNEL}-${m.id}`,
@@ -162,7 +166,11 @@ const virtualSetTimeout = (f, ms = 0) => {
   if (f.name === "step") {
     paces.push(ms);
     // the status line as the long rest begins
-    if (ms >= 30000) restNotes.push(created.filter((e) => e.tag === "div")[2].textContent);
+    if (ms >= 30000) {
+      restNotes.push(statusLine().textContent);
+      // AUTO_STOP_REST=1: Stop is pressed as the long rest begins
+      if (process.env.AUTO_STOP_REST === "1") setTimeout(() => autoButton().onclick(), 0);
+    }
   }
   return setTimeout(() => { vnow += ms; f(); }, 0);
 };
@@ -342,11 +350,10 @@ const save = created.find((e) => e.tag === "button" && e.textContent === "Save")
 const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r) => setTimeout(r, 350)); };
 (async () => {
   if (AUTO) {
-    const auto = created.find((e) => e.tag === "button" && e.textContent === "Auto-scroll");
+    const auto = autoButton();
     auto.onclick();
     while (auto.textContent !== "Auto-scroll") await new Promise((r) => setTimeout(r, 1));
-    const status = created.filter((e) => e.tag === "div")[2];
-    return void process.stdout.write(JSON.stringify({ paces, restNotes, loads, status: status.textContent }));
+    return void process.stdout.write(JSON.stringify({ paces, restNotes, loads, status: statusLine().textContent }));
   }
   if (returning) {
     const at = list.children.indexOf(returning);
@@ -363,8 +370,8 @@ const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r)
     const box = created.find((e) => e.tag === "input" && e.placeholder.startsWith("start at"));
     if (box) box.value = process.env.START_AT;
   }
-  // the panel's divs: the panel, its heading, the status line — read before Save overwrites it
-  const status = created.filter((e) => e.tag === "div")[2];
+  // the status line, read before Save overwrites it
+  const status = statusLine();
   const panel = status.textContent;
   await save.onclick();
   const link = created.find((e) => e.tag === "a");

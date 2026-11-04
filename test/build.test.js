@@ -581,7 +581,6 @@ test("attachments are fetched two at a time by default, each worker resting betw
 });
 
 test("the default rest between files is 0.5-1 s", () => {
-
   for (let i = 0; i < 200; i++) {
     const ms = restBetweenFiles();
     assert.ok(ms >= 500 && ms < 1000, String(ms));

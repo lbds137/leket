@@ -228,7 +228,7 @@ test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 s
   assert.match(status, /reached the start of the channel/);
   // the long rest says so on the panel, and the note is gone once the climb is over
   assert.equal(restNotes.length, 1);
-  assert.match(restNotes[0], /resting about \d+ s/);
+  assert.match(restNotes[0], /resting for up to a minute/);
   assert.doesNotMatch(status, /resting/);
   // the first step starts at once; then one pause after each step that didn't end the climb
   assert.equal(paces[0], 0);
@@ -238,4 +238,12 @@ test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 s
     const [lo, hi] = (k + 1) % 20 === 0 ? [30000, 60000] : [2000, 4000];
     assert.ok(ms >= lo && ms < hi, `pause after step ${k + 1}: ${ms} ms`);
   });
+});
+
+test("Stop during the long rest takes the rest note off the panel at once", () => {
+  const { paces, restNotes, status } = runPage("auto", [], { AUTO_STOP_REST: "1" });
+  assert.match(restNotes[0], /resting for up to a minute/);
+  // stopped as the rest began: no step after it
+  assert.ok(paces.at(-1) >= 30000);
+  assert.doesNotMatch(status, /resting/);
 });
