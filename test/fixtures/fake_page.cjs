@@ -184,7 +184,9 @@ const virtualSetTimeout = (f, ms = 0) => {
       setTimeout(() => { const b = autoButton(); b.onclick(); b.onclick(); }, 0);
     }
   }
-  // one wait timer per step (each nudge lands its message on the first tick)
+  // counts every wait timer a step schedules: during the loading steps (1-25 here) that
+  // is exactly one per step — the fake lands a message on the first tick — so N means
+  // step N. Later steps re-poll every 250 ms, so N past 25 names a poll, not a step.
   const waitAt = process.env.AUTO_STOP_WAIT;
   if (f.name === "wait" && waitAt && ++waitStops === Number(waitAt)) {
     setTimeout(() => { const b = autoButton(); b.onclick(); b.onclick(); }, 0);
