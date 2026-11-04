@@ -12,10 +12,13 @@ export function clickStep({ busy, saved, inFlight, lastId }) {
 }
 
 // what Chrome's answer about the last tracked download means for the click: saved, still
-// downloading, or (interrupted, or erased from Chrome's list) download it again
+// downloading, (interrupted, or erased from Chrome's list) download it again, or
+// "unavailable": Chrome couldn't be asked, so nothing is known — the click says so and
+// leaves the next click to retry
 export function stateStep(state) {
   if (state === "complete") return "saved";
   if (state === "in_progress") return "downloading";
+  if (state === "unavailable") return "unavailable";
   return "retry";
 }
 

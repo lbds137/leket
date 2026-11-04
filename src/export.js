@@ -3,9 +3,9 @@
 import { build } from "./lib/build.js";
 import { attachmentList, needsParts } from "./lib/files.js";
 import { PART_LIMIT } from "./lib/zip.js";
-import { downloadState, trackDownload } from "./lib/download.js";
+import { createPartDownload } from "./lib/part.js";
 import { esc } from "./lib/render.js";
-import { clickStep, endStep, stateStep, summarize } from "./lib/summary.js";
+import { summarize } from "./lib/summary.js";
 
 const $ = (id) => document.getElementById(id);
 const say = (text, cls = "") => { $("status").textContent = text; $("status").className = cls; };
@@ -104,105 +104,39 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
 
     // one part: hand it to Chrome's downloads API, wait until it is done, then free the
     // blob. On a failure (or no word for a quarter of an hour) the link stays. A click on
-    // it is never a second, untracked download: it asks Chrome about the latest tracked
-    // one first, and only downloads again (tracked) when that one is over or gone.
+    // it is never a second, untracked download: the part (src/lib/part.js) asks Chrome
+    // about the latest tracked one first, and only downloads again (tracked) when that
+    // one is over or gone. This page keeps the DOM — the labels, the list item, the
+    // counters — and the part tells it what to say.
+    const linkNote = {
+      "didnt-finish": "— didn't finish; click to try again",
+      "no-word": "— still no word that it finished; if it isn't in Downloads, click to try again",
+      "starting": "— waiting for Chrome to start it; if Chrome asks about downloading files, allow it",
+      "downloading": "— still downloading; see Chrome's downloads",
+      "saving-again": "— saving again…",
+      "unavailable": "— Chrome couldn't be asked where its last try stands; click to try again",
+    };
     const downloadPart = async ({ blob, name, index }) => {
       say(`Saving ${name}…`);
       const { a, li, url } = partLink(blob, name);
       const label = a.textContent;
       list.appendChild(li);
-      const result = { name, index, ok: false };
-      // the latest try's download id, and that try's number
-      let lastId = null, lastTry = 0;
-      // downloads of this part not yet over (a try that got no word in time still counts
-      // until its late end), and the ids Chrome gave them
-      const running = new Set();
-      const runningIds = new Map();
-      // a try is over: clearing one twice is harmless
-      const over = (mine) => { running.delete(mine); runningIds.delete(mine); };
-      // the object URL goes once the part is saved and no download is still reading it
-      const free = () => { if (result.ok && !running.size) URL.revokeObjectURL(url); };
-      const markSaved = () => {
-        if (result.ok) return;
-        result.ok = true;
-        partsSaved++;
-        // any other try still downloading would only land a second copy: stop it (its
-        // end then frees the URL)
-        for (const id of runningIds.values()) chrome.downloads.cancel(id).catch(() => {});
-        free();
-        // the dead link becomes a plain label
-        a.removeAttribute("href");
-        a.textContent = `${label} — saved`;
-        if (render) render();
-        else progress();
-      };
-      // set while a tracked download is under way, from the call until it settles (the id
-      // may not have come back yet): a click then never starts another
-      let inFlight = false;
-      const didntFinish = () => { a.textContent = `${label} — didn't finish; click to try again`; };
-      // each attempt is numbered: an older one whose id or end arrives late (its download()
-      // was held up past the wait) must not take lastId or the label from the latest
-      let tries = 0;
-      // how a try came out, in time or (after the quarter-hour wait) late
-      const ended = (mine, ok) => {
-        if (ok !== null) over(mine);
-        const step = endStep({ ok, saved: result.ok, latest: mine === tries, inFlight });
-        if (step === "save") markSaved();
-        else if (step === "didnt-finish") didntFinish();
-        // no word for a quarter of an hour: it may still be downloading, so say that
-        else if (step === "no-word") a.textContent = `${label} — still no word that it finished; if it isn't in Downloads, click to try again`;
-        free();
-      };
-      const attempt = async () => {
-        const mine = ++tries;
-        // the previous try's id is not this one's: until Chrome gives one, a click says so
-        lastId = null;
-        inFlight = true;
-        running.add(mine);
-        let ok;
-        try {
-          ok = await trackDownload(chrome.downloads, { url, filename: name }, {
-            onStart: (id) => {
-              runningIds.set(mine, id);
-              if (mine === tries) { lastId = id; lastTry = mine; }
-              // saved by another try before Chrome gave this one its id
-              if (result.ok) chrome.downloads.cancel(id).catch(() => {});
-            },
-            onLate: (late) => ended(mine, late),
-          });
-        } finally {
-          inFlight = false;
-        }
-        ended(mine, ok);
-      };
-      let busy = false;
-      a.addEventListener("click", async (e) => {
-        e.preventDefault();
-        const step = clickStep({ busy, saved: result.ok, inFlight, lastId });
-        if (step === "ignore") return;
-        if (step === "starting") { a.textContent = `${label} — waiting for Chrome to start it; if Chrome asks about downloading files, allow it`; return; }
-        if (step === "downloading") { a.textContent = `${label} — still downloading; see Chrome's downloads`; return; }
-        busy = true;
-        try {
-          const next = step === "retry" ? "retry" : stateStep(await downloadState(chrome.downloads, lastId));
-          // saved or restarted by another path while Chrome was being asked
-          if (result.ok || inFlight) return;
-          // Chrome says it completed: that try is over, whether or not its end reached us
-          if (next === "saved") { over(lastTry); markSaved(); }
-          else if (next === "downloading") a.textContent = `${label} — still downloading; see Chrome's downloads`;
-          else {
-            // Chrome says the last try is interrupted or gone (an erase sends it no end):
-            // it reads the URL no longer
-            if (step === "ask") over(lastTry);
-            a.textContent = `${label} — saving again…`;
-            await attempt();
-          }
-        } finally {
-          busy = false;
-        }
+      const part = createPartDownload(chrome.downloads, { url, name, index }, {
+        label: (kind) => { a.textContent = `${label} ${linkNote[kind]}`; },
+        saved: () => {
+          partsSaved++;
+          // the dead link becomes a plain label, and the summary follows
+          a.removeAttribute("href");
+          a.textContent = `${label} — saved`;
+          if (render) render();
+          else progress();
+        },
+        free: () => URL.revokeObjectURL(url),
       });
-      await attempt();
-      return result;
+      // the part decides what a click does; the page only hands the click over
+      a.addEventListener("click", (e) => { e.preventDefault(); part.click(); });
+      await part.start();
+      return part.result;
     };
 
     say(attachments ? "Saving the attachments… keep this tab open." : "Building the zip…");

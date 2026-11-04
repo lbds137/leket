@@ -25,6 +25,7 @@ test("a retry asks Chrome about the last download first, and downloads again onl
   assert.equal(stateStep("in_progress"), "downloading");
   assert.equal(stateStep("interrupted"), "retry");
   assert.equal(stateStep(null), "retry", "erased from Chrome's list");
+  assert.equal(stateStep("unavailable"), "unavailable", "Chrome couldn't be asked: nothing is known");
   // the start was refused, so there is no id to ask about
   assert.equal(clickStep({ ...idle, lastId: null }), "retry");
 });

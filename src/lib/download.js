@@ -54,12 +54,14 @@ export function trackDownload(downloads, { url, filename }, { timeout = NO_WORD_
 }
 
 // where a download started earlier stands now: "in_progress", "complete", "interrupted",
-// or null when Chrome no longer knows it (erased from the list) or can't be asked
+// null when Chrome answered and no longer lists it (erased from the list — a click may
+// download it again), or "unavailable" when Chrome couldn't be asked at all (the search
+// failed — nothing is known about the download, so a click says so instead of guessing)
 export async function downloadState(downloads, id) {
   try {
     const [item] = await downloads.search({ id });
     return (item && item.state) || null;
   } catch {
-    return null;
+    return "unavailable";
   }
 }
