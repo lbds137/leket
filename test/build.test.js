@@ -646,7 +646,7 @@ test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fe
   }
 });
 
-test("a stop landing while a worker parks at the streamed gate ends it: it claims nothing more", async () => {
+test("a stop landing while a worker sits in the part hand-off ends it: it claims nothing more", async () => {
   const big = "x".repeat(40000);
   const four = exp();
   four.messages = [1, 2, 3, 4].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k - 1}:00.000Z`,
@@ -665,10 +665,12 @@ test("a stop landing while a worker parks at the streamed gate ends it: it claim
   };
   // gap 0 as a function, exercising that branch: no rests anywhere. Worker 1 parks in its
   // gated f1 fetch; worker 2 claims f2, whose add fills part 2, then claims f3, whose add
-  // seals part 2 — and parks inside the held hand-off at the streamed gate. Releasing it
-  // lands the stop while worker 2 sits in drain(); only then f1 is released, too late to
-  // be added. Neither worker may claim f4. (The same three-layer note as the rest test;
-  // with gap 0 the rest break never fires, so here the while and gate breaks enforce.)
+  // seals part 2 — and parks inside the held hand-off (the post-add drain), not the
+  // streamed-gate loop: both workers' gate checks there run on an empty queue. Releasing
+  // the hand-off lands the stop while worker 2 sits in drain(); only then f1 is released,
+  // too late to be added. Neither worker may claim f4. (The same three-layer note as the
+  // rest test; with gap 0 the rest break never fires, and here both workers exit at the
+  // while condition — the gate break is the backstop the mutation run exercises.)
   const handed = [];
   const building = build(four, { file: "d.json", fetchFn, wait: 0, gap: () => 0, partLimit: 60000, concurrency: 2,
     onPart: async (p) => {
