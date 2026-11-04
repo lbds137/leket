@@ -704,7 +704,8 @@
       } else {
         const ms = pause(++steps);
         // render() keeps the note on through any redraw until the rest is over
-        if (ms >= LONG_REST[0]) { restUntil = Date.now() + ms; render(); }
+        nextStepAt = Date.now() + ms;
+        if (ms >= LONG_REST[0]) { restUntil = nextStepAt; render(); }
         timer = setTimeout(step, ms);
       }
     };
@@ -717,22 +718,26 @@
   const SHORT_REST = [2000, 4000], LONG_REST = [30000, 60000], REST_EVERY = 20;
   const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
   const pause = (n) => between(n % REST_EVERY === 0 ? LONG_REST : SHORT_REST);
-  // steps counts across Stop and Auto-scroll again, so a restart doesn't skip the long rest
-  let steps = 0, restUntil = 0;
+  // Stop and Auto-scroll again skip no pacing: steps keeps counting toward the next long
+  // rest, and a restart first waits out whatever pause the Stop cut short (nextStepAt)
+  let steps = 0, restUntil = 0, nextStepAt = 0, restCut = false;
   const autoBtn = btn("Auto-scroll", () => {
     if (timer) return stopAuto();
     if (!scroller()) return alert("Open the conversation first, then press Auto-scroll again.");
     idle = 0;
     autoBtn.textContent = "Stop";
-    timer = setTimeout(step, 0);
+    const left = Math.max(0, nextStepAt - Date.now());
+    if (restCut && left > 0) { restUntil = nextStepAt; render(); }
+    restCut = false;
+    timer = setTimeout(step, left);
   });
   // a stop during a rest drops the rest note at once; callers append their own words after
   function stopAuto() {
     clearTimeout(timer);
     timer = null;
-    const wasResting = Date.now() < restUntil;
+    restCut = Date.now() < restUntil;
     restUntil = 0;
-    if (wasResting) render();
+    if (restCut) render();
     autoBtn.textContent = "Auto-scroll";
   }
 

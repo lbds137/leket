@@ -5,8 +5,9 @@
 // guild-throwing-getmember | guild-no-cache | guild-registry | guild-unnamed |
 // guild-empty-cache | guild-two-runtimes | guild-hidden | guild-hidden-inside |
 // guild-hidden-throws | guild-hidden-returns | dm | dm-forward | auto; auto clicks
-// Auto-scroll instead of Save and prints {paces, restNotes, loads, status}; with
-// AUTO_STOP_REST=1 it presses Stop as the long rest begins). With BRIDGE=1 in the
+// Auto-scroll instead of Save and prints {paces, restNotes, restLoads, loads, status}; with
+// AUTO_STOP_REST=1 it presses Stop as the long rest begins, with AUTO_RESTART it presses
+// Stop and Auto-scroll again, see there). With BRIDGE=1 in the
 // environment the page carries the extension bridge's mark, and Save posts the export
 // (posted: the message) instead of downloading it. START_AT fills the start-at box before
 // Save. The stores mimic the shape the collector
@@ -153,7 +154,7 @@ const lis = msgs.map((m) => el({
 const AUTO = scenario === "auto";
 const AUTO_LOADS = 25;
 let loads = 0, vnow = Date.UTC(2021, 1, 1);
-const paces = [], restNotes = [];
+const paces = [], restNotes = [], restLoads = [];
 const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, querySelectorAll: () => [],
   dispatchEvent() {
     if (loads === AUTO_LOADS) return void (this.textContent = "Welcome to #general!");
@@ -162,14 +163,23 @@ const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, query
       "__reactFiber$x": { memoizedProps: { message: m }, return: null } }));
   } });
 if (AUTO) lis.forEach((li) => { li.parentElement = scrollEl; });
+// AUTO_RESTART=N presses Stop and then Auto-scroll once, in the pause after step N;
+// AUTO_RESTART=rest does it as the long rest begins
+let restarted = false;
 const virtualSetTimeout = (f, ms = 0) => {
   if (f.name === "step") {
     paces.push(ms);
-    // the status line as the long rest begins
+    // the status line, and how many messages had loaded, as a long rest begins
     if (ms >= 30000) {
       restNotes.push(statusLine().textContent);
+      restLoads.push(loads);
       // AUTO_STOP_REST=1: Stop is pressed as the long rest begins
       if (process.env.AUTO_STOP_REST === "1") setTimeout(() => autoButton().onclick(), 0);
+    }
+    const at = process.env.AUTO_RESTART;
+    if (at && !restarted && (at === "rest" ? ms >= 30000 : Number(at) === paces.length - 1)) {
+      restarted = true;
+      setTimeout(() => { const b = autoButton(); b.onclick(); b.onclick(); }, 0);
     }
   }
   return setTimeout(() => { vnow += ms; f(); }, 0);
@@ -353,7 +363,7 @@ const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r)
     const auto = autoButton();
     auto.onclick();
     while (auto.textContent !== "Auto-scroll") await new Promise((r) => setTimeout(r, 1));
-    return void process.stdout.write(JSON.stringify({ paces, restNotes, loads, status: statusLine().textContent }));
+    return void process.stdout.write(JSON.stringify({ paces, restNotes, restLoads, loads, status: statusLine().textContent }));
   }
   if (returning) {
     const at = list.children.indexOf(returning);
