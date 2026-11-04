@@ -17,6 +17,7 @@
     "https://cdn.discordapp.com/*",
     "https://media.discordapp.net/*",
     "https://www.reddit.com/*",
-    "https://old.reddit.com/*"
+    "https://old.reddit.com/*",
+    "https://claude.ai/*"
   ]
 }

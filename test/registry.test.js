@@ -69,6 +69,31 @@ test("reddit pages that are not posts, or hosts the manifest doesn't cover, do n
   }
 });
 
+test("a claude.ai/code page matches the claude-sessions module", () => {
+  for (const url of [
+    "https://claude.ai/code", // the page itself
+    "https://claude.ai/code/", // trailing slash
+    "https://claude.ai/code?foo=bar", // query
+    "https://claude.ai/code#settings", // fragment
+  ]) {
+    const m = match(url);
+    assert.ok(m, `no match for ${url}`);
+    assert.equal(m.id, "claude-sessions");
+  }
+});
+
+test("claude.ai pages that are not /code do not match, and /codeX is not /code", () => {
+  for (const url of [
+    "https://claude.ai/chat", // the chat app is the claude-chat module's, not this one
+    "https://claude.ai/", // the bare host
+    "https://claude.ai/codeX", // /code must end at the pathname: /codeX is something else
+    "https://claude.ai/settings/code", // /code not at the start of the pathname
+    "https://example.com/code", // another host entirely
+  ]) {
+    assert.equal(match(url), null, `unexpected match for ${url}`);
+  }
+});
+
 test("anything else is no match at all", () => {
   for (const url of [
     "https://discord.com/",
@@ -102,5 +127,31 @@ test("every registry command has an implementation in the popup", () => {
     for (const c of m.commands) {
       assert.equal(typeof COMMANDS[m.id][c.id], "function", `${m.id}/${c.id}: no implementation`);
     }
+  }
+});
+
+test("both claude-sessions commands open the module's own page and say so", async () => {
+  // the page is self-sufficient (its own fetches carry the login), so the command is a
+  // plain tab open — pinned here against an injected tabs stand-in, no real chrome.
+  // Each command lands on its own section via the page's hash (the page scrolls to it
+  // and flashes it), so the rename open carries #rename and the delete open #delete.
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const m = match("https://claude.ai/code");
+    assert.ok(m && m.id === "claude-sessions");
+    for (const c of m.commands) {
+      const said = await COMMANDS["claude-sessions"][c.id](undefined, { tabs });
+      assert.match(said, /Opened the sessions page/);
+    }
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#rename" },
+      { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#delete" },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
   }
 });

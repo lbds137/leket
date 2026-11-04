@@ -1,0 +1,108 @@
+// The rename half, ported from dev-docs/browser/claude-sessions-rename.js — the script
+// is the spec. The web UI renames with PUT /v1/code/sessions/session_<id>, body {title};
+// GET on the same URL wraps the session in `response_shape`. Every rename is read back,
+// and the first one must be a real change: a session that already has its target title
+// would read back "correctly" even if the PUT did nothing, so the first rename is the
+// proof the PUT works. A failure at index 0 stops the whole list — nothing else changed.
+import { API_ORIGIN } from "./listing.js";
+
+// ids may start with cse_ or session_ (the same session: the list API says cse_, the
+// rename URL session_) — or nothing at all
+export const sid = (id) => "session_" + String(id).replace(/^(cse_|session_)/, "");
+
+// The paste payload in either shape Deck's generators emit: the bare JSON array of
+// [id, title] pairs, or the whole `window.CLAUDE_RENAMES = [...];` line. Junk gets an
+// error that says what to paste — the page has no console to decode a raw SyntaxError in.
+export function parseRenames(text) {
+  let t = String(text ?? "").trim();
+  const m = /^window\.CLAUDE_RENAMES\s*=\s*([\s\S]*)$/.exec(t);
+  if (m) t = m[1].trim();
+  t = t.replace(/;\s*$/, "");
+  let list;
+  try {
+    list = JSON.parse(t);
+  } catch {
+    throw new Error("Couldn't parse the rename list. Paste either the bare JSON array of [id, title] pairs or the whole window.CLAUDE_RENAMES = [...]; line.");
+  }
+  const ok = Array.isArray(list)
+    && list.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string");
+  if (!ok) throw new Error("The rename list isn't [[id, title], ...] pairs — paste the generated file as-is (the bare JSON array, or the whole window.CLAUDE_RENAMES = [...]; line).");
+  // an id goes straight into the session URL, so anything that isn't a session id — a
+  // path traversal, a stray paste, an injection — is refused here, before any fetch
+  const bad = list.find((e) => !/^(?:cse_|session_)?[A-Za-z0-9_-]+$/.test(e[0]));
+  if (bad) {
+    throw new Error(`"${bad[0]}" doesn't look like a session id. Ids are letters, digits, "-" and "_", optionally starting with cse_ or session_ — paste the generated file as-is.`);
+  }
+  if (!list.length) throw new Error("The rename list is empty — paste the generated file: the bare JSON array of [id, title] pairs.");
+  return list;
+}
+
+// Each entry's current title, read live like the script's first loop does — the keys are
+// the ids exactly as the list carries them, which is what orderRenames looks up.
+export async function currentTitles(list, { fetch: doFetch = fetch } = {}) {
+  const headers = { "anthropic-version": "2023-06-01" };
+  const titles = new Map();
+  for (const [id] of list) {
+    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, { credentials: "include", headers });
+    if (!r.ok) throw new Error(`read ${r.status} (for ${id})`);
+    const title = (await r.json()).response_shape?.title;
+    // strict, like the script's titleOf: a read this run can't verify stops everything
+    // BEFORE any rename goes out — storing null here would promote the entry and PUT
+    // it anyway, and then the read-back could never prove the rename took
+    if (typeof title !== "string") throw new Error("read: no response_shape.title (the API shape changed)");
+    titles.set(id, title);
+  }
+  return titles;
+}
+
+// The script's unshift/splice reorder as a pure function: the first entry whose current
+// title differs from its target moves to the front, the rest keep their order. When
+// every entry is already at target there is nothing to change — running would "prove"
+// nothing, so that is a refusal (null), not a pass. currentTitles is a Map keyed by the
+// ids as they appear in the list.
+export function orderRenames(list, currentTitles) {
+  for (let k = 0; k < list.length; k++) {
+    if (currentTitles.get(list[k][0]) !== list[k][1]) {
+      return [list[k], ...list.slice(0, k), ...list.slice(k + 1)];
+    }
+  }
+  return null;
+}
+
+// The run: PUT {title}, then GET and require response_shape.title === target; a
+// mismatch is a failure. A failure at index 0 (after orderRenames) stops the whole
+// list — nothing else was changed.
+export async function renameAll(list, { fetch: doFetch = fetch, onProgress } = {}) {
+  const headers = { "anthropic-version": "2023-06-01", "content-type": "application/json" };
+  const titleOf = async (id) => {
+    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, { credentials: "include", headers });
+    if (!r.ok) throw new Error(`read ${r.status}`);
+    const title = (await r.json()).response_shape?.title;
+    if (typeof title !== "string") throw new Error("read: no response_shape.title (the API shape changed)");
+    return title;
+  };
+  const rename = async (id, title) => {
+    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, {
+      method: "PUT", credentials: "include", headers, body: JSON.stringify({ title }),
+    });
+    if (!r.ok) throw new Error(`rename ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const now = await titleOf(id);
+    if (now !== title) throw new Error(`read back "${now}"`);
+  };
+  const failed = [];
+  let ok = 0;
+  for (const [i, [id, title]] of list.entries()) {
+    try {
+      await rename(id, title);
+      ok++;
+    } catch (err) {
+      failed.push(`${id}: ${err.message}`);
+      if (i === 0) {
+        return { ok, failed, stopped: true,
+          error: `Stopped: the first rename didn't take (${err.message}). Nothing else was changed.` };
+      }
+    }
+    if (onProgress) onProgress(i + 1, list.length);
+  }
+  return { ok, failed, stopped: false };
+}

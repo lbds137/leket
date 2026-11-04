@@ -17,6 +17,13 @@ const REDDIT_POST_PAGE = new RegExp(
   String.raw`^https:\/\/(www|old)\.reddit\.com` + POST_PATHNAME.source.slice(1),
 );
 
+// One anchored pattern for "the pathname of a claude.ai/code page" gates the
+// claude-sessions module: the pathname must START with /code and then end, or run on
+// into / — the URL parser has already split ? and # off the pathname, so they never
+// appear here. claude.ai/chat and the bare claude.ai host are other pages' territory,
+// and /codeX is a different path altogether.
+export const CODE_PATHNAME = new RegExp(String.raw`^\/code(?=$|\/)`);
+
 export const MODULES = [
   {
     id: "discord",
@@ -39,6 +46,24 @@ export const MODULES = [
     title: "Reddit",
     blurb: "Save this post's JSON — comments included — for reddit-export to turn into Markdown.",
     commands: [{ id: "json", label: "Save this post's JSON", stay: true }],
+  },
+  {
+    id: "claude-sessions",
+    // a claude.ai/code page, per CODE_PATHNAME above. Both commands open the module's
+    // own page (src/modules/claude-sessions/page.html): a rename or a delete is a long,
+    // reviewable run, and a popup dies when it loses focus. The page's own fetches carry
+    // the login (credentials: include) against the manifest's claude.ai host permission.
+    matches: (url) => {
+      try {
+        const u = new URL(url);
+        return u.hostname === "claude.ai" && CODE_PATHNAME.test(u.pathname);
+      } catch {
+        return false;
+      }
+    },
+    title: "Claude sessions",
+    blurb: "Rename or delete your claude.ai/code sessions — read-back verified, one run at a time.",
+    commands: [{ id: "rename", label: "Rename sessions" }, { id: "delete", label: "Delete sessions" }],
   },
 ];
 
