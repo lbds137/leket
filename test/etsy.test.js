@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions }
+const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -133,6 +133,25 @@ test("a !ok page marks its conversation with the HTTP error; the next id still r
   const convos = await collectConversations(["111", "222"], { fetch, sleep: async () => {} });
   assert.deepEqual(convos.map((c) => c.id), ["111", "222"]);
   assert.equal(convos[0].error, "HTTP 403 at offset 0");
+  assert.deepEqual(convos[1].messages.map((m) => m.conversation_message_id), [9]);
+  assert.equal(convos[1].error, undefined);
+});
+
+test("a 200 whose json() throws is the signed-out error; the next id still runs", async () => {
+  // Etsy's login page answers 200 with HTML, not JSON: json() throws. The walk says
+  // signed out instead of leaking the parser's message, and the next id still runs.
+  const fetch = async (u) => {
+    if (u.includes("/111/")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError("Unexpected token '<', \"<html>...\" is not valid JSON"); },
+      };
+    }
+    return { ok: true, status: 200, json: async () => [msg(9)] };
+  };
+  const convos = await collectConversations(["111", "222"], { fetch, sleep: async () => {} });
+  assert.equal(convos[0].error, "not JSON (signed out of Etsy?) at offset 0");
   assert.deepEqual(convos[1].messages.map((m) => m.conversation_message_id), [9]);
   assert.equal(convos[1].error, undefined);
 });
@@ -290,6 +309,39 @@ test("serializePayload: a passed-but-undefined redact with no state says off, id
   assert.equal(JSON.parse(out).redact, "off (no etsyRedact config)");
   assert.deepEqual(JSON.parse(out), expected);
   assert.equal(out, JSON.stringify(expected, null, 1), "identity output: the string is untouched");
+});
+
+test("parsesAsJson: real JSON is true, junk is false", () => {
+  assert.equal(parsesAsJson('{"a":1}'), true);
+  assert.equal(parsesAsJson("nope"), false);
+});
+
+test("parsesAsJson: serializePayload's own identity output parses", () => {
+  const out = serializePayload([], { extractedAt: "2026-11-05T00:00:00.000Z" });
+  assert.equal(parsesAsJson(out), true);
+});
+
+// The seam the whole-blob guard corrupts today: a message text whose newline sits right
+// before an email bearing the config's own name makes the guard's match start on the
+// JSON escape letter, leaving a dangling backslash — the redacted file does not parse.
+// (The newline is built fromCharCode so the source carries no escape to mis-transcribe.)
+// This pin passes today — it pins the detection, not the guard — and stays green until
+// the guard's fix lands, at which point it flips to the strict parse-pin: the same
+// payload serialized with a fixed guard parses, and this assertion inverts.
+test("parsesAsJson catches the guard's corrupt output: a newline before a name-bearing email", () => {
+  const newline = String.fromCharCode(10);
+  const text = `Email me:${newline}betsy@gmail.com`;
+  const convo = {
+    id: "111",
+    url: "https://www.etsy.com/messages/111",
+    pages: 1,
+    messages: [{ conversation_message_id: 1, create_date: 0, message_order: 0, text }],
+  };
+  const out = serializePayload([convo], {
+    extractedAt: "2026-11-05T00:00:00.000Z",
+    redact: makeRedact({ name: "betsy", short: "bpt", firstSounds: "bpt" }),
+  });
+  assert.equal(parsesAsJson(out), false);
 });
 
 test("the manifest grants the bare etsy.com host the registry already matches", () => {
