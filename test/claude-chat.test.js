@@ -71,11 +71,22 @@ test("parseChats refuses an empty list", () => {
   assert.throws(() => parseChats("window.CLAUDE_OUTPUT_CHATS = [];"), /empty/);
 });
 
-test("parseChats rejects a chat id that isn't 36 hex-and-dash characters, naming it", () => {
+test("parseChats rejects a chat id that isn't uuid-shaped, naming it", () => {
   // a chat id goes straight into the conversation URL, so anything that isn't a
   // uuid — a path traversal, a stray paste, an injection — is refused here,
   // before any fetch
   for (const bad of ["x/../../api/foo", "drop table; --", "short-uuid"]) {
+    assert.throws(() => parseChats(`[["${bad}", "name", "source"]]`),
+      (e) => e.message.includes(bad) && /chat id|hex/.test(e.message),
+      `the id ${JSON.stringify(bad)} had to be refused, named in the error`);
+  }
+});
+
+test("parseChats rejects ids that aren't canonical 8-4-4-4-12 uuids, naming them", () => {
+  // 36 dashes pass a loose hex-and-dash count but are no id; a truncated uuid is
+  // a bad paste. Both refused here, before any fetch, named in the error — while
+  // a canonical uuid still passes (the earlier tests pin that).
+  for (const bad of ["-".repeat(36), CHAT.slice(0, 35)]) {
     assert.throws(() => parseChats(`[["${bad}", "name", "source"]]`),
       (e) => e.message.includes(bad) && /chat id|hex/.test(e.message),
       `the id ${JSON.stringify(bad)} had to be refused, named in the error`);
@@ -279,6 +290,34 @@ test("a failing list-files puts the ported error on entry.error, and later chats
     "the script's exact get-message: status plus the part after /wiggle/");
   assert.equal(done.results[1].error, undefined, "the later chat ran anyway");
   assert.equal(done.results[1].files[0].text, "ok");
+});
+
+test("a listing with no files_metadata puts the shape error on entry.error, and later chats still run", async () => {
+  const other = "bbbb2222-2222-4333-8444-555555555555";
+  const { fetch } = wiggleFetch({
+    [`${ORG}conversations/${CHAT}/wiggle/list-files?prefix=`]: () => ({ json: {} }),
+    [`${ORG}conversations/${other}/wiggle/list-files?prefix=`]: () => listing([
+      { path: "/mnt/user-data/outputs/ok.md", size: 2, content_type: "text/markdown" },
+    ]),
+    [`${ORG}conversations/${other}/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2Fok.md`]: () => md("ok"),
+  });
+  const done = await collectChats([[CHAT, "n", "s"], [other, "n2", "s2"]], { fetch, orgPath: ORG });
+  assert.equal(done.failed, 1, "the malformed listing counts as failed");
+  assert.deepEqual(done.results[0].files, [], "nothing arrived for the dead chat");
+  assert.equal(done.results[0].error, "list-files: no files_metadata (the API shape changed)",
+    "a silent zero-file chat and an API-shape drift must not look the same");
+  assert.equal(done.results[1].error, undefined, "the later chat ran anyway");
+  assert.equal(done.results[1].files[0].text, "ok");
+});
+
+test("a listing whose files_metadata isn't an array is refused the same way", async () => {
+  const { fetch } = wiggleFetch({
+    [`${ORG}conversations/${CHAT}/wiggle/list-files?prefix=`]: () => ({ json: { files_metadata: "not a list" } }),
+  });
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG });
+  assert.equal(done.failed, 1);
+  assert.equal(done.results[0].error, "list-files: no files_metadata (the API shape changed)");
+  assert.deepEqual(done.results[0].files, []);
 });
 
 test("a failure mid-download keeps the files fetched before it, alongside the error", async () => {
