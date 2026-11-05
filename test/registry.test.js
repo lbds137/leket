@@ -204,7 +204,7 @@ test("the chat outputs command opens the module's own page with the claude.ai ta
 });
 
 test("the chat outputs command without a tab opens the bare page and says so", async () => {
-  // a tabless open (direct invocation — the popup always passes its matched tab)
+  // a tabless open (the tests — the popup always passes its matched tab)
   // still opens the page — it explains itself there — with no ?tab= query at all.
   const created = [];
   globalThis.chrome = {
