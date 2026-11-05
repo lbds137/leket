@@ -15,10 +15,12 @@ const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
 
 export function when(ts) {
-  return new Date((ts || 0) * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  const ms = Number.isFinite(Number(ts)) ? Number(ts) * 1000 : 0;
+  return new Date(ms).toISOString().slice(0, 16).replace("T", " ") + " UTC";
 }
 
 export function quote(text, depth) {
+  text = String(text ?? "");
   const prefix = "> ".repeat(depth);
   return text.split("\n").map((line) => (prefix + line).trimEnd()).join("\n");
 }
@@ -52,7 +54,7 @@ export function images(p) {
     const items = (p.gallery_data || {}).items || [];
     for (let i = 0; i < items.length; i++) {
       const n = i + 1;
-      const item = items[i];
+      const item = items[i] || {};
       const m = (item.media_id && meta[item.media_id]) || {};
       const s = m.s || {};
       const u = s.u || s.gif;

@@ -45,6 +45,8 @@ export const MODULES = [
     matches: (url) => REDDIT_POST_PAGE.test(url),
     title: "Reddit",
     blurb: "Save this post — comments included — as a Markdown file, with its JSON alongside.",
+    // the command id stays "json" (the module's json.js command surface); the button
+    // saves Markdown now, with the post's json alongside.
     commands: [{ id: "json", label: "Save this post as Markdown", stay: true }],
   },
   {

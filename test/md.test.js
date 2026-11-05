@@ -7,14 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { postOf, mediaPost, images, when, quote, comments, render } from "../src/modules/reddit/md.js";
-
-const postPage = (post = {}, comments = []) => [
-  { kind: "Listing", data: { children: [{ kind: "t3", data: {
-    id: "abc123", title: "A post", subreddit: "x", author: "someone",
-    score: 42, num_comments: comments.length, created_utc: 1699000000,
-    permalink: "/r/x/comments/abc123/a_post/", selftext: "body text", ...post } }] } },
-  { kind: "Listing", data: { children: comments } },
-];
+import { postPage } from "./fixtures/reddit.js";
 
 const comment = (over = {}) => ({ kind: "t1", data: {
   author: "alice", score: 5, created_utc: 1699000000, body: "top", ...over } });
@@ -191,6 +184,33 @@ test("null fields fall back to placeholders, and a 0 score is not '?'", () => {
   assert.ok(md.includes("r/? · u/[deleted] · 0 points · 0 comments · 1970-01-01 00:00 UTC"), md);
 });
 
+// --- malformed fields (the null-safety the header claims) ---
+
+test("a gallery with a null item among its items renders the no-image note, without crashing", () => {
+  const md = render(postPage({
+    is_gallery: true,
+    gallery_data: { items: [{ media_id: "m1" }, null] },
+    media_metadata: { m1: { status: "valid", m: "image/png", s: { u: "https://preview.redd.it/one.png" } } },
+  }));
+  assert.ok(md.includes("![image 1](https://preview.redd.it/one.png)"), md);
+  assert.ok(md.includes("*(gallery item 2 not saved: no image URL)*"), md);
+});
+
+test("a non-numeric created_utc reads as the epoch line, not a crash", () => {
+  const md = render(postPage({ created_utc: "abc" }));
+  assert.ok(md.includes("r/x · u/someone · 42 points · 0 comments · 1970-01-01 00:00 UTC"), md);
+});
+
+test("a comment with a null body renders as an empty quoted line, without crashing", () => {
+  const md = render(postPage({}, [comment({ body: null })]));
+  assert.ok(md.includes("> **u/alice** · 5 points · 2023-11-03 08:26 UTC\n>\n>\n"), md);
+});
+
+test("quote survives null text: an empty quoted line, no crash", () => {
+  assert.equal(quote(null, 1), ">");
+  assert.equal(quote(undefined, 2), "> >");
+});
+
 // --- the saved branch (the follow-on images PR's surface) ---
 
 test("a saved image links its local file and names its source", () => {
@@ -215,6 +235,7 @@ test("when formats a created_utc second count, and 0/null reads as the epoch", (
   assert.equal(when(null), "1970-01-01 00:00 UTC");
   assert.equal(when(undefined), "1970-01-01 00:00 UTC");
   assert.equal(when(0), "1970-01-01 00:00 UTC");
+  assert.equal(when("abc"), "1970-01-01 00:00 UTC");
 });
 
 test("quote prefixes each line at its depth and trims empty lines", () => {
