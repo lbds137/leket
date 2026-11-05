@@ -25,6 +25,7 @@ function fakeDownloads() {
   const answers = [];
   const api = {
     calls: [],
+    cancelled: [],
     onChanged: { addListener: (f) => listeners.add(f), removeListener: (f) => listeners.delete(f) },
     download(opts) {
       api.calls.push(opts);

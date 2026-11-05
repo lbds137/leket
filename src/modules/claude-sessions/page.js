@@ -80,6 +80,7 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
     const sessions = await listSessions();
     let savedMB = 0;
     let markerFailed = false;
+    let markerPending = false; // the marker's save resolved null — it may still land, late
     const mb = (n) => n.toFixed(1);
     // the save seam (save.js): Blob, download and revoke discipline live there; every
     // user-facing string stays here — the factory narrates only the late ends, through
@@ -116,14 +117,15 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
         // onLate still narrates how it ended, late.)
         const resume = `window.CLAUDE_EXPORT_SKIP = ${JSON.stringify(state.savedIds)}; window.CLAUDE_EXPORT_PART_START = ${state.partStart};`;
         partStop({ saved }, {
-          refusedMessage: `Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written; rerun with this part numbered in the resume line: ${resume}`,
+          refusedMessage: `Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written. To resume, paste this in the resume box: ${resume}`,
           silentMessage: `Part ${name} got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste this in the resume box: ${resume}`,
         });
       },
       onMarker: async (payload, name) => {
         const { saved } = await saves.saveMarker(payload, name);
         if (saved === false) markerFailed = true;
-        // null: the marker save may still be running — the factory's onLate handles its end
+        else if (saved === null) markerPending = true;
+        // (null: the marker save may still be running — the factory's onLate handles its end)
       },
       onProgress: (d, t, evs, failedCount) => {
         exportPanel.progress(d, t);
@@ -134,6 +136,9 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
     const done = `Done: ${result.sessions} sessions, ${result.events} events, ${result.parts} part file(s), ${mb(savedMB)} MB.`;
     if (markerFailed) {
       exportPanel.say(`${done} But the done marker (claude-sessions-${run}-done.json) didn't finish saving — bin/claude-sessions-weekly waits for it; see Chrome's downloads. The parts are on disk.`,
+        "warn");
+    } else if (markerPending) {
+      exportPanel.say(`${done} The parts are on disk, but the done marker (claude-sessions-${run}-done.json) is still saving — bin/claude-sessions-weekly waits for it. If it lands late, this line will say so.`,
         "warn");
     } else {
       exportPanel.say(done + (result.failed.length ? ` ${result.failed.length} failed — listed below.` : ""),
