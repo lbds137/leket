@@ -119,8 +119,10 @@ export async function exportSessions(sessions, opts = {}) {
   // NOT count toward partBytes — the script's exact quirk, ported as-is.
   const titlesLine = JSON.stringify({ _titles: Object.fromEntries([...sessions.values()].map((s) => [s.id, s.title])) }) + "\n";
   let buffer = [titlesLine];
-  // what this buffer holds, so the page can build a resume line from what actually
-  // saved: a session's id joins it when its lines join the buffer, once per session
+  // what this buffer holds, feeding the flush state's chain view (what is on disk
+  // across the whole run chain, pasted skip included): a session's id joins it when its
+  // lines join the buffer, once per session, and is promoted into savedIds only when
+  // that part's save resolves
   let bufferIds = [];
   let partBytes = 0;
   let partNo = partStart;
@@ -144,9 +146,13 @@ export async function exportSessions(sessions, opts = {}) {
     buffer = [];
     bufferIds = [];
     partBytes = 0;
-    // the state as of before this part, for the page's resume line if the save stops
-    // the run
-    const state = { savedIds: [...savedIds], partStart: savedParts };
+    // the CHAIN view as of before this part, for the page's resume line if the save
+    // stops the run: the pasted skip (already on disk from the earlier run) seeds
+    // savedIds, and partStart + savedParts == partNo continues the chain's numbering
+    // (every earlier flush resolved before this one is reached — the flushes are
+    // sequential). The run's return.savedIds stays run-scoped below: it means what THIS
+    // run landed.
+    const state = { savedIds: [...skip, ...savedIds], partStart: partStart + savedParts };
     await onFlush(lines, partName(run, ++partNo), state);
     savedIds.push(...ids);
     savedParts++;

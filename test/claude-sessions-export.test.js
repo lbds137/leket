@@ -374,6 +374,58 @@ test("an all-skipped run returns savedIds [] — the titles-only part saves, pro
   assert.deepEqual(result.savedIds, []);
 });
 
+// the flush state is the CHAIN view (what is on disk across the whole run chain): a run
+// that is itself a resume must advise the pasted skip and the pasted part numbering, not
+// just this run's own promotions — a seedless state would drop X from the resume line
+// (refetched, duplicated) and rewind the part numbers (a rerun could overwrite a landed
+// part). The return stays run-scoped: its meaning is what THIS run landed.
+test("a resumed run's first flush state is the chain view: the pasted skip seeds savedIds, partStart passes through", async () => {
+  const a = oneEventSession("A", "tA", 400);
+  const fetch = standIn(routesOneEvent([a]));
+  const states = [];
+  await assert.rejects(
+    exportSessions(sessionsOf(listed("X", "tX"), a), {
+      fetch, threshold: 300, run: "R", skip: ["X"], partStart: 3,
+      onFlush: async (lines, name, state) => { states.push(state); throw new Error("part save refused"); },
+      onMarker: async () => {},
+    }),
+    /part save refused/,
+  );
+  assert.equal(states.length, 1);
+  assert.deepEqual(states[0], { savedIds: ["X"], partStart: 3 },
+    "X is already on disk from the earlier run, and the chain's part numbering continues at 3");
+});
+
+test("a resumed run's second flush state seeds the chain view with this run's promotion", async () => {
+  const a = oneEventSession("A", "tA", 400), b = oneEventSession("B", "tB", 400);
+  const fetch = standIn(routesOneEvent([a, b]));
+  const states = [];
+  await assert.rejects(
+    exportSessions(sessionsOf(listed("X", "tX"), a, b), {
+      fetch, threshold: 300, run: "R", skip: ["X"], partStart: 3,
+      onFlush: async (lines, name, state) => {
+        states.push(state);
+        if (states.length === 2) throw new Error("part save refused");
+      },
+      onMarker: async () => {},
+    }),
+    /part save refused/,
+  );
+  assert.equal(states.length, 2);
+  assert.deepEqual(states[1], { savedIds: ["X", "A"], partStart: 4 },
+    "X seeded, A promoted after part 1 resolved, and the part number continues the chain");
+});
+
+test("a resumed run's return stays run-scoped: savedIds never names the seeded skip", async () => {
+  const a = oneEventSession("A", "tA", 400);
+  const fetch = standIn(routesOneEvent([a]));
+  const { result } = await collect(
+    sessionsOf(listed("X", "tX"), a),
+    { fetch, skip: ["X"], partStart: 3, threshold: 300 },
+  );
+  assert.deepEqual(result.savedIds, ["A"], "the return's meaning is what THIS run landed; X travels only in the flush state");
+});
+
 // --- marker payload and filenames
 
 test("marker payload is exact, skipped sessions included in the count; partStart numbers after N", async () => {
