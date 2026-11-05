@@ -94,6 +94,20 @@ export const MODULES = [
     blurb: "Download the files Claude delivered in your chats as one dated JSON.",
     commands: [{ id: "outputs", label: "Save chat outputs" }],
   },
+  {
+    id: "etsy",
+    matches: (url) => {
+      try {
+        const u = new URL(url);
+        return u.hostname === "www.etsy.com" || u.hostname === "etsy.com";
+      } catch {
+        return false;
+      }
+    },
+    title: "Etsy",
+    blurb: "Save your Etsy conversations as one dated JSON.",
+    commands: [{ id: "messages", label: "Save conversations" }],
+  },
 ];
 
 // the module whose tab this is, or null when the popup has nothing to offer
