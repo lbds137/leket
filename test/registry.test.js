@@ -82,9 +82,34 @@ test("a claude.ai/code page matches the claude-sessions module", () => {
   }
 });
 
+test("a claude.ai chat page matches the claude-chat module", () => {
+  for (const url of [
+    "https://claude.ai/chat", // the chat app itself
+    "https://claude.ai/chat/1234e567-89ab-4cde-8f01-234556789abc", // a chat page
+    "https://claude.ai/chat?x=1", // query
+    "https://claude.ai/chat#f", // fragment
+  ]) {
+    const m = match(url);
+    assert.ok(m, `no match for ${url}`);
+    assert.equal(m.id, "claude-chat");
+  }
+});
+
+test("claude.ai pages that are not /chat do not match the claude-chat module, and /chatX is not /chat", () => {
+  // /code stays the claude-sessions module's — it must match, just never this one
+  const code = match("https://claude.ai/code");
+  assert.ok(code && code.id === "claude-sessions", "/code belongs to claude-sessions");
+  for (const url of [
+    "https://claude.ai/", // the bare host
+    "https://claude.ai/chatX", // /chat must end at the pathname: /chatX is something else
+    "https://example.com/chat", // another host entirely
+  ]) {
+    assert.equal(match(url), null, `unexpected match for ${url}`);
+  }
+});
+
 test("claude.ai pages that are not /code do not match, and /codeX is not /code", () => {
   for (const url of [
-    "https://claude.ai/chat", // the chat app is the claude-chat module's, not this one
     "https://claude.ai/", // the bare host
     "https://claude.ai/codeX", // /code must end at the pathname: /codeX is something else
     "https://claude.ai/settings/code", // /code not at the start of the pathname
@@ -150,6 +175,28 @@ test("both claude-sessions commands open the module's own page and say so", asyn
     assert.deepEqual(created, [
       { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#rename" },
       { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#delete" },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
+  }
+});
+
+test("the chat outputs command opens the module's own page with the claude.ai tab id, and says so", async () => {
+  // like the sessions commands, the command is a plain tab open — but the page runs
+  // against the claude.ai tab the popup matched, so the open carries its id as a
+  // query (the page's probe reads that tab's resource timeline).
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const m = match("https://claude.ai/chat");
+    assert.ok(m && m.id === "claude-chat");
+    const said = await COMMANDS["claude-chat"].outputs({ id: 7 }, { tabs });
+    assert.equal(said, "Opened the chat outputs page.");
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/claude-chat/page.html?tab=7" },
     ]);
   } finally {
     delete globalThis.chrome; // the stub never leaks past this test
