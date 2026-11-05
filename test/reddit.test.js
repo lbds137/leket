@@ -9,6 +9,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { postPage } from "./fixtures/reddit.js";
+
 // --- the chrome stub. downloads lives HERE (the worker's), never in the offscreen
 // --- document: chrome.runtime is the only extension API an offscreen document gets.
 const workerDownloads = {
@@ -85,16 +87,6 @@ const { commands } = await import("../src/modules/reddit/json.js");
 const { preparePostJson } = await import("../src/modules/reddit/prepare.js");
 const { downloadPrepared } = await import("../src/modules/reddit/download.js");
 const { render } = await import("../src/modules/reddit/md.js");
-
-// a valid post page for the fetch body: prepare now renders it, so a bare Listing no
-// longer counts as valid — the save refuses it
-const postPage = (post = {}, comments = []) => [
-  { kind: "Listing", data: { children: [{ kind: "t3", data: {
-    id: "abc123", title: "A post", subreddit: "x", author: "someone",
-    score: 42, num_comments: comments.length, created_utc: 1699000000,
-    permalink: "/r/x/comments/abc123/a_post/", selftext: "body text", ...post } }] } },
-  { kind: "Listing", data: { children: comments } },
-];
 
 // a red line under every test: anything that reaches the real network forgot to inject
 // its fetch (this file sits behind a stubbed chrome; no test may open a socket)
@@ -286,9 +278,42 @@ test("an interrupted second file names the .md, after the json settled", async (
   }
   workerDownloads.search = realSearch;
   workerDownloads.endState = "complete";
-  assert.match(threw && threw.message || "", /Chrome didn't complete the save of reddit-abc123\.md/);
+  // nothing was still saving when the .md failed, so the message is exactly the
+  // single-file failure — byte-pinned, so a changed trailing clause cannot slip through
+  assert.equal(threw && threw.message || "", "Chrome didn't complete the save of reddit-abc123.md — check Chrome's downloads, then click Save again.");
   // an interrupted download is over for good too: its blob may be revoked like a settled one's
   assert.deepEqual(settledNames, ["reddit-abc123.json", "reddit-abc123.md"]);
+});
+
+test("a failed save after a timed-out one names both files: the failure and the one still saving", async () => {
+  workerDownloads.endState = "in_progress";
+  const realSearch = workerDownloads.search;
+  let searches = 0;
+  workerDownloads.search = async () => { searches += 1; return [{ state: searches === 1 ? "in_progress" : "interrupted" }]; };
+  let threw = null;
+  try {
+    await downloadPrepared(workerDownloads, twoFiles, { timeout: 5 });
+  } catch (e) {
+    threw = e;
+  }
+  workerDownloads.search = realSearch;
+  workerDownloads.endState = "complete";
+  assert.match(threw && threw.message || "", /Chrome didn't complete the save of reddit-abc123\.md/);
+  assert.match(threw && threw.message || "", /reddit-abc123\.json is still saving, unconfirmed/);
+});
+
+test("a json with no word and an md that settles: the message names both fates", async () => {
+  workerDownloads.endState = "in_progress";
+  const realSearch = workerDownloads.search;
+  let searches = 0;
+  workerDownloads.search = async () => { searches += 1; return [{ state: searches === 1 ? "in_progress" : "complete" }]; };
+  const done = await downloadPrepared(workerDownloads, twoFiles, { timeout: 5 });
+  workerDownloads.search = realSearch;
+  workerDownloads.endState = "complete";
+  assert.equal(done.settled, false);
+  assert.equal(done.message,
+    "Saved reddit-abc123.md to Downloads. reddit-abc123.json is still saving, with no word for a long while"
+    + " — if it never lands in Downloads, click Save again.");
 });
 
 test("a json that settles and an md with no word: the message names both fates", async () => {

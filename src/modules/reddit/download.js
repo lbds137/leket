@@ -6,9 +6,11 @@ import { trackDownload } from "../../lib/download.js";
 // downloads on its own before the next starts. A refused or interrupted download
 // throws — the later files are not attempted (their blobs freed: nothing will read
 // them), and a re-click re-saves the lot (overwrite makes that clean). onSettled fires
-// per file, with that file's entry, once ITS download
+// per file, with that file's entry, once its own download
 // is over for good (a download with no word yet may still be reading the blob, so it
 // fires only then — the worker uses it to ask the document to revoke that blob).
+// Background always passes exactly two files, json then md; the message builder's
+// three shapes below assume that count.
 export async function downloadPrepared(downloads, files, { timeout, onSettled } = {}) {
   // saveAs is pinned off so the save never raises a prompt of its own; Chrome's own
   // "ask where to save each file" setting still asks when it is on — the API flag
@@ -28,7 +30,10 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled } 
       // read their blobs, so they are revoked alongside this one's — a skipped file's
       // blob would otherwise sit in the document (MBs on a big thread) until restart
       if (onSettled) for (const rest of files.slice(i + 1)) onSettled(rest);
-      throw new Error(`Chrome didn't complete the save of ${file.name} — check Chrome's downloads, then click Save again.`);
+      const stillSaving = unsettled.map((f) => f.name).join(" and ");
+      throw new Error(`Chrome didn't complete the save of ${file.name}`
+        + (stillSaving ? `; ${stillSaving} ${unsettled.length === 1 ? "is" : "are"} still saving, unconfirmed` : "")
+        + " — check Chrome's downloads, then click Save again.");
     }
     (saved === null ? unsettled : settled).push(file);
   }

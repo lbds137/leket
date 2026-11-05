@@ -7,17 +7,11 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+import { postPage } from "./fixtures/reddit.js";
+
 let onMessageListener = null;
 let fetchCalls = [];
 
-// a valid post page: prepare renders the fetched json, so a bare Listing is refused now
-const postPage = (post = {}, comments = []) => [
-  { kind: "Listing", data: { children: [{ kind: "t3", data: {
-    id: "abc123", title: "A post", subreddit: "x", author: "someone",
-    score: 42, num_comments: comments.length, created_utc: 1699000000,
-    permalink: "/r/x/comments/abc123/a_post/", selftext: "body text", ...post } }] } },
-  { kind: "Listing", data: { children: comments } },
-];
 const okBody = JSON.stringify(postPage());
 let fetchBody = okBody;
 
