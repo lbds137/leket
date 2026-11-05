@@ -202,3 +202,22 @@ test("the chat outputs command opens the module's own page with the claude.ai ta
     delete globalThis.chrome; // the stub never leaks past this test
   }
 });
+
+test("the chat outputs command without a tab opens the bare page and says so", async () => {
+  // a tabless open (direct invocation — the popup always passes its matched tab)
+  // still opens the page — it explains itself there — with no ?tab= query at all.
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const said = await COMMANDS["claude-chat"].outputs(undefined, { tabs });
+    assert.equal(said, "Opened the chat outputs page.");
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/claude-chat/page.html" },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
+  }
+});

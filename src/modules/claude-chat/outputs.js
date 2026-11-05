@@ -30,9 +30,9 @@ export function parseChats(text) {
   // a chat id goes straight into the conversation URL, so anything that isn't a chat
   // uuid — a path traversal, a stray paste, an injection — is refused here, before
   // any fetch
-  const bad = list.find((e) => !/^[0-9a-f-]{36}$/i.test(e[0]));
+  const bad = list.find((e) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e[0]));
   if (bad) {
-    throw new Error(`"${bad[0]}" doesn't look like a chat id. Ids are 36 hex digits and dashes — paste the generated file as-is.`);
+    throw new Error(`"${bad[0]}" doesn't look like a chat id. Ids are 8-4-4-4-12 hex-and-dash uuids — paste the generated file as-is.`);
   }
   if (!list.length) throw new Error("The chat list is empty — paste the generated file: the bare JSON array of [chat, name, source] triples.");
   return list;
@@ -91,7 +91,10 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
     const entry = { chat, name, source, files: [] };
     try {
       const listing = await (await get(base + "list-files?prefix=")).json();
-      for (const meta of listing.files_metadata || []) {
+      if (!Array.isArray(listing?.files_metadata)) {
+        throw new Error("list-files: no files_metadata (the API shape changed)");
+      }
+      for (const meta of listing.files_metadata) {
         if (!meta.path.startsWith("/mnt/user-data/outputs/")) continue;
         const blob = await (await get(base + "download-file?path=" + encodeURIComponent(meta.path))).blob();
         const file = { path: meta.path, size: meta.size, created_at: meta.created_at, content_type: meta.content_type };
