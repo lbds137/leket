@@ -336,6 +336,44 @@ test("Invariant 3 stop path: a throwing onFlush rejects the run and no marker is
   assert.equal(markers, 0, "the marker is never written after a failed part save");
 });
 
+// --- the resume state: onFlush's third arg and the return's savedIds (owner-approved:
+// the page builds the resume line from what actually saved)
+
+test("onFlush's third arg carries the state as of before this part: part 2 sees part 1's ids, partStart 1", async () => {
+  const a = oneEventSession("A", "tA", 400), b = oneEventSession("B", "tB", 200);
+  const fetch = standIn(routesOneEvent([a, b]));
+  const states = [];
+  await assert.rejects(
+    exportSessions(sessionsOf(a, b), {
+      fetch, threshold: 300, run: "R",
+      onFlush: async (lines, name, state) => {
+        states.push(state);
+        if (states.length === 2) throw new Error("part save refused");
+      },
+      onMarker: async () => {},
+    }),
+    /part save refused/,
+  );
+  assert.equal(states.length, 2);
+  assert.deepEqual(states[0], { savedIds: [], partStart: 0 }, "the first part starts from nothing saved");
+  assert.deepEqual(states[1], { savedIds: ["A"], partStart: 1 }, "part 2's state names part 1's ids and count");
+});
+
+test("the return's savedIds lists the sessions whose parts resolved, in flush order", async () => {
+  const a = oneEventSession("A", "tA", 400), b = oneEventSession("B", "tB", 200), c = oneEventSession("C", "tC", 200);
+  const fetch = standIn(routesOneEvent([a, b, c]));
+  const { result, parts } = await collect(sessionsOf(a, b, c), { fetch, threshold: 300 });
+  assert.equal(parts.length, 2);
+  assert.deepEqual(result.savedIds, ["A", "B", "C"]);
+});
+
+test("an all-skipped run returns savedIds [] — the titles-only part saves, promoting no ids", async () => {
+  const fetch = standIn({});
+  const { result, parts } = await collect(sessionsOf(listed("S", "tS")), { fetch, skip: ["S"] });
+  assert.equal(parts.length, 1);
+  assert.deepEqual(result.savedIds, []);
+});
+
 // --- marker payload and filenames
 
 test("marker payload is exact, skipped sessions included in the count; partStart numbers after N", async () => {
