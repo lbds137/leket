@@ -41,7 +41,13 @@ const collectConversations = async (ids, {
           { credentials: "include", headers: { accept: "application/json" } },
         );
         if (!r.ok) throw new Error(`HTTP ${r.status} at offset ${offset}`);
-        const page = messagesIn(await r.json());
+        let data;
+        try {
+          data = await r.json();
+        } catch {
+          throw new Error(`not JSON (signed out of Etsy?) at offset ${offset}`);
+        }
+        const page = messagesIn(data);
         convo.pages++;
         if (!page.length) break;
         let added = 0;
@@ -111,6 +117,19 @@ const serializePayload = (conversations, opts = {}) => {
   return redact(json);
 };
 
+// the whole-blob guard can corrupt the serialized JSON (a match starting on a JSON
+// escape letter leaves a dangling backslash — escalated to the guard's owner). The
+// page checks the redacted output before it claims success, and never claims ok when
+// the file would not parse.
+const parsesAsJson = (text) => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const outputName = (date = new Date()) => `etsy-conversations-${date.toISOString().slice(0, 10)}.json`;
 
-export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions };
+export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson };

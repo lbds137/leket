@@ -3,14 +3,19 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions } from "./messages.js";
+import { parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson } from "./messages.js";
 import { makeRedact } from "./redact.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
 
 const line = $("etsy-status"), bar = $("etsy-bar"), fails = $("etsy-fails");
+const redactLine = $("etsy-redact");
 const say = (text, cls = "") => { line.textContent = text; line.className = cls; line.hidden = false; };
+// the redact state's own line: it persists through the progress narration, so the state
+// and its collision note stay visible for the whole run no matter what the status line
+// is saying at the moment
+const sayRedact = (text, cls = "") => { redactLine.textContent = text; redactLine.className = cls; redactLine.hidden = false; };
 const progress = (done, total) => { bar.max = total || 1; bar.value = done; bar.hidden = !total; };
 const failures = (items) => fails.replaceChildren(...items.map((t) => {
   const li = document.createElement("li");
@@ -71,18 +76,18 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     if (state === "on") {
       redact = makeRedact(stored);
       const hits = redactionCollisions(redact);
-      // one line element on the page, so the collision cost rides the on line instead of
-      // erasing it — narrated, never a failure of the run
-      say(
+      // the collision cost rides the redact line (warn there), never erasing anything —
+      // narrated, never a failure of the run
+      sayRedact(
         "Redact: on." + (hits.length
           ? ` This name also matches Etsy's own words (${hits.join(", ")}) — those strings read [redacted] in the export.`
           : ""),
         hits.length ? "warn" : "",
       );
     } else if (state === "off (etsyRedact config incomplete)") {
-      say("Redact: off — config invalid (needs lowercase name and short sharing the first letter, and firstSounds starting with it); the export is unredacted.", "warn");
+      sayRedact("Redact: off — config invalid (needs lowercase name and short sharing the first letter, and firstSounds starting with it); the export is unredacted.", "warn");
     } else {
-      say("Redact: off — no etsyRedact config; the export is unredacted.", "warn");
+      sayRedact("Redact: off — no etsyRedact config; the export is unredacted.", "warn");
     }
 
     progress(0, ids.length);
@@ -94,21 +99,27 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     });
     progress(ids.length, ids.length);
     say("Saving…");
+    // whole-blob redaction: up to 8 passes on the main thread — a large export sits on "Saving…" a while
     const json = serializePayload(conversations, { redact, redactState });
+    // the redacted output is checked before success is claimed: a file that would not
+    // parse never rides a green line, though the download itself still runs
+    const sound = parsesAsJson(json);
     const blobUrl = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     const filename = outputName();
     const failed = conversations.filter((c) => c.error);
     const total = conversations.reduce((s, c) => s + c.messages.length, 0);
     // what the run says at the end, from what actually happened: a download Chrome
     // interrupted or refused is not a Done, however green the collection was; the ok
-    // class needs no errors AND redact on — an unguarded export never looks clean
+    // class needs no errors AND redact on AND a parseable file — an unguarded export or
+    // a guard-corrupted one never looks clean
     const finish = (saved) => {
       failures(failed.map((c) => `${c.id}: ${c.error}`));
       if (saved === true) {
         say(`Saved ${conversations.length} conversations, ${total} messages`
           + (failed.length ? `, ${failed.length} with errors (listed in the file)` : "")
-          + `. Redact: ${redactState}.`,
-        failed.length || redactState !== "on" ? "warn" : "ok");
+          + `. Redact: ${redactState}.`
+          + (sound ? "" : " The redacted file does NOT parse as JSON — do not share it; re-run after the guard fix."),
+        failed.length || redactState !== "on" || !sound ? "warn" : "ok");
       } else if (saved === false) {
         say(`The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads. Redact: ${redactState}.`, "warn");
       } else {
