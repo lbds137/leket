@@ -27,6 +27,16 @@ const openChatOutputsPage = async (tab, { tabs = chrome.tabs } = {}) => {
   return "Opened the chat outputs page.";
 };
 
+// Like the chat outputs page, the Etsy page runs against the tab the popup matched: its
+// prefill reads that tab's /messages/<id> address, so the open carries its id as a query.
+// Tabless calls (the tests) open the page bare — the ids box just stays empty.
+const openEtsyPage = async (tab, { tabs = chrome.tabs } = {}) => {
+  const page = chrome.runtime.getURL("src/modules/etsy/page.html");
+  const url = tab && tab.id != null ? `${page}?tab=${tab.id}` : page;
+  await tabs.create({ url });
+  return "Opened the Etsy page.";
+};
+
 export const COMMANDS = {
   discord: discordCommands,
   reddit: redditCommands,
@@ -37,5 +47,8 @@ export const COMMANDS = {
   },
   "claude-chat": {
     outputs: openChatOutputsPage,
+  },
+  etsy: {
+    messages: openEtsyPage,
   },
 };
