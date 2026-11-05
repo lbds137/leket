@@ -9,7 +9,11 @@
 import { API_ORIGIN } from "./listing.js";
 
 // the run's key, YYYY-MM-DDTHHMM in UTC: two runs on one day never share file names, so
-// bin/claude-sessions-weekly splits each run on its own instead of merging them
+// bin/claude-sessions-weekly splits each run on its own instead of merging them. A
+// resumed run (PART_START) takes a fresh run key on purpose — the first run's parts,
+// markerless, wait for weekly's 24 h STALE_HOURS fallback and ingest then (weekly's
+// ingest step: "no end marker after 24 h; taking the part file(s) as they are"), so
+// nothing is orphaned by the new key.
 export const runKey = (date = new Date()) => date.toISOString().slice(0, 16).replace(":", "");
 
 const partName = (run, n) => `claude-sessions-${run}-part${String(n).padStart(2, "0")}.jsonl`;
@@ -48,6 +52,9 @@ export function parseResume(text) {
   const shapes = " Paste the console's resume line (window.CLAUDE_EXPORT_SKIP = [...]; window.CLAUDE_EXPORT_PART_START = N;) or the bare skip-id JSON array.";
   const out = { skip: [], partStart: 0 };
   let matched = false;
+  // `\[[^\]]*\]` stops at the first `]`: a skip array containing one would cut the
+  // match short — but real session ids (`[A-Za-z0-9_-]`) never contain one, so the
+  // generated line is always safe
   const sm = /window\.CLAUDE_EXPORT_SKIP\s*=\s*(\[[^\]]*\])/.exec(t);
   if (sm) {
     matched = true;
@@ -79,11 +86,14 @@ export function parseResume(text) {
 // - fetch: the events go out through it (the page passes its own);
 // - known/skip/partStart: the pasted resume + incremental state (parseKnown/parseResume);
 // - run: the run key (defaults to runKey() at call time — the page takes it at click);
-// - threshold: the flush check's bytes, strict > (the script's 150 MB, per the design
-//   doc's "the scripts are the spec");
-// - onFlush(lines, name): a part save — may throw, and the throw STOPS the run: later
+// - threshold: the flush check's count, strict > (the script's 150 MB, per the design
+//   doc's "the scripts are the spec"). The count is UTF-16 code units (the script's
+//   `line.length`), not bytes — a non-ASCII part can land slightly above 150 MB on disk;
+// - onFlush(lines, name, state): a part save — may throw, and the throw STOPS the run: later
 //   sessions are not fetched, the final flush and the marker never run (a hole in the
-//   part numbering would make weekly split see a hole as a complete run);
+//   part numbering would make weekly split see a hole as a complete run). state is the
+//   save record as of before this part — { savedIds, partStart } — so the page can build
+//   its resume line from what actually saved; a part counts only once its save resolves;
 // - onMarker(payload, name): the done marker — called last, after the final flush,
 //   even when every session failed or was skipped;
 // - onProgress(done, total, events, failedCount): done counts skipped sessions too.
@@ -109,20 +119,37 @@ export async function exportSessions(sessions, opts = {}) {
   // NOT count toward partBytes — the script's exact quirk, ported as-is.
   const titlesLine = JSON.stringify({ _titles: Object.fromEntries([...sessions.values()].map((s) => [s.id, s.title])) }) + "\n";
   let buffer = [titlesLine];
+  // what this buffer holds, so the page can build a resume line from what actually
+  // saved: a session's id joins it when its lines join the buffer, once per session
+  let bufferIds = [];
   let partBytes = 0;
   let partNo = partStart;
   const total = sessions.size;
   let done = 0, events = 0;
   const failed = [];
+  // promoted only after a part's onFlush RESOLVES — a refused or silent save promotes
+  // nothing, so its part number is not counted and its ids are not advised as saved
+  let savedIds = [];
+  let savedParts = 0;
 
   const headers = { "anthropic-version": "2023-06-01" };
 
   const flush = async () => {
     if (!buffer.length) return;
     const lines = buffer;
-    await onFlush(lines, partName(run, ++partNo));
+    const ids = bufferIds;
+    // the strings drop before the save settles: the page's Blob is built from `lines` at
+    // the top of onFlush, so they become collectable the moment the Blob exists instead
+    // of after the download lands
     buffer = [];
+    bufferIds = [];
     partBytes = 0;
+    // the state as of before this part, for the page's resume line if the save stops
+    // the run
+    const state = { savedIds: [...savedIds], partStart: savedParts };
+    await onFlush(lines, partName(run, ++partNo), state);
+    savedIds.push(...ids);
+    savedParts++;
   };
 
   for (const s of sessions.values()) {
@@ -162,6 +189,7 @@ export async function exportSessions(sessions, opts = {}) {
         buffer.push(line);
         partBytes += line.length;
       }
+      bufferIds.push(s.id);
       events += lines.length;
     } catch (err) {
       failed.push(`${s.id}: ${err.message}`);
@@ -181,5 +209,5 @@ export async function exportSessions(sessions, opts = {}) {
   // final flush, in the control flow itself, not in caller discipline.
   await onMarker({ parts: partNo, sessions: sessions.size, events, failed: failed.length }, markerName(run));
 
-  return { parts: partNo, sessions: sessions.size, events, failed, unchanged, noActivityField };
+  return { parts: partNo, sessions: sessions.size, events, failed, unchanged, noActivityField, savedIds: [...savedIds] };
 }

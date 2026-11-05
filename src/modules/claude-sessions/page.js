@@ -9,7 +9,7 @@ import { listSessions } from "./listing.js";
 import { parseRenames, orderRenames, renameAll, currentTitles } from "./rename.js";
 import { checkPrefix, findHits, confirmHits, deleteAll } from "./delete.js";
 import { parseKnown, parseResume, exportSessions, runKey } from "./export.js";
-import { trackDownload } from "../../lib/download.js";
+import { createSaves, partStop } from "./save.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -81,53 +81,49 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
     let savedMB = 0;
     let markerFailed = false;
     const mb = (n) => n.toFixed(1);
+    // the save seam (save.js): Blob, download and revoke discipline live there; every
+    // user-facing string stays here — the factory narrates only the late ends, through
+    // this hook, and only while this run still owns the line
+    const saves = createSaves({
+      downloads: chrome.downloads,
+      stillCurrent: () => seq === runSeq,
+      note: (ev) => {
+        if (ev.marker) {
+          exportPanel.say(ev.ok
+            ? `The done marker (${ev.name}) landed late.`
+            : `The done marker (${ev.name}) landed late but didn't finish — bin/claude-sessions-weekly waits for it; see Chrome's downloads.`, ev.ok ? "" : "warn");
+        } else if (ev.ok) {
+          savedMB += ev.size / 1048576;
+          exportPanel.say(`Saved ${ev.name} (${mb(savedMB)} MB, landed late) — keep this tab open.`);
+        } else {
+          exportPanel.say(`${ev.name} landed late but didn't finish — see Chrome's downloads. Keep this tab open.`, "warn");
+        }
+      },
+    });
     const result = await exportSessions(sessions, {
       known, skip, partStart, run,
-      onFlush: async (lines, name) => {
-        const blob = new Blob(lines, { type: "application/x-ndjson" });
-        const url = URL.createObjectURL(blob);
-        const saved = await trackDownload(chrome.downloads, { url, filename: name }, {
-          // a save with no word in 15 minutes may still be reading the blob URL: free
-          // it only once the download truly ends; it speaks only if this run still
-          // owns the line (a late save outlives its click, a second run owns the line)
-          onLate: (ok) => {
-            URL.revokeObjectURL(url);
-            if (seq !== runSeq) return;
-            if (ok) {
-              savedMB += blob.size / 1048576;
-              exportPanel.say(`Saved ${name} (${mb(savedMB)} MB, landed late) — keep this tab open.`);
-            } else {
-              exportPanel.say(`${name} landed late but didn't finish — see Chrome's downloads. Keep this tab open.`, "warn");
-            }
-          },
-        });
-        if (saved !== null) URL.revokeObjectURL(url);
+      onFlush: async (lines, name, state) => {
+        const { saved, size } = await saves.savePart(lines, name);
         if (saved === true) {
-          savedMB += blob.size / 1048576;
+          savedMB += size / 1048576;
           exportPanel.say(`Saved ${name} (${mb(savedMB)} MB) — keep this tab open.`);
-        } else if (saved === false) {
-          // a refused or interrupted part stop the run: exportSessions propagates the
-          // throw — later sessions are not fetched and no done marker is written
-          throw new Error(`Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written; rerun with this part numbered in the resume line.`);
+          return;
         }
-        // saved === null: no word in 15 min — the download may still be running, so the
-        // URL stays alive for it; onLate frees it and says how it ended
+        // a refused or silent part stops the run: exportSessions propagates the throw —
+        // later sessions are not fetched and no done marker is written. The resume line
+        // is built from the state as of before this part, so it names exactly what is
+        // already on disk. (For a silent part the URL stays alive and the factory's
+        // onLate still narrates how it ended, late.)
+        const resume = `window.CLAUDE_EXPORT_SKIP = ${JSON.stringify(state.savedIds)}; window.CLAUDE_EXPORT_PART_START = ${state.partStart};`;
+        partStop({ saved }, {
+          refusedMessage: `Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written; rerun with this part numbered in the resume line: ${resume}`,
+          silentMessage: `Part ${name} got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste this in the resume box: ${resume}`,
+        });
       },
       onMarker: async (payload, name) => {
-        const blob = new Blob([JSON.stringify(payload) + "\n"], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const saved = await trackDownload(chrome.downloads, { url, filename: name }, {
-          onLate: (ok) => {
-            URL.revokeObjectURL(url);
-            if (seq !== runSeq) return;
-            exportPanel.say(ok
-              ? `The done marker (${name}) landed late.`
-              : `The done marker (${name}) landed late but didn't finish — bin/claude-sessions-weekly waits for it; see Chrome's downloads.`, ok ? "" : "warn");
-          },
-        });
-        if (saved !== null) URL.revokeObjectURL(url);
+        const { saved } = await saves.saveMarker(payload, name);
         if (saved === false) markerFailed = true;
-        // null: the marker save may still be running — onLate handles its end
+        // null: the marker save may still be running — the factory's onLate handles its end
       },
       onProgress: (d, t, evs, failedCount) => {
         exportPanel.progress(d, t);
