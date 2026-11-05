@@ -60,7 +60,7 @@ const ensureOffscreen = async () => {
   creatingOffscreen ||= chrome.offscreen.createDocument({
     url: chrome.runtime.getURL("src/modules/reddit/offscreen.html"),
     reasons: ["BLOBS"],
-    justification: "Fetch the open reddit post's JSON and download it as a file; the save must outlive the popup.",
+    justification: "Fetch the open reddit post's JSON, render it as Markdown, and download both; the save must outlive the popup.",
   }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 };
@@ -79,8 +79,11 @@ const redditSave = async (tabUrl) => {
   if (!prep || !prep.ok) {
     return { ok: false, error: (prep && prep.error) || SAVE_PAGE_SILENT };
   }
-  const done = await downloadPrepared(chrome.downloads, prep, {
-    onSettled: () => chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-revoke", url: prep.url }).catch(() => {}),
+  const done = await downloadPrepared(chrome.downloads, [
+    { url: prep.url, name: prep.name },
+    { url: prep.mdUrl, name: prep.mdName },
+  ], {
+    onSettled: (file) => chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-revoke", url: file.url }).catch(() => {}),
   });
   return { ok: true, message: done.message };
 };

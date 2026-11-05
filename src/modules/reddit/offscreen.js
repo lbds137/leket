@@ -16,7 +16,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === "discord-tools:reddit-save-run" && typeof msg.tabUrl === "string") {
     preparePostJson(msg.tabUrl).then(
-      ({ url, name }) => reply({ ok: true, url, name }),
+      ({ url, name, mdUrl, mdName }) => reply({ ok: true, url, name, mdUrl, mdName }),
       (e) => reply({ ok: false, error: (e && e.message) || String(e) }),
     );
     return true; // the answer comes after the fetch

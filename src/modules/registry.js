@@ -44,8 +44,8 @@ export const MODULES = [
     // downloads) — a page outlives the popup, so closing it mid-save kills nothing.
     matches: (url) => REDDIT_POST_PAGE.test(url),
     title: "Reddit",
-    blurb: "Save this post's JSON — comments included — for reddit-export to turn into Markdown.",
-    commands: [{ id: "json", label: "Save this post's JSON", stay: true }],
+    blurb: "Save this post — comments included — as a Markdown file, with its JSON alongside.",
+    commands: [{ id: "json", label: "Save this post as Markdown", stay: true }],
   },
   {
     id: "claude-sessions",
