@@ -148,6 +148,15 @@ test("a captionless failed gallery item gets a note without the colon part", () 
   assert.ok(md.includes("*(gallery item 1 not saved: status failed)*"), md);
 });
 
+test("a gallery item whose caption is a number stringifies it as the alt, without crashing", () => {
+  const md = render(postPage({
+    is_gallery: true,
+    gallery_data: { items: [{ media_id: "m1", caption: 5 }] },
+    media_metadata: { m1: { status: "valid", m: "image/png", s: { u: "https://preview.redd.it/one.png" } } },
+  }));
+  assert.ok(md.includes("![5](https://preview.redd.it/one.png)"), md);
+});
+
 // --- crossposts: the media comes from the parent ---
 
 test("a crosspost takes its image from the parent and still links the child's url", () => {

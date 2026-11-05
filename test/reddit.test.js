@@ -290,16 +290,19 @@ test("a failed save after a timed-out one names both files: the failure and the 
   const realSearch = workerDownloads.search;
   let searches = 0;
   workerDownloads.search = async () => { searches += 1; return [{ state: searches === 1 ? "in_progress" : "interrupted" }]; };
+  const settledNames = [];
   let threw = null;
   try {
-    await downloadPrepared(workerDownloads, twoFiles, { timeout: 5 });
+    await downloadPrepared(workerDownloads, twoFiles, { timeout: 5, onSettled: (f) => settledNames.push(f.name) });
   } catch (e) {
     threw = e;
   }
   workerDownloads.search = realSearch;
   workerDownloads.endState = "complete";
-  assert.match(threw && threw.message || "", /Chrome didn't complete the save of reddit-abc123\.md/);
-  assert.match(threw && threw.message || "", /reddit-abc123\.json is still saving, unconfirmed/);
+  assert.equal(threw && threw.message,
+    "Chrome didn't complete the save of reddit-abc123.md; reddit-abc123.json is still saving, unconfirmed — check Chrome's downloads, then click Save again.");
+  assert.deepEqual(settledNames, ["reddit-abc123.md"],
+    "the interrupted md fired onSettled, the timed-out json did NOT (its blob may still be read; no revoke)");
 });
 
 test("a json with no word and an md that settles: the message names both fates", async () => {

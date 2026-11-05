@@ -58,7 +58,7 @@ export function images(p) {
       const m = (item.media_id && meta[item.media_id]) || {};
       const s = m.s || {};
       const u = s.u || s.gif;
-      const caption = item.caption || "";
+      const caption = item.caption ? String(item.caption) : "";
       if ((m.status ?? "valid") !== "valid") {
         out.push([n, null, caption, "", `status ${m.status}`]);
       } else if (!u) {
@@ -90,7 +90,7 @@ export function comments(children, depth, permalink, out) {
     const head = `**u/${d.author ?? "[deleted]"}** · ${d.score ?? "?"} points · ${when(d.created_utc)}`;
     out.push(quote(head, depth));
     out.push(quote("", depth));
-    out.push(quote(d.body ?? "", depth));
+    out.push(quote(d.body, depth));
     out.push("");
     const replies = d.replies;
     if (replies && typeof replies === "object") {
