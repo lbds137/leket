@@ -9,7 +9,17 @@ import { readFile } from "node:fs/promises";
 
 let onMessageListener = null;
 let fetchCalls = [];
-let fetchBody = '{"kind":"Listing"}';
+
+// a valid post page: prepare renders the fetched json, so a bare Listing is refused now
+const postPage = (post = {}, comments = []) => [
+  { kind: "Listing", data: { children: [{ kind: "t3", data: {
+    id: "abc123", title: "A post", subreddit: "x", author: "someone",
+    score: 42, num_comments: comments.length, created_utc: 1699000000,
+    permalink: "/r/x/comments/abc123/a_post/", selftext: "body text", ...post } }] } },
+  { kind: "Listing", data: { children: comments } },
+];
+const okBody = JSON.stringify(postPage());
+let fetchBody = okBody;
 
 globalThis.chrome = {
   runtime: {
@@ -35,12 +45,14 @@ const handled = (msg, sender = { id: "test-extension-id" }) =>
 
 after(() => { globalThis.fetch = realFetch; });
 
-test("a save run prepares and answers with the blob and the name, no downloads involved", async () => {
+test("a save run prepares and answers with both blobs and both names, no downloads involved", async () => {
   fetchCalls = [];
   const reply = await handled({ type: "discord-tools:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a prepared save, got ${JSON.stringify(reply)}`);
   assert.equal(reply.name, "reddit-abc123.json");
   assert.match(reply.url, /^blob:/);
+  assert.equal(reply.mdName, "reddit-abc123.md");
+  assert.match(reply.mdUrl, /^blob:/);
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].opts.credentials, "include");
 });
@@ -50,7 +62,7 @@ test("a refused save run answers with the error text", async () => {
   const reply = await handled({ type: "discord-tools:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok === false, `expected a refusal, got ${JSON.stringify(reply)}`);
   assert.match(reply.error, /answered with a page/);
-  fetchBody = '{"kind":"Listing"}';
+  fetchBody = okBody;
 });
 
 test("a revoke frees the blob url it names", async () => {
@@ -77,7 +89,7 @@ test("a message from a content-script relay (sender.tab) is declined", async () 
 });
 
 test("the offscreen-side files never reference chrome.downloads", async () => {
-  for (const f of ["src/modules/reddit/offscreen.js", "src/modules/reddit/prepare.js"]) {
+  for (const f of ["src/modules/reddit/offscreen.js", "src/modules/reddit/prepare.js", "src/modules/reddit/md.js"]) {
     const src = await readFile(new URL(`../${f}`, import.meta.url), "utf8");
     assert.ok(!src.includes("chrome.downloads"), `${f} references chrome.downloads — the document does not have it`);
   }

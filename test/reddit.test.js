@@ -1,10 +1,11 @@
 // The reddit save across its homes: preparePostJson (offscreen document: fetch,
-// validate, blob) against stubbed fetch; downloadPrepared (worker: chrome.downloads)
-// against a stubbed downloads API; the popup command and the worker relay against a
-// stubbed chrome. The console script dev-docs/browser/reddit-json.js is the spec the
-// prepare half ports: one fetch of the post's .json with the browser's own login
-// riding along, saved as reddit-<id>.json — and the script's old.reddit advice stays
-// advice in the error text, never an auto-retry.
+// validate, render to Markdown, two blobs) against stubbed fetch; downloadPrepared
+// (worker: chrome.downloads, one file after the other) against a stubbed downloads
+// API; the popup command and the worker relay against a stubbed chrome. The console
+// script dev-docs/browser/reddit-json.js is the spec the prepare half ports: one fetch
+// of the post's .json with the browser's own login riding along, saved as
+// reddit-<id>.json with reddit-<id>.md beside it — and the script's old.reddit advice
+// stays advice in the error text, never an auto-retry.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -83,12 +84,23 @@ const reset = () => {
 const { commands } = await import("../src/modules/reddit/json.js");
 const { preparePostJson } = await import("../src/modules/reddit/prepare.js");
 const { downloadPrepared } = await import("../src/modules/reddit/download.js");
+const { render } = await import("../src/modules/reddit/md.js");
+
+// a valid post page for the fetch body: prepare now renders it, so a bare Listing no
+// longer counts as valid — the save refuses it
+const postPage = (post = {}, comments = []) => [
+  { kind: "Listing", data: { children: [{ kind: "t3", data: {
+    id: "abc123", title: "A post", subreddit: "x", author: "someone",
+    score: 42, num_comments: comments.length, created_utc: 1699000000,
+    permalink: "/r/x/comments/abc123/a_post/", selftext: "body text", ...post } }] } },
+  { kind: "Listing", data: { children: comments } },
+];
 
 // a red line under every test: anything that reaches the real network forgot to inject
 // its fetch (this file sits behind a stubbed chrome; no test may open a socket)
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const okFetch = (body = '{"kind":"Listing"}') => {
+const okFetch = (body = JSON.stringify(postPage())) => {
   const calls = [];
   return {
     calls,
@@ -139,12 +151,49 @@ test("a post outside www and old reddit is refused before anything is fetched", 
   assert.equal(calls.length, 0, "a lookalike host must not draw a credentialed fetch");
 });
 
-test("a large thread prepares fine — the blob has no URL size cap", async () => {
-  const big = JSON.stringify({ kind: "Listing", data: { body: "x".repeat(3 * 1024 * 1024) } });
+test("a large thread prepares fine — the blobs have no URL size cap", async () => {
+  const big = JSON.stringify(postPage({ selftext: "x".repeat(3 * 1024 * 1024) }));
   const { fetch } = okFetch(big);
   const prep = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch });
   assert.equal(prep.name, "reddit-abc123.json");
   assert.match(prep.url, /^blob:/);
+  assert.equal(prep.mdName, "reddit-abc123.md");
+  assert.match(prep.mdUrl, /^blob:/);
+});
+
+test("the prepared md is exactly render() over the fetched post page", async () => {
+  const body = JSON.stringify(postPage({}, [
+    { kind: "t1", data: { author: "alice", score: 5, created_utc: 1699000000, body: "first" } },
+    { kind: "t1", data: { author: "bob", score: 1, created_utc: 1699000000, body: "second" } },
+  ]));
+  const { fetch } = okFetch(body);
+  const realCreate = URL.createObjectURL;
+  const blobs = [];
+  URL.createObjectURL = (b) => { blobs.push(b); return realCreate(b); };
+  let prep;
+  try {
+    prep = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch });
+  } finally {
+    URL.createObjectURL = realCreate;
+  }
+  assert.equal(prep.mdName, "reddit-abc123.md");
+  const mdBlob = blobs.find((b) => b && b.type === "text/markdown");
+  assert.ok(mdBlob, "a text/markdown blob was created");
+  assert.equal(await mdBlob.text(), render(JSON.parse(body)));
+});
+
+test("a 200 that parses but isn't a post page refuses the save, in the wrapper's words", async () => {
+  const { fetch, calls } = okFetch('{"kind":"Listing"}');
+  await assert.rejects(
+    preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch }),
+    (e) => {
+      assert.match(e.message, /isn't this post's data/);
+      assert.match(e.message, /old\.reddit\.com\/comments\/abc123/);
+      assert.match(e.message, /isn't a reddit post page/);
+      return true;
+    },
+  );
+  assert.equal(calls.length, 1, "one fetch, no retry");
 });
 
 test("a refused fetch reports reddit's answer with the old.reddit advice, and does not retry", async () => {
@@ -182,66 +231,103 @@ test("a page without a post id in its path is refused, in the script's words, an
   assert.equal(calls.length, 0, "nothing was fetched");
 });
 
-// --- downloadPrepared: the worker's half (chrome.downloads lives here)
+// --- downloadPrepared: the worker's half (chrome.downloads lives here), two files
+// --- (json first, md second), downloaded one after the other
 
-test("the prepared blob downloads under the CLI's expected name with saveAs pinned off", async () => {
-  const revokes = [];
-  const done = await downloadPrepared(workerDownloads, { url: "blob:x", name: "reddit-z9y8x7.json" }, {
-    onSettled: () => revokes.push(1),
-  });
-  assert.match(done.message, /Saved reddit-z9y8x7\.json to Downloads/);
-  assert.match(done.message, /reddit-export --from-json ~\/Downloads\/reddit-z9y8x7\.json/);
-  assert.equal(done.settled, true);
+const twoFiles = [
+  { url: "blob:json", name: "reddit-abc123.json" },
+  { url: "blob:md", name: "reddit-abc123.md" },
+];
+
+test("both files settle: they download in order, saveAs pinned off, and each settles its own revoke", async () => {
+  const settledFiles = [];
+  const done = await downloadPrepared(workerDownloads, twoFiles, { onSettled: (f) => settledFiles.push(f) });
   // overwrite, not Chrome's default uniquify: a re-save must update the one file the
   // CLI's canonical name points at, never park a stale (1) copy beside it
-  assert.deepEqual(workerDownloads.calls, [{ url: "blob:x", filename: "reddit-z9y8x7.json", saveAs: false, conflictAction: "overwrite" }]);
-  assert.equal(revokes.length, 1, "a settled download frees the blob");
+  assert.deepEqual(workerDownloads.calls, [
+    { url: "blob:json", filename: "reddit-abc123.json", saveAs: false, conflictAction: "overwrite" },
+    { url: "blob:md", filename: "reddit-abc123.md", saveAs: false, conflictAction: "overwrite" },
+  ]);
+  assert.equal(done.settled, true);
+  assert.equal(done.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
+  assert.deepEqual(settledFiles, twoFiles);
   workerDownloads.calls.length = 0;
 });
 
-test("a download Chrome refuses to start says so, and is not a save", async () => {
-  workerDownloads.download = async () => { throw new Error("URL length exceeds kMaxURLChars"); };
-  await assert.rejects(
-    downloadPrepared(workerDownloads, { url: "blob:x", name: "reddit-abc123.json" }),
-    /Chrome didn't complete the save/,
-  );
+test("a first download Chrome refuses to start says so, skips the second file, and frees its blob too", async () => {
+  workerDownloads.download = async (opts) => { workerDownloads.calls.push(opts); throw new Error("URL length exceeds kMaxURLChars"); };
+  const settledNames = [];
+  let threw = null;
+  try {
+    await downloadPrepared(workerDownloads, twoFiles, { onSettled: (f) => settledNames.push(f.name) });
+  } catch (e) {
+    threw = e;
+  }
   workerDownloads.download = async (opts) => { workerDownloads.calls.push(opts); return workerDownloads.calls.length; };
+  assert.match(threw && threw.message || "", /Chrome didn't complete the save of reddit-abc123\.json/);
+  assert.equal(workerDownloads.calls.length, 1, "the .md was never passed to downloads.download");
+  // the skip is over for good: nothing will ever read the md blob, so it is revoked
+  // alongside the json's — a refused save must not leak it in the offscreen document
+  assert.deepEqual(settledNames, ["reddit-abc123.json", "reddit-abc123.md"]);
   workerDownloads.calls.length = 0;
 });
 
-test("an interrupted download says so instead of reporting a save", async () => {
+test("an interrupted second file names the .md, after the json settled", async () => {
   workerDownloads.endState = "interrupted";
-  await assert.rejects(
-    downloadPrepared(workerDownloads, { url: "blob:x", name: "reddit-abc123.json" }),
-    /Chrome didn't complete the save/,
-  );
+  const realSearch = workerDownloads.search;
+  let searches = 0;
+  workerDownloads.search = async () => { searches += 1; return [{ state: searches === 1 ? "complete" : "interrupted" }]; };
+  const settledNames = [];
+  let threw = null;
+  try {
+    await downloadPrepared(workerDownloads, twoFiles, { onSettled: (f) => settledNames.push(f.name) });
+  } catch (e) {
+    threw = e;
+  }
+  workerDownloads.search = realSearch;
   workerDownloads.endState = "complete";
+  assert.match(threw && threw.message || "", /Chrome didn't complete the save of reddit-abc123\.md/);
+  // an interrupted download is over for good too: its blob may be revoked like a settled one's
+  assert.deepEqual(settledNames, ["reddit-abc123.json", "reddit-abc123.md"]);
 });
 
-test("a download with no word stays unsettled and says so, instead of claiming a save", async () => {
+test("a json that settles and an md with no word: the message names both fates", async () => {
   workerDownloads.endState = "in_progress";
-  const revokes = [];
-  const done = await downloadPrepared(workerDownloads, { url: "blob:x", name: "reddit-abc123.json" }, {
-    timeout: 5,
-    onSettled: () => revokes.push(1),
-  });
-  assert.match(done.message, /still saving/);
-  assert.equal(done.settled, false);
-  assert.equal(revokes.length, 0, "an unsettled download may still be reading the blob: no revoke");
+  const realSearch = workerDownloads.search;
+  let searches = 0;
+  workerDownloads.search = async () => { searches += 1; return [{ state: searches === 1 ? "complete" : "in_progress" }]; };
+  const settledNames = [];
+  const done = await downloadPrepared(workerDownloads, twoFiles, { timeout: 5, onSettled: (f) => settledNames.push(f.name) });
+  workerDownloads.search = realSearch;
   workerDownloads.endState = "complete";
+  assert.equal(done.settled, false);
+  assert.match(done.message, /Saved reddit-abc123\.json to Downloads\. reddit-abc123\.md is still saving/);
+  assert.deepEqual(settledNames, ["reddit-abc123.json"], "onSettled fired only for the settled json");
+});
+
+test("both files going quiet names both, and onSettled fired for neither", async () => {
+  workerDownloads.endState = "in_progress";
+  const settledNames = [];
+  const done = await downloadPrepared(workerDownloads, twoFiles, { timeout: 5, onSettled: (f) => settledNames.push(f.name) });
+  workerDownloads.endState = "complete";
+  assert.equal(done.settled, false);
+  assert.match(done.message, /reddit-abc123\.json and reddit-abc123\.md are still saving/);
+  assert.match(done.message, /they never land/);
+  assert.deepEqual(settledNames, [], "an unsettled download may still be reading the blob: no revoke");
 });
 
 // --- the popup command and the worker relay
 
 test("the popup command hands the save to the worker and shows its message", async () => {
   reset();
-  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json" };
+  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
   const shown = await commands.json({ url: "https://www.reddit.com/r/x/comments/abc123/t/" });
-  assert.match(shown, /Saved reddit-abc123\.json/);
+  assert.match(shown, /Saved reddit-abc123\.json and reddit-abc123\.md/);
   assert.equal(relayedRuns.length, 1, "one relay to the offscreen document");
   assert.equal(relayedRuns[0].tabUrl, "https://www.reddit.com/r/x/comments/abc123/t/");
-  assert.equal(workerDownloads.calls.length, 1, "the worker, not the document, downloads");
-  assert.equal(revokesSent.length, 1, "the settled blob is asked to be freed");
+  assert.equal(workerDownloads.calls.length, 2, "the worker, not the document, downloads");
+  assert.equal(revokesSent.length, 2, "each settled blob is asked to be freed");
+  assert.deepEqual(revokesSent.map((m) => m.url), ["blob:x", "blob:md"], "each file revokes its own blob");
 });
 
 test("a relayed error is the popup's error text, bare", async () => {
@@ -275,7 +361,7 @@ test("a silent save page gets the try-again advice, as a structured refusal", as
 
 test("the worker opens the offscreen document on the first save and relays", async () => {
   reset();
-  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json" };
+  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
   const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a save, got ${JSON.stringify(reply)}`);
   assert.equal(offscreenCreates.length, 1, "the document was created");
@@ -287,7 +373,7 @@ test("the worker opens the offscreen document on the first save and relays", asy
 test("an existing offscreen document is reused, not re-created", async () => {
   reset();
   offscreenHas = true;
-  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json" };
+  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
   const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a save, got ${JSON.stringify(reply)}`);
   assert.equal(offscreenCreates.length, 0, "no second document");
@@ -295,7 +381,7 @@ test("an existing offscreen document is reused, not re-created", async () => {
 
 test("two saves racing still create only one offscreen document, and the second waits for its listener", async () => {
   reset();
-  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json" };
+  relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
   offscreenHas = false;
   let release;
   let docReady = false;

@@ -23,7 +23,7 @@ Spec: dev-docs BACKLOG.md Inbox, "One browser-tools extension" (Lila 11-04).
         discord/           — bridge.js, collector.js (moved), export.js
         claude-sessions/   — export.js, rename.js, delete.js
         claude-chat/       — outputs.js
-        reddit/            — json.js
+        reddit/            — json.js, prepare.js, download.js, offscreen.js, md.js
         etsy/              — messages.js (from Jackalope's recipe)
       lib/                 — build, download, files, render, summary, zip (today's lib)
                              + paging.js (cursor/offset loops), rest.js (jitter + rest, from #16–18)
@@ -74,7 +74,9 @@ evidence.
   data:-URL download caps at Chrome's 2 MB URL limit — an offscreen page has neither
   problem, and blob URLs it makes live for the whole save). The popup hands the save to
   the worker and stays open to show the result; closing it mid-save costs only the
-  result line, never the file. Chrome floor 109 (the offscreen API's own floor, per its
+  result line, never the file. The button also saves `reddit-<id>.md`, rendered by
+  md.js as a straight port of dev-docs `bin/reddit-export`'s converter, images remote,
+  image-folder download CLI-only. Chrome floor 109 (the offscreen API's own floor, per its
   reference page; `hasDocument()` keeps it there — `getContexts()` would force 116).
 - **Etsy** — pages Etsy's own read-only message-list endpoint
   (`/api/v3/ajax/member/conversations/detail/<id>/message-list` with `offset` +
@@ -106,6 +108,7 @@ The headline: **the CLI tools change nothing.**
 |---|---|
 | `claude-sessions-<run>-partNN.jsonl`, `-done.json` | bin/claude-sessions-weekly → claude-sessions-split |
 | `reddit-<post id>.json` | `reddit-export --from-json` |
+| `reddit-<post id>.md` | opens directly |
 | `claude-chat-outputs-<date>.json` | read directly (no tool wired yet) |
 | `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical) |
 

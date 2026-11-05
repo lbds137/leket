@@ -1,12 +1,14 @@
 // The reddit save's prepare half, and the only code the offscreen document runs: one
-// fetch of the post's .json with the browser's own login riding along, validated, made
-// into a blob. chrome.runtime is the only extension API an offscreen document gets, so
+// fetch of the post's .json with the browser's own login riding along, validated,
+// rendered to Markdown (md.js) and made into two blobs — the json and its .md.
+// chrome.runtime is the only extension API an offscreen document gets, so
 // this file must never reach for the downloads API — a test pins that — and the worker
 // downloads the blob it returns (same extension origin). The document stays open until
 // the worker asks it to revoke a settled blob; closing it could kill a download still
 // reading one. The console script dev-docs/browser/reddit-json.js is the spec, as-is;
 // its old.reddit advice stays advice in the error text — never an auto-retry.
 import { POST_PATHNAME } from "../registry.js";
+import { render } from "./md.js";
 
 export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   const here = new URL(tabUrl);
@@ -28,16 +30,28 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   }
   if (!r.ok) throw new Error(`reddit answered ${r.status}; try again from old.reddit.com/comments/${id[1]}`);
   const text = await r.text();
+  let data;
   try {
-    JSON.parse(text);
+    data = JSON.parse(text);
   } catch {
     // a 200 that isn't json is a login wall or a block page; saving it under the CLI's
     // name would only move the confusion to reddit-export. (The script saves blind;
     // this guard is for the popup flow, which has no console to see it fail in.)
     throw new Error(`reddit answered with a page, not this post's JSON — try again from old.reddit.com/comments/${id[1]}`);
   }
+  // the .md is rendered here, before anything downloads: a 200 that parses but isn't a
+  // post page used to land as junk json — now the save refuses with the CLI-voiced
+  // wrapper (md.js's own message inside), so Chrome never writes a file that can't be read
+  let mdText;
+  try {
+    mdText = render(data);
+  } catch (e) {
+    throw new Error(`reddit answered with something that isn't this post's data — try again from old.reddit.com/comments/${id[1]} (${e && e.message || e})`);
+  }
   return {
     url: URL.createObjectURL(new Blob([text], { type: "application/json" })),
     name: `reddit-${id[1]}.json`,
+    mdUrl: URL.createObjectURL(new Blob([mdText], { type: "text/markdown" })),
+    mdName: `reddit-${id[1]}.md`,
   };
 }
