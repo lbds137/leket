@@ -22,12 +22,14 @@ export function findHits(sessions, prefix) {
   return [...sessions.values()].filter((s) => typeof s.title === "string" && s.title.startsWith(prefix));
 }
 
-// The typed confirm count must equal the current hit count, exactly: a stale count (the
-// list changed since the dry run) refuses. The refusal names both numbers.
+// The typed confirm count must equal the current hit count, exactly, and be plain
+// decimal digits (/^\d+$/): Number() would read "0x10" as 16 or "1e2" as 100, and a
+// count nobody would type must not pass. A stale count (the list changed since the dry
+// run) refuses. The refusal names both numbers.
 export function deleteGuard(hits, confirmCount) {
   const typed = String(confirmCount ?? "").trim();
   const n = Number(typed);
-  if (!typed || !Number.isInteger(n) || n !== hits.length) {
+  if (!typed || !/^\d+$/.test(typed) || n !== hits.length) {
     throw new Error(`The confirm count reads "${typed || "nothing"}" but ${hits.length} session${hits.length === 1 ? "" : "s"} match now: nothing deleted. Re-run the dry run.`);
   }
 }
@@ -62,17 +64,23 @@ export async function deleteAll(hits, { fetch: doFetch = fetch, onProgress } = {
     const r = await doFetch(urlOf(s), { method: "DELETE", credentials: "include", headers });
     if (!r.ok) throw new Error(`delete ${r.status}: ${(await r.text()).slice(0, 200)}`);
   };
-  const gone = async (s) => (await doFetch(urlOf(s), { credentials: "include", headers })).status === 404;
   if (!hits.length) return { deleted: 0, failed: [], stopped: false };
   try {
     await del(hits[0]);
-    if (!(await gone(hits[0]))) {
-      return { deleted: 0, failed: [], stopped: true,
-        error: "First delete returned OK but the session still reads back: stopped, nothing else deleted." };
-    }
   } catch (e) {
     return { deleted: 0, failed: [], stopped: true,
       error: `First delete failed (${e.message}): stopped, nothing else deleted.` };
+  }
+  let readBack;
+  try {
+    readBack = (await doFetch(urlOf(hits[0]), { credentials: "include", headers })).status;
+  } catch (e) {
+    return { deleted: 0, failed: [], stopped: true,
+      error: `First delete succeeded, but the read-back failed (${e.message}): stopped — check the session list before running again.` };
+  }
+  if (readBack !== 404) {
+    return { deleted: 0, failed: [], stopped: true,
+      error: `First delete returned OK but the read-back answered ${readBack}, not 404: stopped, nothing else deleted.` };
   }
   const failed = [];
   let deleted = 1;
