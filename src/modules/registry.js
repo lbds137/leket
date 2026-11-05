@@ -57,10 +57,11 @@ export const MODULES = [
   },
   {
     id: "claude-sessions",
-    // a claude.ai/code page, per CODE_PATHNAME above. Both commands open the module's
-    // own page (src/modules/claude-sessions/page.html): a rename or a delete is a long,
-    // reviewable run, and a popup dies when it loses focus. The page's own fetches carry
-    // the login (credentials: include) against the manifest's claude.ai host permission.
+    // a claude.ai/code page, per CODE_PATHNAME above. All three commands open the
+    // module's own page (src/modules/claude-sessions/page.html): an export, a rename or
+    // a delete is a long, reviewable run, and a popup dies when it loses focus. The
+    // page's own fetches carry the login (credentials: include) against the manifest's
+    // claude.ai host permission.
     matches: (url) => {
       try {
         const u = new URL(url);
@@ -70,8 +71,8 @@ export const MODULES = [
       }
     },
     title: "Claude sessions",
-    blurb: "Rename or delete your claude.ai/code sessions — read-back verified, one run at a time.",
-    commands: [{ id: "rename", label: "Rename sessions" }, { id: "delete", label: "Delete sessions" }],
+    blurb: "Archive, rename or delete your claude.ai/code sessions — export in ~150 MB parts; rename and delete read-back verified.",
+    commands: [{ id: "export", label: "Export sessions" }, { id: "rename", label: "Rename sessions" }, { id: "delete", label: "Delete sessions" }],
   },
   {
     id: "claude-chat",

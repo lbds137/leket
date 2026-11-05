@@ -155,11 +155,11 @@ test("every registry command has an implementation in the popup", () => {
   }
 });
 
-test("both claude-sessions commands open the module's own page and say so", async () => {
+test("all three claude-sessions commands open the module's own page and say so", async () => {
   // the page is self-sufficient (its own fetches carry the login), so the command is a
   // plain tab open — pinned here against an injected tabs stand-in, no real chrome.
   // Each command lands on its own section via the page's hash (the page scrolls to it
-  // and flashes it), so the rename open carries #rename and the delete open #delete.
+  // and flashes it): #export, then #rename, then #delete, in the commands' order.
   const created = [];
   globalThis.chrome = {
     runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
@@ -168,11 +168,13 @@ test("both claude-sessions commands open the module's own page and say so", asyn
   try {
     const m = match("https://claude.ai/code");
     assert.ok(m && m.id === "claude-sessions");
+    assert.deepEqual(m.commands.map((c) => c.id), ["export", "rename", "delete"]);
     for (const c of m.commands) {
       const said = await COMMANDS["claude-sessions"][c.id](undefined, { tabs });
       assert.match(said, /Opened the sessions page/);
     }
     assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#export" },
       { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#rename" },
       { url: "chrome-extension://test-extension-id/src/modules/claude-sessions/page.html#delete" },
     ]);
