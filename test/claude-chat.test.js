@@ -83,10 +83,11 @@ test("parseChats rejects a chat id that isn't uuid-shaped, naming it", () => {
 });
 
 test("parseChats rejects ids that aren't canonical 8-4-4-4-12 uuids, naming them", () => {
-  // 36 dashes pass a loose hex-and-dash count but are no id; a truncated uuid is
-  // a bad paste. Both refused here, before any fetch, named in the error — while
+  // 36 dashes pass a loose hex-and-dash count but are no id; dashes in the wrong
+  // places (9-3-4-4-12) pin the 8-4-4-4-12 shape itself, and a truncated uuid is
+  // a bad paste. All refused here, before any fetch, named in the error — while
   // a canonical uuid still passes (the earlier tests pin that).
-  for (const bad of ["-".repeat(36), CHAT.slice(0, 35)]) {
+  for (const bad of ["-".repeat(36), "aaaa11111-111-4111-8111-111111111111", CHAT.slice(0, 35)]) {
     assert.throws(() => parseChats(`[["${bad}", "name", "source"]]`),
       (e) => e.message.includes(bad) && /chat id|hex/.test(e.message),
       `the id ${JSON.stringify(bad)} had to be refused, named in the error`);
@@ -313,6 +314,18 @@ test("a listing with no files_metadata puts the shape error on entry.error, and 
 test("a listing whose files_metadata isn't an array is refused the same way", async () => {
   const { fetch } = wiggleFetch({
     [`${ORG}conversations/${CHAT}/wiggle/list-files?prefix=`]: () => ({ json: { files_metadata: "not a list" } }),
+  });
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG });
+  assert.equal(done.failed, 1);
+  assert.equal(done.results[0].error, "list-files: no files_metadata (the API shape changed)");
+  assert.deepEqual(done.results[0].files, []);
+});
+
+test("a null listing is refused the same way", async () => {
+  // list-files answering the JSON null would TypeError on property access; the
+  // guard's optional chain routes it to the shape message instead
+  const { fetch } = wiggleFetch({
+    [`${ORG}conversations/${CHAT}/wiggle/list-files?prefix=`]: () => ({ json: null }),
   });
   const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG });
   assert.equal(done.failed, 1);
