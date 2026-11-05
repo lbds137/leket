@@ -3,7 +3,7 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, collectConversations, serializePayload, outputName } from "./messages.js";
+import { parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions } from "./messages.js";
 import { makeRedact } from "./redact.js";
 import { trackDownload } from "../../lib/download.js";
 
@@ -20,14 +20,17 @@ const failures = (items) => fails.replaceChildren(...items.map((t) => {
 
 // the popup matched an etsy.com tab and passed its id as a query. Chrome is touched only
 // inside this function, and any failure leaves the box empty — the ids advice covers the
-// empty box, so a gone or tabless open just starts from a blank one.
+// empty box, so a gone or tabless open just starts from a blank one. The tab's pathname
+// is kept for the click flow too: an emptied box falls back to the same conversation.
+let tabPathname = "";
 const prefill = async () => {
   try {
     const raw = new URLSearchParams(location.search).get("tab");
     const tabId = raw && /^\d+$/.test(raw) ? Number(raw) : null;
     if (tabId == null) return;
     const tab = await chrome.tabs.get(tabId);
-    const ids = parseIds("", new URL(tab.url).pathname);
+    tabPathname = new URL(tab.url).pathname;
+    const ids = parseIds("", tabPathname);
     if (ids.length) $("ids").value = ids.join(", ");
   } catch { /* no tab to prefill from: the box stays empty */ }
 };
@@ -50,28 +53,35 @@ let runSeq = 0;
 $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
   const seq = ++runSeq;
   failures([]);
-  // read every input once, before any await
-  const ids = parseIds($("ids").value);
+  // read every input once, before any await — an empty box falls back to the conversation
+  // the popup was opened on
+  const ids = parseIds($("ids").value, tabPathname);
   if (!ids.length) {
     say("No conversation ids given.", "warn");
     return;
   }
   try {
-    // the redaction config, read once before any fetch: on, or one of the two loud off
-    // states — neither off state is silent (an unguarded export must never pass for a
-    // guarded one)
+    // the redaction config, read once before any fetch: the pure decision hands back on,
+    // or one of the two loud off states — neither off state is silent (an unguarded
+    // export must never pass for a guarded one)
     const stored = (await chrome.storage.local.get("etsyRedact")).etsyRedact;
+    const state = redactStateFor(stored);
+    const redactState = state;
     let redact;
-    let redactState;
-    if (stored && ["name", "short", "firstSounds"].every((k) => typeof stored[k] === "string" && stored[k])) {
+    if (state === "on") {
       redact = makeRedact(stored);
-      redactState = "on";
-      say("Redact: on.");
-    } else if (stored) {
-      redactState = "off (etsyRedact config incomplete)";
-      say("Redact: off — config incomplete (needs name, short, firstSounds); the export is unredacted.", "warn");
+      const hits = redactionCollisions(redact);
+      // one line element on the page, so the collision cost rides the on line instead of
+      // erasing it — narrated, never a failure of the run
+      say(
+        "Redact: on." + (hits.length
+          ? ` This name also matches Etsy's own words (${hits.join(", ")}) — those strings read [redacted] in the export.`
+          : ""),
+        hits.length ? "warn" : "",
+      );
+    } else if (state === "off (etsyRedact config incomplete)") {
+      say("Redact: off — config invalid (needs lowercase name and short sharing the first letter, and firstSounds starting with it); the export is unredacted.", "warn");
     } else {
-      redactState = "off (no etsyRedact config)";
       say("Redact: off — no etsyRedact config; the export is unredacted.", "warn");
     }
 
@@ -100,9 +110,9 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
           + `. Redact: ${redactState}.`,
         failed.length || redactState !== "on" ? "warn" : "ok");
       } else if (saved === false) {
-        say(`The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads.`, "warn");
+        say(`The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads. Redact: ${redactState}.`, "warn");
       } else {
-        say("No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends.", "warn");
+        say(`No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: ${redactState}.`, "warn");
       }
     };
     const saved = await trackDownload(chrome.downloads, { url: blobUrl, filename, saveAs: false, conflictAction: "overwrite" }, {

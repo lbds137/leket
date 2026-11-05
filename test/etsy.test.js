@@ -11,8 +11,9 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName }
+const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions }
   = await import("../src/modules/etsy/messages.js");
+const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
 const { COMMANDS } = await import("../src/popup/commands.js");
 
@@ -250,4 +251,70 @@ test("the manifest carries the etsy host permission and the storage permission",
   const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
   assert.ok(manifest.host_permissions.includes("https://www.etsy.com/*"));
   assert.ok(manifest.permissions.includes("storage"));
+});
+
+// the loud-state decision, pinned pure: the page's config branch only relays these
+// strings, so what a file says in its redact field is decided here
+const VALID = { name: "janedoe", short: "jane", firstSounds: "jgy" };
+
+test("redactStateFor: no config is the loud no-config off; the valid config is on", () => {
+  assert.equal(redactStateFor(undefined), "off (no etsyRedact config)");
+  assert.equal(redactStateFor(null), "off (no etsyRedact config)");
+  assert.equal(redactStateFor({ ...VALID }), "on");
+});
+
+test("redactStateFor: each guard precondition broken is the incomplete off", () => {
+  // an uppercase name is not the all-lowercase field the guard's classes are built from
+  assert.equal(redactStateFor({ ...VALID, name: "JaneDoe" }), "off (etsyRedact config incomplete)");
+  // the short form must share the name's first letter
+  assert.equal(redactStateFor({ ...VALID, short: "djane" }), "off (etsyRedact config incomplete)");
+  // the first-sound set must start with the name's first letter
+  assert.equal(redactStateFor({ ...VALID, firstSounds: "gy" }), "off (etsyRedact config incomplete)");
+  // every field must be plain lowercase ASCII: a regex-unsafe character would corrupt
+  // the guard's classes
+  assert.equal(redactStateFor({ ...VALID, firstSounds: "g-y" }), "off (etsyRedact config incomplete)");
+  assert.equal(redactStateFor({ ...VALID, short: "ja]ne" }), "off (etsyRedact config incomplete)");
+  // a non-string field is not a config the guard can build from
+  assert.equal(redactStateFor({ name: 5, short: "jane", firstSounds: "jgy" }), "off (etsyRedact config incomplete)");
+});
+
+test("serializePayload: a passed-but-undefined redact with no state says off, identity output", () => {
+  const expected = {
+    source: "etsy",
+    extracted_at: "2026-11-05T00:00:00.000Z",
+    redact: "off (no etsyRedact config)",
+    method: METHOD,
+    conversations: [],
+  };
+  const out = serializePayload([], { extractedAt: "2026-11-05T00:00:00.000Z", redact: undefined });
+  assert.equal(JSON.parse(out).redact, "off (no etsyRedact config)");
+  assert.deepEqual(JSON.parse(out), expected);
+  assert.equal(out, JSON.stringify(expected, null, 1), "identity output: the string is untouched");
+});
+
+test("the manifest grants the bare etsy.com host the registry already matches", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+  assert.ok(manifest.host_permissions.includes("https://etsy.com/*"));
+});
+
+test("the etsy open carries the matched tab's id as a query; a tabless call opens the page bare", async () => {
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const fake = { create: async (o) => { created.push(o.url); return { id: 99 }; } };
+  assert.equal(await COMMANDS.etsy.messages({ id: 5 }, { tabs: fake }), "Opened the Etsy page.");
+  assert.equal(created.length, 1);
+  assert.ok(created[0].endsWith("/src/modules/etsy/page.html?tab=5"), created[0]);
+  assert.equal(await COMMANDS.etsy.messages(undefined, { tabs: fake }), "Opened the Etsy page.");
+  assert.equal(created.length, 2);
+  assert.ok(created[1].endsWith("/src/modules/etsy/page.html"), created[1]);
+  assert.ok(!created[1].includes("?"), created[1]);
+});
+
+test("redactionCollisions: a name one edit from Etsy's own words reaches them; a clean one does not", () => {
+  const colliding = redactionCollisions(makeRedact({ name: "betsy", short: "bpt", firstSounds: "bpt" }));
+  assert.deepEqual(colliding, ["etsy", "www.etsy.com", "https://www.etsy.com/messages/123456"]);
+  assert.deepEqual(redactionCollisions(makeRedact({ ...VALID })), []);
+  assert.deepEqual(redactionCollisions((s) => s), []);
 });
