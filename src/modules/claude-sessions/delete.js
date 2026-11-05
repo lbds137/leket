@@ -76,7 +76,7 @@ export async function deleteAll(hits, { fetch: doFetch = fetch, onProgress } = {
     readBack = (await doFetch(urlOf(hits[0]), { credentials: "include", headers })).status;
   } catch (e) {
     return { deleted: 0, failed: [], stopped: true,
-      error: `First delete succeeded, but the read-back failed (${e.message}): stopped — check the session list before running again.` };
+      error: `First delete succeeded, but the read-back failed (${e.message}): stopped, nothing else deleted — check the session list before running again.` };
   }
   if (readBack !== 404) {
     return { deleted: 0, failed: [], stopped: true,

@@ -6,9 +6,9 @@ import { trackDownload } from "../../lib/download.js";
 // downloads on its own before the next starts. A refused or interrupted download
 // throws — the later files are not attempted (their blobs freed: nothing will read
 // them), and a re-click re-saves the lot (overwrite makes that clean). onSettled fires
-// per file, with that file's entry, once its own download
-// is over for good (a download with no word yet may still be reading the blob, so it
-// fires only then — the worker uses it to ask the document to revoke that blob).
+// per file, with that file's entry, once its own download is over for good (a download
+// with no word yet may still be reading the blob, so it fires only then — the worker
+// uses it to ask the document to revoke that blob).
 // Background always passes exactly two files, json then md; the message builder's
 // three shapes below assume that count.
 export async function downloadPrepared(downloads, files, { timeout, onSettled } = {}) {

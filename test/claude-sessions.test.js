@@ -417,6 +417,8 @@ test("a read-back GET that THROWS after an OK first delete stops with its own me
   assert.equal(done.deleted, 0, "the module promises VERIFIED deletes: an unverified one does not count");
   assert.deepEqual(deletes, ["a"], "nothing else was deleted");
   assert.match(done.error, /read-back failed/);
+  assert.match(done.error, /nothing else deleted/);
+  assert.match(done.error, /read-back boom/, "the thrown error's own text must reach the message");
   assert.doesNotMatch(done.error, /First delete failed/,
     "the delete succeeded; only the verification failed, and the message must not say otherwise");
 });
