@@ -320,6 +320,31 @@ test("deleteGuard refuses when the typed count differs from the current count, n
   assert.doesNotThrow(() => deleteGuard(hits, 3));
 });
 
+test("deleteGuard accepts only plain decimal digits: 0x10 and 1e2 refuse even at the right value", () => {
+  // Number() reads "0x10" as 16 and "1e2" as 100 — so to catch them, the fixture's hit
+  // count must equal what Number() would make of them; anything less refuses anyway and
+  // proves nothing about the digit shape
+  const hits16 = Array.from({ length: 16 }, (_, i) => session(`cse_${i}`, `p · ${i}`));
+  const hits100 = Array.from({ length: 100 }, (_, i) => session(`cse_${i}`, `p · ${i}`));
+  for (const [hits, typed] of [[hits16, "0x10"], [hits100, "1e2"]]) {
+    assert.throws(() => deleteGuard(hits, typed),
+      (e) => e.message.includes(typed) && e.message.includes(String(hits.length)),
+      `typed ${JSON.stringify(typed)} had to be refused, naming both counts`);
+  }
+});
+
+test("deleteGuard refuses a decimal point: 1.5 is not a count of sessions", () => {
+  const hits = [session("1", "a")];
+  assert.throws(() => deleteGuard(hits, "1.5"),
+    (e) => e.message.includes("1.5") && /but 1 session match(es)? now/.test(e.message),
+    "the refusal names the typed string and the real hit count");
+});
+
+test("deleteGuard reads leading zeros as their decimal: 007 equals 7", () => {
+  const hits = Array.from({ length: 7 }, (_, i) => session(`cse_${i}`, `p · ${i}`));
+  assert.doesNotThrow(() => deleteGuard(hits, "007"));
+});
+
 test("confirmHits refuses with no stored dry run at all", () => {
   const hits = [session("1", "a")];
   assert.throws(() => confirmHits(null, "p", hits, "1"), /dry run first/);
@@ -379,6 +404,23 @@ test("the first delete is verified gone (404) before the rest run", async () => 
   assert.equal(calls[2].method, "DELETE");
 });
 
+test("a read-back GET that THROWS after an OK first delete stops with its own message, deleted 0", async () => {
+  const deletes = [];
+  const hits = [session("cse_a", "p · a"), session("cse_b", "p · b")];
+  const { fetch } = apiFetch([
+    ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
+    ["DELETE", "/v1/code/sessions/session_b", () => { deletes.push("b"); return {}; }],
+    ["GET", "/v1/code/sessions/session_a", () => { throw new Error("read-back boom"); }],
+  ]);
+  const done = await deleteAll(hits, { fetch });
+  assert.equal(done.stopped, true);
+  assert.equal(done.deleted, 0, "the module promises VERIFIED deletes: an unverified one does not count");
+  assert.deepEqual(deletes, ["a"], "nothing else was deleted");
+  assert.match(done.error, /read-back failed/);
+  assert.doesNotMatch(done.error, /First delete failed/,
+    "the delete succeeded; only the verification failed, and the message must not say otherwise");
+});
+
 test("a first delete that reads back alive (not 404) stops everything", async () => {
   const deletes = [];
   const hits = [session("cse_a", "p · a"), session("cse_b", "p · b")];
@@ -389,8 +431,23 @@ test("a first delete that reads back alive (not 404) stops everything", async ()
   ]);
   const done = await deleteAll(hits, { fetch });
   assert.equal(done.stopped, true, "an OK first delete with a live read-back stops the run");
-  assert.match(done.error, /still reads back/);
+  assert.match(done.error, /answered 200, not 404/);
   assert.deepEqual(deletes, ["a"], "nothing else was deleted");
+});
+
+test("a read-back that answers a status other than 404 names it: 500 stops the run", async () => {
+  const deletes = [];
+  const hits = [session("cse_a", "p · a"), session("cse_b", "p · b")];
+  const { fetch } = apiFetch([
+    ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
+    ["DELETE", "/v1/code/sessions/session_b", () => { deletes.push("b"); return {}; }],
+    ["GET", "/v1/code/sessions/session_a", () => ({ status: 500, text: "boom" })],
+  ]);
+  const done = await deleteAll(hits, { fetch });
+  assert.equal(done.stopped, true);
+  assert.equal(done.deleted, 0);
+  assert.deepEqual(deletes, ["a"], "nothing else was deleted");
+  assert.match(done.error, /answered 500, not 404/);
 });
 
 test("a first delete that fails (non-OK) stops everything", async () => {
