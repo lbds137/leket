@@ -16,7 +16,7 @@ h1,h2{font-size:20px;margin:0 0 8px}
 textarea{width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;margin:8px 0}
 input{font:inherit;margin:4px 0}
 button{font:inherit;margin:4px 12px 4px 0}
-#rename-status,#delete-status,#export-status{font-size:15px}
+#rename-status,#delete-status,#export-status,#export-resume{font-size:15px}
 .warn{color:var(--warn)}.ok{color:var(--ok)}
 progress{width:100%;margin:8px 0}
 ul{padding-left:20px}
@@ -35,6 +35,7 @@ ul{padding-left:20px}
 <textarea id="resume" rows="6" placeholder='window.CLAUDE_EXPORT_SKIP = ["cse_…"]; window.CLAUDE_EXPORT_PART_START = 3;'></textarea>
 <button id="export-run">Export sessions</button>
 <p id="export-status" hidden></p>
+<p id="export-resume" hidden></p>
 <progress id="export-bar" hidden></progress>
 <ul id="export-failures"></ul>
 </section>

@@ -10,10 +10,11 @@ import { parseRenames, orderRenames, renameAll, currentTitles } from "./rename.j
 import { checkPrefix, findHits, confirmHits, deleteAll } from "./delete.js";
 import { parseKnown, parseResume, exportSessions, runKey } from "./export.js";
 import { createSaves, partStop } from "./save.js";
+import { resumeLine, finalLine, lateNote } from "./narration.js";
 
 const $ = (id) => document.getElementById(id);
 
-// on load, a #rename or #delete hash (what the popup's commands open) lands on its own
+// on load, a #export, #rename or #delete hash (what the popup's commands open) lands on its own
 // section: scroll to it and flash it, then drop the flash. A malformed hash decodes to
 // nothing — the page just opens at the top.
 const section = (() => {
@@ -50,6 +51,9 @@ const panel = (statusId, barId, failsId) => {
 const renamePanel = panel("rename-status", "rename-bar", "rename-failures");
 const deletePanel = panel("delete-status", "delete-bar", "delete-failures");
 const exportPanel = panel("export-status", "export-bar", "export-failures");
+// the stop's paste-ready resume line, in its own element beside the status line: a
+// late note can then update the line without touching the stop message
+const resumeEl = $("export-resume");
 
 // a button sleeps while its run is in flight, so a double click can't double-delete
 const busy = async (button, run) => {
@@ -69,6 +73,8 @@ let runSeq = 0;
 $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
   const seq = ++runSeq;
   exportPanel.failures([]);
+  resumeEl.textContent = "";
+  resumeEl.hidden = true;
   try {
     // every input is read once, before any await: the boxes stay editable while a run
     // is in flight, and a mid-run edit must not re-target what this run exports. A
@@ -81,45 +87,67 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
     let savedMB = 0;
     let markerFailed = false;
     let markerPending = false; // the marker's save resolved null — it may still land, late
+    let failedCount = 0; // the late marker append's class reads it
+    let doneLine = null; // the retained summary line a late marker end appends to
+    // the part that stopped the run: its onFlush args plus the stop message and class
+    // the status line carries. A late note for it appends to that message and rebuilds
+    // the resume line; the stop messages point at the resume element instead of
+    // embedding the raw line, so the line can move without touching the message.
+    let stopped = null;
     const mb = (n) => n.toFixed(1);
-    // the save seam (save.js): Blob, download and revoke discipline live there; every
-    // user-facing string stays here — the factory narrates only the late ends, through
-    // this hook, and only while this run still owns the line
+    // the save seam (save.js): Blob, download and revoke discipline live there — the
+    // factory narrates only the late ends, through this hook, and only while this run
+    // still owns the line; the narration module says what to print, this hook says it
     const saves = createSaves({
       downloads: chrome.downloads,
       stillCurrent: () => seq === runSeq,
       note: (ev) => {
-        if (ev.marker) {
-          exportPanel.say(ev.ok
-            ? `The done marker (${ev.name}) landed late.`
-            : `The done marker (${ev.name}) landed late but didn't finish — bin/claude-sessions-weekly waits for it; see Chrome's downloads.`, ev.ok ? "" : "warn");
-        } else if (ev.ok) {
-          savedMB += ev.size / 1048576;
-          exportPanel.say(`Saved ${ev.name} (${mb(savedMB)} MB, landed late) — keep this tab open.`);
-        } else {
-          exportPanel.say(`${ev.name} landed late but didn't finish — see Chrome's downloads. Keep this tab open.`, "warn");
+        const said = lateNote({
+          marker: ev.marker, ok: ev.ok, name: ev.name, size: ev.size,
+          stopped, doneLine, savedMB, run, failedCount,
+        });
+        if (!ev.marker && !stopped && ev.ok) savedMB += ev.size / 1048576;
+        exportPanel.say(said.text, said.cls);
+        if (said.resume) {
+          resumeEl.textContent = said.resume;
+          resumeEl.hidden = false;
         }
       },
     });
     const result = await exportSessions(sessions, {
       known, skip, partStart, run,
       onFlush: async (lines, name, state) => {
-        const { saved, size } = await saves.savePart(lines, name);
-        if (saved === true) {
-          savedMB += size / 1048576;
-          exportPanel.say(`Saved ${name} (${mb(savedMB)} MB) — keep this tab open.`);
-          return;
+        // a refused, silent or failed save stops the run: exportSessions propagates the
+        // throw — later sessions are not fetched and no done marker is written. The
+        // stop writes the resume line into its own element from the state as of before
+        // this part, so it names exactly what is already on disk, and the messages
+        // point at the line below instead of embedding it — a late note can update the
+        // line without touching the stop message. (For a silent part the URL stays
+        // alive and the factory's onLate still narrates how it ended, late.)
+        const stopRun = (saved, message) => {
+          resumeEl.textContent = resumeLine(state);
+          resumeEl.hidden = false;
+          stopped = { name, lines, state, message, cls: "warn" };
+          partStop({ saved }, { refusedMessage: message, silentMessage: message });
+        };
+        let out;
+        try {
+          out = await saves.savePart(lines, name);
+        } catch (err) {
+          if (err && err.partStop) throw err;
+          // a foreign throw (a synchronous download failure among them) converts to the
+          // refused path: the run stops, the status line names the underlying error,
+          // and the resume element above holds the line — the user keeps it
+          stopRun(false, `Part ${name} didn't finish — ${err.message}. Nothing more is fetched and no done marker is written. To resume, paste the resume line below into the resume box.`);
         }
-        // a refused or silent part stops the run: exportSessions propagates the throw —
-        // later sessions are not fetched and no done marker is written. The resume line
-        // is built from the state as of before this part, so it names exactly what is
-        // already on disk. (For a silent part the URL stays alive and the factory's
-        // onLate still narrates how it ended, late.)
-        const resume = `window.CLAUDE_EXPORT_SKIP = ${JSON.stringify(state.savedIds)}; window.CLAUDE_EXPORT_PART_START = ${state.partStart};`;
-        partStop({ saved }, {
-          refusedMessage: `Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written. To resume, paste this in the resume box: ${resume}`,
-          silentMessage: `Part ${name} got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste this in the resume box: ${resume}`,
-        });
+        const { saved, size } = out;
+        if (saved !== true) {
+          stopRun(saved, saved === false
+            ? `Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written. To resume, paste the resume line below into the resume box.`
+            : `Part ${name} got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste the resume line below into the resume box.`);
+        }
+        savedMB += size / 1048576;
+        exportPanel.say(`Saved ${name} (${mb(savedMB)} MB) — keep this tab open.`);
       },
       onMarker: async (payload, name) => {
         const { saved } = await saves.saveMarker(payload, name);
@@ -127,23 +155,20 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
         else if (saved === null) markerPending = true;
         // (null: the marker save may still be running — the factory's onLate handles its end)
       },
-      onProgress: (d, t, evs, failedCount) => {
+      onProgress: (d, t, evs, failed) => {
+        failedCount = failed;
         exportPanel.progress(d, t);
-        exportPanel.say(`Session ${d} of ${t} — ${evs} events, ${failedCount} failed so far… keep this tab open.`);
+        exportPanel.say(`Session ${d} of ${t} — ${evs} events, ${failed} failed so far… keep this tab open.`);
       },
     });
     exportPanel.failures(result.failed);
-    const done = `Done: ${result.sessions} sessions, ${result.events} events, ${result.parts} part file(s), ${mb(savedMB)} MB.`;
-    if (markerFailed) {
-      exportPanel.say(`${done} But the done marker (claude-sessions-${run}-done.json) didn't finish saving — bin/claude-sessions-weekly waits for it; see Chrome's downloads. The parts are on disk.`,
-        "warn");
-    } else if (markerPending) {
-      exportPanel.say(`${done} The parts are on disk, but the done marker (claude-sessions-${run}-done.json) is still saving — bin/claude-sessions-weekly waits for it. If it lands late, this line will say so.`,
-        "warn");
-    } else {
-      exportPanel.say(done + (result.failed.length ? ` ${result.failed.length} failed — listed below.` : ""),
-        result.failed.length ? "warn" : "ok");
-    }
+    const done = finalLine({
+      markerFailed, markerPending, failedCount: result.failed.length,
+      totals: { sessions: result.sessions, events: result.events, parts: result.parts, mb: mb(savedMB) },
+      run,
+    });
+    exportPanel.say(done.text, done.cls);
+    if (markerPending) doneLine = done.text; // a late marker end appends to this line
   } catch (err) {
     exportPanel.say((err && err.message) || String(err), "warn");
   }

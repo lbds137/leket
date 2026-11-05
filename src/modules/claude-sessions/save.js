@@ -16,14 +16,25 @@ import { trackDownload } from "../../lib/download.js";
 export function createSaves({ downloads, note, stillCurrent }, { timeout } = {}) {
   const save = async (blob, name, marker) => {
     const url = URL.createObjectURL(blob);
-    const saved = await trackDownload(downloads, { url, filename: name, saveAs: false, conflictAction: "overwrite" }, {
-      timeout,
-      onLate: (ok) => {
-        URL.revokeObjectURL(url);
-        if (!stillCurrent()) return;
-        note({ marker, ok, name, size: blob.size });
-      },
-    });
+    let saved;
+    try {
+      saved = await trackDownload(downloads, { url, filename: name, saveAs: false, conflictAction: "overwrite" }, {
+        timeout,
+        onLate: (ok) => {
+          URL.revokeObjectURL(url);
+          if (!stillCurrent()) return;
+          note({ marker, ok, name, size: blob.size });
+        },
+      });
+    } catch (err) {
+      // a synchronous throw from downloads.download escapes before trackDownload's
+      // promise settles — free the URL here and rethrow unchanged. The throw left the
+      // wait timer live, so trackDownload's done(null) still fires at the timeout: its
+      // onLate revoke is harmless on an already-revoked URL, and its note stays the
+      // late end's narrator (lib/download.js's contract, not fought here).
+      URL.revokeObjectURL(url);
+      throw err;
+    }
     if (saved !== null) URL.revokeObjectURL(url);
     return { saved, size: blob.size };
   };
@@ -37,9 +48,19 @@ export function createSaves({ downloads, note, stillCurrent }, { timeout } = {})
 // The part-stop rule, pure and exported so the tests pin it without a downloads seam:
 // a saved part returns; a refused or interrupted part throws refusedMessage; a part
 // that got no word in 15 minutes throws silentMessage. The strings stay page-side —
-// the helper only picks and throws. (The marker never stops the run: its null path
-// stays page-side narration.)
+// the helper only picks and throws. The thrown errors carry `partStop` so the page's
+// onFlush can tell them from a foreign throw (a synchronous download failure among
+// them) and convert only the foreign ones. (The marker never stops the run: its null
+// path stays page-side narration.)
 export function partStop({ saved }, { refusedMessage, silentMessage }) {
-  if (saved === false) throw new Error(refusedMessage);
-  if (saved === null) throw new Error(silentMessage);
+  if (saved === false) {
+    const err = new Error(refusedMessage);
+    err.partStop = true;
+    throw err;
+  }
+  if (saved === null) {
+    const err = new Error(silentMessage);
+    err.partStop = true;
+    throw err;
+  }
 }

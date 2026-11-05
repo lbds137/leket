@@ -167,6 +167,16 @@ test("a downloads.download that throws propagates out of the save", async () => 
   await assert.rejects(saves.saveMarker({ parts: 1 }, "done.json"), /refused/);
 });
 
+test("a sync-throwing download revokes the blob URL, rejection untouched", async () => {
+  // the executor throw escapes trackDownload before its promise settles — the save must
+  // still free the URL here (the wait timer stays live, and its done(null) fires onLate,
+  // whose revoke is harmless on an already-revoked URL)
+  const { d, saves } = harness(() => true, 5);
+  d.download = () => { throw new Error("refused"); };
+  await assert.rejects(saves.savePart(["x\n"], "part01.jsonl"), /refused/);
+  assert.deepEqual(urls.revoked, [urls.created[0].url], "the throw revokes despite the rejection");
+});
+
 // --- the part-stop rule (a silent part save stops the run, owner-approved)
 
 test("partStop returns for a saved part", () => {
