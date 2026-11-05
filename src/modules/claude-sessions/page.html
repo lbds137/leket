@@ -16,7 +16,7 @@ h1,h2{font-size:20px;margin:0 0 8px}
 textarea{width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;margin:8px 0}
 input{font:inherit;margin:4px 0}
 button{font:inherit;margin:4px 12px 4px 0}
-#rename-status,#delete-status{font-size:15px}
+#rename-status,#delete-status,#export-status{font-size:15px}
 .warn{color:var(--warn)}.ok{color:var(--ok)}
 progress{width:100%;margin:8px 0}
 ul{padding-left:20px}
@@ -25,6 +25,19 @@ ul{padding-left:20px}
 <body>
 <main>
 <h1>Claude sessions</h1>
+
+<section id="export">
+<h2>Export sessions</h2>
+<p class="advice">Lists active + paused + archived sessions, fetches each one's events, and saves the run's part files (~150 MB each) and the done marker to Downloads. bin/claude-sessions-weekly splits them into the archive once the done marker lands.</p>
+<p class="advice">Paste the incremental payload Deck's generator emits (claude-sessions-split --incremental-js): the bare {archived id: its last event time} object, or the whole window.CLAUDE_EXPORT_KNOWN = {...}; line. Empty box = every session, full export.</p>
+<textarea id="known" rows="6" placeholder='window.CLAUDE_EXPORT_KNOWN = {"cse_…": "2026-11-01T00:00:00Z"};'></textarea>
+<p class="advice">After a failed run, paste the console's resume line (window.CLAUDE_EXPORT_SKIP = [...]; window.CLAUDE_EXPORT_PART_START = N;) or the bare skip-id array. Parts then number after N.</p>
+<textarea id="resume" rows="6" placeholder='window.CLAUDE_EXPORT_SKIP = ["cse_…"]; window.CLAUDE_EXPORT_PART_START = 3;'></textarea>
+<button id="export-run">Export sessions</button>
+<p id="export-status" hidden></p>
+<progress id="export-bar" hidden></progress>
+<ul id="export-failures"></ul>
+</section>
 
 <section id="rename">
 <h2>Rename sessions</h2>

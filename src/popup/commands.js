@@ -31,6 +31,7 @@ export const COMMANDS = {
   discord: discordCommands,
   reddit: redditCommands,
   "claude-sessions": {
+    export: openSessionsPage("#export"),
     rename: openSessionsPage("#rename"),
     delete: openSessionsPage("#delete"),
   },

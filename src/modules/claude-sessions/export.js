@@ -1,0 +1,185 @@
+// The export half, ported from dev-docs/browser/claude-sessions-export.js — the script
+// is the spec. Lists nothing itself: it takes the session Map listSessions built, fetches
+// each session's events, and hands the run's part files (~150 MB each, flushed only at
+// session boundaries) and the done marker to callbacks — the page's saves live there, so
+// this module stays pure (no chrome, no DOM, no Blob). The invariants the design doc
+// names are structural here: a half-fetched session's lines are discarded (the split
+// treats each session's lines as whole, so a truncation would corrupt the archive), and
+// the marker call sits after the final flush in this function's own control flow.
+import { API_ORIGIN } from "./listing.js";
+
+// the run's key, YYYY-MM-DDTHHMM in UTC: two runs on one day never share file names, so
+// bin/claude-sessions-weekly splits each run on its own instead of merging them
+export const runKey = (date = new Date()) => date.toISOString().slice(0, 16).replace(":", "");
+
+const partName = (run, n) => `claude-sessions-${run}-part${String(n).padStart(2, "0")}.jsonl`;
+const markerName = (run) => `claude-sessions-${run}-done.json`;
+
+// The incremental payload in either shape Deck's generator emits: the bare
+// {archived id: its last event time} object, or the whole `window.CLAUDE_EXPORT_KNOWN
+// = {...};` line — stripped like rename.js's parseRenames strips window.CLAUDE_RENAMES.
+// Junk gets an error that says what to paste; a JSON array, string, number or null
+// container is junk too (the run iterates Object.keys of a map, not an array).
+export function parseKnown(text) {
+  let t = String(text ?? "").trim();
+  if (!t) return {};
+  const m = /^window\.CLAUDE_EXPORT_KNOWN\s*=\s*([\s\S]*)$/.exec(t);
+  if (m) t = m[1].trim();
+  t = t.replace(/;\s*$/, "");
+  let known;
+  try {
+    known = JSON.parse(t);
+  } catch {
+    throw new Error("Couldn't parse the known map. Paste either the bare {archived id: its last event time} JSON object, or the whole window.CLAUDE_EXPORT_KNOWN = {...}; line.");
+  }
+  if (!known || typeof known !== "object" || Array.isArray(known)) {
+    throw new Error("The known map isn't an object — paste the generated file as-is: the bare {archived id: its last event time} JSON object, or the whole window.CLAUDE_EXPORT_KNOWN = {...}; line.");
+  }
+  return known;
+}
+
+// The resume payload: the console's post-failure line, either statement, either order,
+// each optional (`window.CLAUDE_EXPORT_SKIP = [...ids]; window.CLAUDE_EXPORT_PART_START
+// = 3;` — `;` separators optional at the end), or the bare skip-id array. Blank pastes
+// nothing: a full export. "5" alone is junk — PART_START travels in the line form.
+export function parseResume(text) {
+  const t = String(text ?? "").trim();
+  if (!t) return { skip: [], partStart: 0 };
+  const shapes = " Paste the console's resume line (window.CLAUDE_EXPORT_SKIP = [...]; window.CLAUDE_EXPORT_PART_START = N;) or the bare skip-id JSON array.";
+  const out = { skip: [], partStart: 0 };
+  let matched = false;
+  const sm = /window\.CLAUDE_EXPORT_SKIP\s*=\s*(\[[^\]]*\])/.exec(t);
+  if (sm) {
+    matched = true;
+    try {
+      out.skip = JSON.parse(sm[1]);
+    } catch {
+      throw new Error("Couldn't parse the skip ids inside window.CLAUDE_EXPORT_SKIP = [...]." + shapes);
+    }
+    if (!Array.isArray(out.skip) || !out.skip.every((id) => typeof id === "string")) {
+      throw new Error("The skip list isn't an array of session ids." + shapes);
+    }
+  }
+  const pm = /window\.CLAUDE_EXPORT_PART_START\s*=\s*(\d+)/.exec(t);
+  if (pm) {
+    matched = true;
+    out.partStart = Number(pm[1]);
+  }
+  if (!matched) {
+    try {
+      const arr = JSON.parse(t);
+      if (Array.isArray(arr) && arr.every((id) => typeof id === "string")) return { skip: arr, partStart: 0 };
+    } catch { /* junk below */ }
+    throw new Error("Couldn't parse the resume line." + shapes);
+  }
+  return out;
+}
+
+// The run. opts:
+// - fetch: the events go out through it (the page passes its own);
+// - known/skip/partStart: the pasted resume + incremental state (parseKnown/parseResume);
+// - run: the run key (defaults to runKey() at call time — the page takes it at click);
+// - threshold: the flush check's bytes, strict > (the script's 150 MB, per the design
+//   doc's "the scripts are the spec");
+// - onFlush(lines, name): a part save — may throw, and the throw STOPS the run: later
+//   sessions are not fetched, the final flush and the marker never run (a hole in the
+//   part numbering would make weekly split see a hole as a complete run);
+// - onMarker(payload, name): the done marker — called last, after the final flush,
+//   even when every session failed or was skipped;
+// - onProgress(done, total, events, failedCount): done counts skipped sessions too.
+export async function exportSessions(sessions, opts = {}) {
+  const { fetch: doFetch = fetch, known = {}, skip = [], partStart = 0,
+    run = runKey(), threshold = 150 * 1048576, onFlush, onMarker, onProgress } = opts;
+
+  // Incremental pre-pass (the script's lines 50–59): a known session is skipped unless
+  // the list shows newer activity; one missing from the archive (new, or failed last
+  // time — known lacks it) is always fetched. This mutates skip BEFORE the fetch loop.
+  const skipSet = new Set(skip);
+  const activity = (s) => Date.parse(s.last_event_at || s.updated_at || "") || 0;
+  let unchanged = 0, noActivityField = 0;
+  for (const s of sessions.values()) {
+    const seen = Date.parse(known[s.id.replace(/^session_/, "")] || "") || 0;
+    if (!seen) continue;
+    if (!activity(s)) noActivityField++;
+    else if (activity(s) <= seen) { skipSet.add(s.id); unchanged++; }
+  }
+
+  // One record with every listed session's current title, so the archive's index
+  // follows renames even for sessions this run skips. It starts the buffer and does
+  // NOT count toward partBytes — the script's exact quirk, ported as-is.
+  const titlesLine = JSON.stringify({ _titles: Object.fromEntries([...sessions.values()].map((s) => [s.id, s.title])) }) + "\n";
+  let buffer = [titlesLine];
+  let partBytes = 0;
+  let partNo = partStart;
+  const total = sessions.size;
+  let done = 0, events = 0;
+  const failed = [];
+
+  const headers = { "anthropic-version": "2023-06-01" };
+
+  const flush = async () => {
+    if (!buffer.length) return;
+    const lines = buffer;
+    await onFlush(lines, partName(run, ++partNo));
+    buffer = [];
+    partBytes = 0;
+  };
+
+  for (const s of sessions.values()) {
+    if (skipSet.has(s.id)) {
+      done++;
+      if (onProgress) onProgress(done, total, events, failed.length);
+      // the script's continue also skips the flush check on skipped iterations
+      continue;
+    }
+    // A session's lines join the part only once ALL its pages arrived: a half-fetched
+    // session would replace its complete transcript in the archive (the split treats
+    // each session's lines as whole). A thrown page fetch or the repeated-cursor guard
+    // below leaves the lines discarded and the session failed; the walk continues.
+    const lines = [];
+    let cursor = null;
+    const seenCursors = new Set();
+    try {
+      do {
+        // A cursor that already ran must not run again: throw rather than loop forever.
+        // listing.js breaks silently instead — a listing truncation is recoverable on
+        // rerun, but a silent break here would join PARTIAL lines into a part, a
+        // permanent corruption; so this walk fails the session instead.
+        if (cursor != null && seenCursors.has(cursor)) throw new Error(`events walk repeated cursor ${cursor}`);
+        if (cursor != null) seenCursors.add(cursor);
+        const url = `${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(s.id)}/events?limit=500`
+          + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+        const r = await doFetch(url, { credentials: "include", headers });
+        if (!r.ok) throw new Error(`events HTTP ${r.status}`);
+        const j = await r.json();
+        for (const e of j.data || []) {
+          lines.push(JSON.stringify({ ...e.payload, _session: s.id, _title: s.title, _event_type: e.event_type, _created_at: e.created_at, _seq: e.sequence_num }) + "\n");
+        }
+        // the listing's rule: an empty page ends the walk whatever cursor came with it
+        cursor = (j.data || []).length ? j.next_cursor : null;
+      } while (cursor);
+      for (const line of lines) {
+        buffer.push(line);
+        partBytes += line.length;
+      }
+      events += lines.length;
+    } catch (err) {
+      failed.push(`${s.id}: ${err.message}`);
+    }
+    // strict >: a part at exactly the threshold rides the next flush
+    if (partBytes > threshold) await flush();
+    done++;
+    if (onProgress) onProgress(done, total, events, failed.length);
+  }
+
+  // Always, even for an all-skipped run: the buffer still holds the titles line, so the
+  // run still writes its titles-only part. Only after this may the marker go out.
+  await flush();
+
+  // The end marker: bin/claude-sessions-weekly ingests this run's parts only once it
+  // exists, so a pause mid-export never splits half a run — and it sits here, after the
+  // final flush, in the control flow itself, not in caller discipline.
+  await onMarker({ parts: partNo, sessions: sessions.size, events, failed: failed.length }, markerName(run));
+
+  return { parts: partNo, sessions: sessions.size, events, failed, unchanged, noActivityField };
+}

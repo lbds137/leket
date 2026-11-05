@@ -1,12 +1,15 @@
-// The sessions page: two sections (Rename, Delete) over the module's pure logic. Every
-// guard lives in rename.js / delete.js — this file only wires inputs, buttons, progress
-// and the failure lists. The fetches go out from here (the modules default to this
-// page's own fetch): absolute https://claude.ai/ URLs with credentials included, which
-// the manifest's claude.ai host permission rides along with. This tab owns the run — a
-// popup would die on focus loss — so the buttons say to keep it open.
+// The sessions page: three sections (Export, Rename, Delete) over the module's pure
+// logic. Every guard lives in export.js / rename.js / delete.js — this file only wires
+// inputs, buttons, progress and the failure lists. The fetches go out from here (the
+// modules default to this page's own fetch): absolute https://claude.ai/ URLs with
+// credentials included, which the manifest's claude.ai host permission rides along
+// with. This tab owns the run — a popup would die on focus loss — so the buttons say
+// to keep it open.
 import { listSessions } from "./listing.js";
 import { parseRenames, orderRenames, renameAll, currentTitles } from "./rename.js";
 import { checkPrefix, findHits, confirmHits, deleteAll } from "./delete.js";
+import { parseKnown, parseResume, exportSessions, runKey } from "./export.js";
+import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -46,6 +49,7 @@ const panel = (statusId, barId, failsId) => {
 
 const renamePanel = panel("rename-status", "rename-bar", "rename-failures");
 const deletePanel = panel("delete-status", "delete-bar", "delete-failures");
+const exportPanel = panel("export-status", "export-bar", "export-failures");
 
 // a button sleeps while its run is in flight, so a double click can't double-delete
 const busy = async (button, run) => {
@@ -56,6 +60,93 @@ const busy = async (button, run) => {
     button.disabled = false;
   }
 };
+
+// runs are one-at-a-time in practice, but a no-word part save outlives its click: a
+// second run must not have the first run's late end overwrite its line, so every run
+// carries a sequence number (the claude-chat page's pattern)
+let runSeq = 0;
+
+$("export-run").addEventListener("click", (e) => busy(e.target, async () => {
+  const seq = ++runSeq;
+  exportPanel.failures([]);
+  try {
+    // every input is read once, before any await: the boxes stay editable while a run
+    // is in flight, and a mid-run edit must not re-target what this run exports. A
+    // parser error says what to paste and fetches nothing.
+    const known = parseKnown($("known").value);
+    const { skip, partStart } = parseResume($("resume").value);
+    const run = runKey(); // the run's key, taken at click time: it names every part file
+    exportPanel.say("Listing every session (active, paused, archived)…");
+    const sessions = await listSessions();
+    let savedMB = 0;
+    let markerFailed = false;
+    const mb = (n) => n.toFixed(1);
+    const result = await exportSessions(sessions, {
+      known, skip, partStart, run,
+      onFlush: async (lines, name) => {
+        const blob = new Blob(lines, { type: "application/x-ndjson" });
+        const url = URL.createObjectURL(blob);
+        const saved = await trackDownload(chrome.downloads, { url, filename: name }, {
+          // a save with no word in 15 minutes may still be reading the blob URL: free
+          // it only once the download truly ends; it speaks only if this run still
+          // owns the line (a late save outlives its click, a second run owns the line)
+          onLate: (ok) => {
+            URL.revokeObjectURL(url);
+            if (seq !== runSeq) return;
+            if (ok) {
+              savedMB += blob.size / 1048576;
+              exportPanel.say(`Saved ${name} (${mb(savedMB)} MB, landed late) — keep this tab open.`);
+            } else {
+              exportPanel.say(`${name} landed late but didn't finish — see Chrome's downloads. Keep this tab open.`, "warn");
+            }
+          },
+        });
+        if (saved !== null) URL.revokeObjectURL(url);
+        if (saved === true) {
+          savedMB += blob.size / 1048576;
+          exportPanel.say(`Saved ${name} (${mb(savedMB)} MB) — keep this tab open.`);
+        } else if (saved === false) {
+          // a refused or interrupted part stop the run: exportSessions propagates the
+          // throw — later sessions are not fetched and no done marker is written
+          throw new Error(`Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written; rerun with this part numbered in the resume line.`);
+        }
+        // saved === null: no word in 15 min — the download may still be running, so the
+        // URL stays alive for it; onLate frees it and says how it ended
+      },
+      onMarker: async (payload, name) => {
+        const blob = new Blob([JSON.stringify(payload) + "\n"], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const saved = await trackDownload(chrome.downloads, { url, filename: name }, {
+          onLate: (ok) => {
+            URL.revokeObjectURL(url);
+            if (seq !== runSeq) return;
+            exportPanel.say(ok
+              ? `The done marker (${name}) landed late.`
+              : `The done marker (${name}) landed late but didn't finish — bin/claude-sessions-weekly waits for it; see Chrome's downloads.`, ok ? "" : "warn");
+          },
+        });
+        if (saved !== null) URL.revokeObjectURL(url);
+        if (saved === false) markerFailed = true;
+        // null: the marker save may still be running — onLate handles its end
+      },
+      onProgress: (d, t, evs, failedCount) => {
+        exportPanel.progress(d, t);
+        exportPanel.say(`Session ${d} of ${t} — ${evs} events, ${failedCount} failed so far… keep this tab open.`);
+      },
+    });
+    exportPanel.failures(result.failed);
+    const done = `Done: ${result.sessions} sessions, ${result.events} events, ${result.parts} part file(s), ${mb(savedMB)} MB.`;
+    if (markerFailed) {
+      exportPanel.say(`${done} But the done marker (claude-sessions-${run}-done.json) didn't finish saving — bin/claude-sessions-weekly waits for it; see Chrome's downloads. The parts are on disk.`,
+        "warn");
+    } else {
+      exportPanel.say(done + (result.failed.length ? ` ${result.failed.length} failed — listed below.` : ""),
+        result.failed.length ? "warn" : "ok");
+    }
+  } catch (err) {
+    exportPanel.say((err && err.message) || String(err), "warn");
+  }
+}));
 
 $("rename-run").addEventListener("click", (e) => busy(e.target, async () => {
   renamePanel.failures([]);
