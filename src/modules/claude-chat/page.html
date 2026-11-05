@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude chat outputs</title>
+<style>
+:root{--bg:#fff;--fg:#1e1f22;--muted:#4e5058;--line:#e3e5e8;--warn:#7d4600;--ok:#116329;--accent:#3945d1}
+@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#bec5cd;--line:#3f4147;--warn:#f5bc36;--ok:#6ede75;--accent:#b6beff}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px}
+section{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+h1,h2{font-size:20px;margin:0 0 8px}
+.advice{color:var(--muted)}
+textarea{width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;margin:8px 0}
+input{font:inherit;margin:4px 0}
+button{font:inherit;margin:4px 12px 4px 0}
+#outputs-status{font-size:15px}
+.warn{color:var(--warn)}.ok{color:var(--ok)}
+progress{width:100%;margin:8px 0}
+ul{padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>Claude chat outputs</h1>
+
+<section id="outputs">
+<h2>Save chat outputs</h2>
+<p class="advice">Paste the generated chat list — the bare JSON array of [chat, name, source] triples, or the whole window.CLAUDE_OUTPUT_CHATS = [...]; line. Every file Claude delivered under /mnt/user-data/outputs/ in each chat is downloaded (text inline, the rest base64) into one dated JSON.</p>
+<textarea id="chats" rows="8" placeholder='[["&lt;chat uuid&gt;", "name", "source"], …]'></textarea>
+<button id="outputs-run">Save chat outputs</button>
+<p id="outputs-status" hidden></p>
+<progress id="outputs-bar" hidden></progress>
+<ul id="outputs-failures"></ul>
+</section>
+</main>
+<script type="module" src="page.js"></script>
+</body>
+</html>

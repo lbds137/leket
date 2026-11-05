@@ -20,9 +20,15 @@ const REDDIT_POST_PAGE = new RegExp(
 // One anchored pattern for "the pathname of a claude.ai/code page" gates the
 // claude-sessions module: the pathname must START with /code and then end, or run on
 // into / — the URL parser has already split ? and # off the pathname, so they never
-// appear here. claude.ai/chat and the bare claude.ai host are other pages' territory,
-// and /codeX is a different path altogether.
+// appear here. The bare claude.ai host is nobody's territory, and /codeX is a
+// different path altogether.
 export const CODE_PATHNAME = new RegExp(String.raw`^\/code(?=$|\/)`);
+
+// One anchored pattern for "the pathname of a claude.ai chat page" gates the
+// claude-chat module, built the same way as CODE_PATHNAME: the pathname must START
+// with /chat and then end, or run on into /chat/<uuid>. The bare claude.ai host
+// stays nobody's territory, and /chatX is a different path altogether.
+export const CHAT_PATHNAME = new RegExp(String.raw`^\/chat(?=$|\/)`);
 
 export const MODULES = [
   {
@@ -66,6 +72,26 @@ export const MODULES = [
     title: "Claude sessions",
     blurb: "Rename or delete your claude.ai/code sessions — read-back verified, one run at a time.",
     commands: [{ id: "rename", label: "Rename sessions" }, { id: "delete", label: "Delete sessions" }],
+  },
+  {
+    id: "claude-chat",
+    // a claude.ai chat page, per CHAT_PATHNAME above. The command opens the module's
+    // own page (src/modules/claude-chat/page.html): a whole chat list is a long,
+    // reviewable run, and a popup dies when it loses focus. The page probes the
+    // claude.ai tab (readOrgPath via chrome.scripting) and fetches the wiggle
+    // endpoints with the login (credentials: include) riding the manifest's
+    // claude.ai host permission — so the open carries the tab id as a query.
+    matches: (url) => {
+      try {
+        const u = new URL(url);
+        return u.hostname === "claude.ai" && CHAT_PATHNAME.test(u.pathname);
+      } catch {
+        return false;
+      }
+    },
+    title: "Claude chat",
+    blurb: "Download the files Claude delivered in your chats as one dated JSON.",
+    commands: [{ id: "outputs", label: "Save chat outputs" }],
   },
 ];
 

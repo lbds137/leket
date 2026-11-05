@@ -16,11 +16,25 @@ const openSessionsPage = (hash) => async (tab, { tabs = chrome.tabs } = {}) => {
   return "Opened the sessions page.";
 };
 
+// Like the sessions commands the page is self-sufficient, but its probe reads the
+// claude.ai tab the popup matched (readOrgPath runs there via chrome.scripting), so
+// the open carries that tab's id as a query. Tabless calls (the tests) open the page
+// bare — it refuses to run without a tab id.
+const openChatOutputsPage = async (tab, { tabs = chrome.tabs } = {}) => {
+  const page = chrome.runtime.getURL("src/modules/claude-chat/page.html");
+  const url = tab && tab.id != null ? `${page}?tab=${tab.id}` : page;
+  await tabs.create({ url });
+  return "Opened the chat outputs page.";
+};
+
 export const COMMANDS = {
   discord: discordCommands,
   reddit: redditCommands,
   "claude-sessions": {
     rename: openSessionsPage("#rename"),
     delete: openSessionsPage("#delete"),
+  },
+  "claude-chat": {
+    outputs: openChatOutputsPage,
   },
 };
