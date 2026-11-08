@@ -6,13 +6,16 @@
 // saved/folderRel arguments are the follow-on images PR's surface, unused by the
 // extension for now.
 //
-// Where the port deliberately differs from the python: null fields fall back to the
-// placeholder (u/[deleted], r/?, (untitled)) where python's .get(key, default) would
-// print None; ?? guards keep 0 falsy-safe (score: 0 renders "0 points"); null
-// children/body/replies cannot crash the port; count-0 cuts render a thread-continues
-// link; more lines link to their branch; render() adds the not-fetched note; safeBody
-// escapes bare `<` and closes unclosed code fences; remote image links are wrapped in
-// `<...>`.
+// Where the port deliberately differs from the python:
+// - null fields fall back to the placeholder (u/[deleted], r/?, (untitled)) where
+//   python's .get(key, default) would print None, and null children/body/replies can't
+//   crash it; ?? guards keep 0 falsy-safe (score: 0 renders "0 points").
+// - "more" nodes: count-0 cuts render a thread-continues link, and every more line
+//   links its own branch (comments()); render() adds the not-fetched note (notFetched()).
+// - bodies and the title go through safeBody/escapeLine: a bare `<` outside code becomes
+//   `&lt;`, unclosed fences are closed. That includes a `<` in an angle-bracket link
+//   destination (`[x](<url>)`), which then shows as text: rare in reddit, accepted.
+// - remote image links are wrapped in `<...>`.
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -123,16 +126,27 @@ const MARKERS = String.raw`(?: {0,3}(?:>[ ]?|[-*+][ ]+|\d{1,9}[.)][ ]+))*`;
 const FENCE_OPEN = new RegExp(`^(${MARKERS}[ ]{0,3})` + "(`{3,}|~{3,})(.*)$");
 const FENCE_CLOSE = new RegExp(`^(${MARKERS}[ ]*)` + "(`{3,}|~{3,})\\s*$");
 
+// the container markers a prefix carries, spaces dropped: "> " → ">", "- " → "-", "  " → ""
+const markersOf = (prefix) => prefix.replace(/\s/g, "");
+
 export function safeBody(text) {
   const lines = String(text ?? "").split("\n");
   const out = [];
   let fenceChar = "";
   let fenceLen = 0;
   let fencePrefix = "";
+  // a 4-space (or tab) line is indented code only where a paragraph can't be continuing:
+  // at the start, after a blank line, or after another indented-code line. Elsewhere it
+  // is a list or paragraph continuation, rendered inline, so its < is escaped as usual.
+  let paragraphOpen = false;
+  let inIndentedCode = false;
   for (const line of lines) {
     if (fenceLen) {
+      // a closer belongs to the opener's own container: inside a top-level fence, "- ```"
+      // or "> ```" is code, not a closer (and a blockquoted fence needs its ">")
       const m = line.match(FENCE_CLOSE);
-      if (m && m[2][0] === fenceChar && m[2].length >= fenceLen && m[1].length <= fencePrefix.length + 3) {
+      if (m && m[2][0] === fenceChar && m[2].length >= fenceLen
+          && markersOf(m[1]) === markersOf(fencePrefix) && m[1].length <= fencePrefix.length + 3) {
         fenceChar = "";
         fenceLen = 0;
       }
@@ -146,13 +160,19 @@ export function safeBody(text) {
       // the closer, if one must be added, stays inside the same blockquote (a bare one
       // would open a new top-level fence there); list markers become their width in spaces
       fencePrefix = open[1].replace(/[^>]/g, " ");
+      paragraphOpen = false;
+      inIndentedCode = false;
       out.push(line);
       continue;
     }
-    if (/^(?: {4,}|\t)/.test(line)) {
+    const blank = /^\s*$/.test(line);
+    if (/^(?: {4,}|\t)/.test(line) && !blank && (inIndentedCode || !paragraphOpen)) {
+      inIndentedCode = true;
       out.push(line);
       continue;
     }
+    if (!blank) inIndentedCode = false;
+    paragraphOpen = !blank;
     out.push(escapeLine(line));
   }
   if (fenceLen) out.push(fencePrefix + fenceChar.repeat(fenceLen));
