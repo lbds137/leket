@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -18,7 +21,8 @@ jobs:
   # The extension smoke (test/smoke/smoke.mjs) in a Playwright Chromium: branded Chrome no
   # longer loads unpacked extensions. Playwright is pinned and run through npx, so the repo
   # keeps no dependencies; 1.64.1 ships Chromium revision 1248, the one the smoke was
-  # written against. The smoke finds it in ~/.cache/ms-playwright on its own.
+  # written against, and the step after the install fails unless that is the build present
+  # (the smoke itself takes the newest chromium-* in ~/.cache/ms-playwright).
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -28,4 +32,13 @@ jobs:
         with:
           node-version: 24
       - run: npx -y playwright@1.64.1 install --with-deps chromium
+      - name: The pinned Chromium is the one the smoke will find
+        run: |
+          ls -d ~/.cache/ms-playwright/chromium-*
+          test "$(ls -d ~/.cache/ms-playwright/chromium-* | wc -l)" = 1
+          test -x ~/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome
+      # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor, and Chromium's
+      # sandbox needs one ("No usable sandbox!"). Lifted on this throwaway runner, so the
+      # browser runs sandboxed, as it does on a desktop, instead of with --no-sandbox
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: npm run smoke
