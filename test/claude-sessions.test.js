@@ -5,6 +5,7 @@
 // confirm-count-matches) are pinned here one by one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 // a red line under every test, like reddit.test.js: an un-injected fetch is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
@@ -50,8 +51,22 @@ test("one page per status with no cursor stops: one fetch per status, absolute U
   for (const [i, st] of ["active", "paused", "archived"].entries()) {
     assert.equal(calls[i].url, `https://claude.ai/v1/code/sessions?statuses=${st}&limit=50`,
       "the fetch is absolute (an extension page's origin is chrome-extension://) and capped at 50");
-    assert.equal(calls[i].opts.credentials, "include", "the login rides along");
+    assert.ok(calls[i].opts.signal instanceof AbortSignal, "the fetch carries an abort timeout");
+    assert.deepEqual(calls[i].opts, {
+      credentials: "include",
+      headers: { "anthropic-version": "2023-06-01" },
+      signal: calls[i].opts.signal,
+    }, "the login and version header ride along with the timeout signal");
   }
+  assert.notEqual(calls[0].opts.signal, calls[1].opts.signal, "a fresh timeout signal per fetch");
+});
+
+test("a listing fetch that rejects with a TimeoutError DOMException surfaces an error", async () => {
+  const fetch = async () => { throw new DOMException("The operation timed out.", "TimeoutError"); };
+  await assert.rejects(
+    listSessions({ fetch }),
+    (e) => e.name === "TimeoutError" && /timed? ?out/i.test(e.message),
+  );
 });
 
 test("a page with items and a next_cursor continues: the next fetch carries the cursor", async () => {
@@ -211,6 +226,8 @@ test("renameAll renames each session with a PUT and reads it back before countin
   assert.equal(calls[0].url, "https://claude.ai/v1/code/sessions/session_a");
   assert.equal(calls[0].opts.credentials, "include");
   assert.equal(calls[2].opts.headers["anthropic-version"], "2023-06-01");
+  assert.ok(calls.every((c) => c.opts.signal instanceof AbortSignal), "every rename/read fetch carries a timeout signal");
+  assert.equal(new Set(calls.map((c) => c.opts.signal)).size, calls.length, "a fresh timeout signal per fetch");
 });
 
 test("a read-back that shows the old title fails that rename", async () => {
@@ -223,7 +240,7 @@ test("a read-back that shows the old title fails that rename", async () => {
   assert.match(done.failed[0], /read back "still the old one"/);
 });
 
-test("a failed first rename stops the whole list: nothing else is attempted", async () => {
+test("a failed first rename (PUT refused, or PUT unanswered) stops the whole list: nothing else is attempted", async () => {
   const puts = [];
   const { fetch } = apiFetch([
     ["PUT", "/v1/code/sessions/session_a", () => ({ status: 500, text: "server exploded" })],
@@ -233,14 +250,22 @@ test("a failed first rename stops the whole list: nothing else is attempted", as
   ]);
   const done = await renameAll([["cse_a", "New a"], ["session_b", "New b"]], { fetch });
   assert.equal(done.stopped, true, "the first rename's failure stops the list");
-  assert.match(done.error, /first rename didn't take/);
+  assert.equal(done.error, "Stopped: the first rename didn't take (rename 500: server exploded). Nothing else was changed.");
+  assert.deepEqual(done.failed, ["cse_a: rename 500: server exploded"]);
   assert.deepEqual(puts, [], "session_b was never touched");
   assert.equal(done.ok, 0);
+
+  const thrown = await renameAll([["cse_a", "New a"], ["session_b", "New b"]], {
+    fetch: async () => { throw new Error("network down"); },
+  });
+  assert.equal(thrown.stopped, true);
+  // a PUT that throws may still have reached the server: no "didn't take" claim
+  assert.equal(thrown.error, "Stopped: the first rename got no answer (network down) — it may have taken; check that session. Nothing else was changed.");
+  assert.deepEqual(thrown.failed, ["cse_a: network down"]);
+  assert.equal(thrown.ok, 0);
 });
 
-test("a read-back MISMATCH at index 0 stops the list, like a failed PUT does", async () => {
-  // the existing stop test covers HTTP 500; a PUT that "succeeds" but doesn't take
-  // (the GET still reads the old title) must stop the list the same way
+test("a read-back MISMATCH or throw at index 0 after a 2xx PUT stops with the accepted-but-check-failed message", async () => {
   const puts = [];
   const { fetch } = apiFetch([
     ["PUT", "/v1/code/sessions/session_a", () => { puts.push("a"); return {}; }],
@@ -250,10 +275,27 @@ test("a read-back MISMATCH at index 0 stops the list, like a failed PUT does", a
   ]);
   const done = await renameAll([["cse_a", "New a"], ["session_b", "New b"]], { fetch });
   assert.equal(done.stopped, true, "the first rename's read-back mismatch stops the list");
-  assert.match(done.error, /first rename didn't take/);
-  assert.match(done.error, /read back/);
+  assert.equal(
+    done.error,
+    'Stopped: the first rename was accepted, but its check failed (read back "old a") — it may have taken (the server can also normalise a title); check that session. Nothing else was changed.',
+  );
+  assert.deepEqual(done.failed, ['cse_a: read back "old a"']);
   assert.deepEqual(puts, ["a"], "session_b's PUT never fired");
   assert.equal(done.ok, 0);
+
+  const checkThrew = await renameAll([["cse_a", "New a"], ["session_b", "New b"]], {
+    fetch: apiFetch([
+      ["PUT", "/v1/code/sessions/session_a", () => ({})],
+      ["GET", "/v1/code/sessions/session_a", () => { throw new Error("read-back boom"); }],
+    ]).fetch,
+  });
+  assert.equal(checkThrew.stopped, true);
+  assert.equal(
+    checkThrew.error,
+    "Stopped: the first rename was accepted, but its check failed (read-back boom) — it may have taken (the server can also normalise a title); check that session. Nothing else was changed.",
+  );
+  assert.deepEqual(checkThrew.failed, ["cse_a: read-back boom"]);
+  assert.equal(checkThrew.ok, 0);
 });
 
 test("currentTitles reads each entry's title live, keyed by the id the list carries", async () => {
@@ -265,6 +307,8 @@ test("currentTitles reads each entry's title live, keyed by the id the list carr
   assert.equal(titles.get("cse_a"), "now a");
   assert.equal(titles.get("session_b"), "now b");
   assert.equal(calls.length, 2);
+  assert.ok(calls[0].opts.signal instanceof AbortSignal);
+  assert.notEqual(calls[0].opts.signal, calls[1].opts.signal, "a fresh timeout signal per fetch");
 });
 
 test("a malformed read throws before any ordering: the script changes nothing when it can't verify a shape", async () => {
@@ -306,6 +350,27 @@ test("an empty prefix matches EVERY session — so the refusal must happen at ca
   // would otherwise re-target the delete onto all sessions
   const sessions = new Map([["1", session("1", "a")], ["2", session("2", "b")]]);
   assert.equal(findHits(sessions, "").length, 2);
+});
+
+test("page.js captures the prefix, confirm count and storedDryRun before the first await in delete-run", () => {
+  const src = readFileSync(new URL("../src/modules/claude-sessions/page.js", import.meta.url), "utf8");
+  // the handler itself, not the dry run's busy([…, $("delete-run")]) argument
+  const from = src.indexOf('$("delete-run").addEventListener');
+  assert.notEqual(from, -1, "found the delete-run handler");
+  const to = src.indexOf("}));", from);
+  assert.notEqual(to, -1, "found the end of the delete-run handler");
+  // line comments dropped: the handler's own comment talks about "await"
+  const slice = src.slice(from, to).replace(/\/\/.*$/gm, "");
+  const firstAwait = slice.search(/\bawait\b/);
+  assert.notEqual(firstAwait, -1, "the handler awaits");
+  for (const expr of ['checkPrefix($("prefix").value)', '$("delete-confirm").value', "storedDryRun"]) {
+    const pos = slice.indexOf(expr);
+    assert.ok(pos !== -1 && pos < firstAwait, `${expr} must appear before the first await`);
+  }
+  // the capture is what the check uses: storedDryRun is read once, and confirmHits
+  // takes the captured copy, never a post-await read of the live variable
+  assert.equal(slice.split("storedDryRun").length - 1, 1, "storedDryRun is read exactly once");
+  assert.match(slice, /confirmHits\(dry,/);
 });
 
 test("deleteGuard refuses when the typed count differs from the current count, naming both", () => {
@@ -381,14 +446,19 @@ test("confirmHits still refuses a wrong typed count on a full match", () => {
   assert.throws(() => confirmHits(stored, "p", hits, "3"), /2 sessions? match now/);
 });
 
-test("the first delete is verified gone (404) before the rest run", async () => {
+test("the first delete is verified present (200), deleted, and verified gone (404) before the rest run", async () => {
   const goneIds = new Set();
+  const firstGets = [];
   const hits = [session("cse_a", "p · a"), session("cse_b", "p · b"), session("cse_c", "p · c")];
   const { calls, fetch } = apiFetch([
     ["DELETE", "/v1/code/sessions/session_a", () => { goneIds.add("a"); return {}; }],
     ["DELETE", "/v1/code/sessions/session_b", () => { goneIds.add("b"); return {}; }],
     ["DELETE", "/v1/code/sessions/session_c", () => { goneIds.add("c"); return {}; }],
-    ["GET", "/v1/code/sessions/session_a", () => goneIds.has("a") ? { status: 404 } : { json: {} }],
+    ["GET", "/v1/code/sessions/session_a", () => {
+      const status = goneIds.has("a") ? 404 : 200;
+      firstGets.push(status);
+      return status === 404 ? { status: 404 } : { status: 200, json: {} };
+    }],
     ["GET", "/v1/code/sessions/session_b", () => goneIds.has("b") ? { status: 404 } : { json: {} }],
     ["GET", "/v1/code/sessions/session_c", () => goneIds.has("c") ? { status: 404 } : { json: {} }],
   ]);
@@ -396,12 +466,93 @@ test("the first delete is verified gone (404) before the rest run", async () => 
   assert.equal(done.stopped, false);
   assert.equal(done.deleted, 3);
   assert.deepEqual(done.failed, []);
-  // the first delete is followed by its read-back BEFORE the second delete goes out
-  assert.equal(calls[0].method, "DELETE");
-  assert.equal(calls[0].opts.credentials, "include", "the login rides along on the delete");
-  assert.equal(calls[0].opts.headers["anthropic-version"], "2023-06-01", "the delete carries the version header");
-  assert.equal(calls[1].method, "GET", "the read-back comes before any second delete");
-  assert.equal(calls[2].method, "DELETE");
+  // hits[0] runs GET(200) → DELETE → GET(404) in that order before the second delete goes out
+  assert.deepEqual(calls.slice(0, 4).map((c) => [c.method, new URL(c.url).pathname]), [
+    ["GET", "/v1/code/sessions/session_a"],
+    ["DELETE", "/v1/code/sessions/session_a"],
+    ["GET", "/v1/code/sessions/session_a"],
+    ["DELETE", "/v1/code/sessions/session_b"],
+  ]);
+  assert.deepEqual(firstGets, [200, 404]);
+  assert.equal(calls[1].opts.credentials, "include", "the login rides along on the delete");
+  assert.equal(calls[1].opts.headers["anthropic-version"], "2023-06-01", "the delete carries the version header");
+  assert.ok(calls.every((c) => c.opts.signal instanceof AbortSignal), "every fetch carries a timeout signal");
+  assert.equal(new Set(calls.map((c) => c.opts.signal)).size, calls.length, "a fresh timeout signal per fetch");
+});
+
+test("a precheck 404 before the first delete deletes nothing (no DELETE call made)", async () => {
+  const deletes = [];
+  const hits = [session("cse_a", "p · a"), session("cse_b", "p · b")];
+  const { calls, fetch } = apiFetch([
+    ["GET", "/v1/code/sessions/session_a", () => ({ status: 404 })],
+    ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
+    ["DELETE", "/v1/code/sessions/session_b", () => { deletes.push("b"); return {}; }],
+  ]);
+  const done = await deleteAll(hits, { fetch });
+  assert.deepEqual(done, {
+    deleted: 0,
+    failed: [],
+    stopped: true,
+    error: "The first session didn't read as present before the delete (answered 404), so a 404 afterwards would prove nothing: stopped, nothing deleted.",
+  });
+  assert.deepEqual(deletes, [], "no DELETE call was made");
+  assert.equal(calls.length, 1);
+});
+
+test("a precheck that answers 500 deletes nothing: only a 200 counts as present", async () => {
+  const deletes = [];
+  const { fetch } = apiFetch([
+    ["GET", "/v1/code/sessions/session_a", () => ({ status: 500, text: "boom" })],
+    ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
+  ]);
+  const done = await deleteAll([session("cse_a", "p · a")], { fetch });
+  assert.equal(done.stopped, true);
+  assert.match(done.error, /answered 500/);
+  assert.deepEqual(deletes, []);
+});
+
+test("a DELETE with no answer is never a plain failure: it may have been deleted", async () => {
+  // first hit: the run stops, saying the delete may have happened
+  const first = await deleteAll([session("cse_a", "p · a"), session("cse_b", "p · b")], {
+    fetch: apiFetch([
+      ["GET", "/v1/code/sessions/session_a", () => ({})],
+      ["DELETE", "/v1/code/sessions/session_a", () => { throw new DOMException("The operation timed out.", "TimeoutError"); }],
+    ]).fetch,
+  });
+  assert.equal(first.stopped, true);
+  assert.equal(first.deleted, 0);
+  assert.equal(first.error, "First delete got no answer (The operation timed out.) — it may have been deleted: stopped, nothing else deleted — check the session list before running again.");
+  // a later hit: recorded with the same caveat, and the run goes on
+  let gone = false;
+  const later = await deleteAll([session("cse_a", "p · a"), session("cse_b", "p · b"), session("cse_c", "p · c")], {
+    fetch: apiFetch([
+      ["DELETE", "/v1/code/sessions/session_a", () => { gone = true; return {}; }],
+      ["GET", "/v1/code/sessions/session_a", () => gone ? { status: 404 } : {}],
+      ["DELETE", "/v1/code/sessions/session_b", () => { throw new Error("network down"); }],
+      ["DELETE", "/v1/code/sessions/session_c", () => ({})],
+    ]).fetch,
+  });
+  assert.equal(later.stopped, false);
+  assert.equal(later.deleted, 2);
+  assert.deepEqual(later.failed, ["p · b: no answer (network down) — it may have been deleted"]);
+});
+
+test("a precheck GET that throws deletes nothing (no DELETE call made)", async () => {
+  const deletes = [];
+  const hits = [session("cse_a", "p · a"), session("cse_b", "p · b")];
+  const { calls, fetch } = apiFetch([
+    ["GET", "/v1/code/sessions/session_a", () => { throw new Error("precheck boom"); }],
+    ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
+  ]);
+  const done = await deleteAll(hits, { fetch });
+  assert.deepEqual(done, {
+    deleted: 0,
+    failed: [],
+    stopped: true,
+    error: "The first session didn't read as present before the delete (precheck boom), so a 404 afterwards would prove nothing: stopped, nothing deleted.",
+  });
+  assert.deepEqual(deletes, [], "no DELETE call was made");
+  assert.equal(calls.length, 1);
 });
 
 test("a read-back GET that THROWS after an OK first delete stops with its own message, deleted 0", async () => {
@@ -410,7 +561,10 @@ test("a read-back GET that THROWS after an OK first delete stops with its own me
   const { fetch } = apiFetch([
     ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
     ["DELETE", "/v1/code/sessions/session_b", () => { deletes.push("b"); return {}; }],
-    ["GET", "/v1/code/sessions/session_a", () => { throw new Error("read-back boom"); }],
+    ["GET", "/v1/code/sessions/session_a", () => {
+      if (deletes.includes("a")) throw new Error("read-back boom");
+      return {};
+    }],
   ]);
   const done = await deleteAll(hits, { fetch });
   assert.equal(done.stopped, true);
@@ -443,7 +597,7 @@ test("a read-back that answers a status other than 404 names it: 500 stops the r
   const { fetch } = apiFetch([
     ["DELETE", "/v1/code/sessions/session_a", () => { deletes.push("a"); return {}; }],
     ["DELETE", "/v1/code/sessions/session_b", () => { deletes.push("b"); return {}; }],
-    ["GET", "/v1/code/sessions/session_a", () => ({ status: 500, text: "boom" })],
+    ["GET", "/v1/code/sessions/session_a", () => deletes.includes("a") ? { status: 500, text: "boom" } : {}],
   ]);
   const done = await deleteAll(hits, { fetch });
   assert.equal(done.stopped, true);
@@ -456,6 +610,7 @@ test("a first delete that fails (non-OK) stops everything", async () => {
   const deletes = [];
   const hits = [session("cse_a", "p · a"), session("cse_b", "p · b")];
   const { fetch } = apiFetch([
+    ["GET", "/v1/code/sessions/session_a", () => ({})],
     ["DELETE", "/v1/code/sessions/session_a", () => ({ status: 500, text: "no" })],
     ["DELETE", "/v1/code/sessions/session_b", () => { deletes.push("b"); return {}; }],
   ]);
@@ -466,12 +621,13 @@ test("a first delete that fails (non-OK) stops everything", async () => {
 });
 
 test("a later delete that fails is recorded, and the rest still run", async () => {
+  let gone = false;
   const hits = [session("cse_a", "p · a"), session("cse_b", "p · b"), session("cse_c", "p · c")];
   const { fetch } = apiFetch([
-    ["DELETE", "/v1/code/sessions/session_a", () => ({})],
+    ["DELETE", "/v1/code/sessions/session_a", () => { gone = true; return {}; }],
     ["DELETE", "/v1/code/sessions/session_b", () => ({ status: 409, text: "conflict" })],
     ["DELETE", "/v1/code/sessions/session_c", () => ({})],
-    ["GET", "/v1/code/sessions/session_a", () => ({ status: 404 })],
+    ["GET", "/v1/code/sessions/session_a", () => gone ? { status: 404 } : {}],
   ]);
   const done = await deleteAll(hits, { fetch });
   assert.equal(done.stopped, false);
@@ -497,9 +653,10 @@ test("onProgress counts the verified first delete: the sequence for 3 hits is [1
 });
 
 test("onProgress for a single hit is just [1] — the verified first delete is the whole run", async () => {
+  let gone = false;
   const { fetch } = apiFetch([
-    ["DELETE", "/v1/code/sessions/session_a", () => ({})],
-    ["GET", "/v1/code/sessions/session_a", () => ({ status: 404 })],
+    ["DELETE", "/v1/code/sessions/session_a", () => { gone = true; return {}; }],
+    ["GET", "/v1/code/sessions/session_a", () => gone ? { status: 404 } : {}],
   ]);
   const seen = [];
   await deleteAll([session("cse_a", "p · a")], { fetch, onProgress: (d, t) => seen.push([d, t]) });
