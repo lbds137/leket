@@ -85,22 +85,54 @@ The name never goes into this repo. It lives in Chrome's storage for this extens
 
 If the page warns that the name also matches Etsy's own words or the file's field names, those words read `[redacted]` in the export too. That's expected, but the file's shape changes where a field name is hit. To turn redaction off again, run `chrome.storage.local.remove("etsyRedact")` in the same console.
 
+## Save a Reddit post
+
+1. Open the post itself on [www.reddit.com](https://www.reddit.com) or [old.reddit.com](https://old.reddit.com) in Chrome (its address has `/comments/` in it).
+2. Click the **Leket** button in the toolbar, then **Save this post as Markdown**. The popup stays open and says how it went; if you close it, the save still finishes.
+3. Two files land in your Downloads folder: `reddit-<post id>.md`, the post and its comments as readable Markdown, and `reddit-<post id>.json`, the data reddit sent. Saving the same post again replaces both.
+
+Images appear as links to reddit; they aren't downloaded. Leket fetches the comments in one request, as your logged-in browser sees them; on a big thread reddit leaves some out. The popup says how many, and the `.md` links to those threads on reddit. If Chrome is set to ask where to save each file, it still asks here.
+
+## claude.ai sessions and chat outputs
+
+These two pages are bulk tools for claude.ai. Their input lists come from scripts outside this repo, so they're mostly for whoever maintains the extension.
+
+**Sessions** (on any claude.ai/code page, click the **Leket** button, then **Export sessions**, **Rename sessions** or **Delete sessions**; all three open Leket's Claude sessions page in a new tab, which has to stay open while it runs):
+
+- **Export** fetches every active, paused and archived session and saves them to Downloads as `claude-sessions-<run>-partNN.jsonl` (about 150 MB each), then a `claude-sessions-<run>-done.json` marker. `<run>` is the UTC time of the run, so two runs never share file names. Leave both boxes empty for a full export. The first box takes the list of sessions already archived, so only new or changed ones are fetched. The second box takes the resume line a failed run prints, so the next run picks up where that one stopped.
+- **Rename** takes a list of `[session id, new title]` pairs and reads each rename back. At least one has to actually change a title: Leket does that one first and reads it back to prove renaming works, and refuses a list where nothing would change.
+- **Delete** removes sessions whose title starts with the prefix you type. It can't be undone, so export first. **Dry run** lists and counts them; to delete, type that count into **Confirm count**. If the list has changed since the dry run, nothing is deleted. The first delete is read back before the rest run.
+
+**Chat outputs** (on a claude.ai chat page, click the **Leket** button, then **Save chat outputs**): paste a list of `[chat id, name, source]` entries. Every file Claude delivered in those chats is saved into one `claude-chat-outputs-<date>.json`, text as text and everything else as base64.
+
 ## For developers
 
 `npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies.
 
-`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons: a reddit save (twice: the second must overwrite, not add a renamed copy) and a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does): it finds a Playwright Chromium in `~/.cache/ms-playwright` (`npx playwright install chromium`), or set `LEKET_CHROME` to one; without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. The unit tests stub `chrome.*`, so run the smoke too after any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
+`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons, one isolated scenario per module (a failure fails that module and the rest still run): a reddit save (twice: the second must overwrite, not add a renamed copy); a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it; a claude.ai sessions export whose download reports late; a claude.ai chat-outputs run; and Etsy saves with and without the redact config. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does): it finds a Playwright Chromium in `~/.cache/ms-playwright` (`npx playwright install chromium`), or set `LEKET_CHROME` to one; without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. The unit tests stub `chrome.*`, so run the smoke too after any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
 
 Layout:
 
 - `src/popup/popup.html`, `src/popup/popup.js`: the toolbar popup. It detects what the active tab supports and renders that module's card.
-- `src/modules/registry.js`: the supported sites, matched by URL.
-- `src/modules/discord/launch.js`: the Discord module's commands — what the popup's buttons do.
-- `src/background.js`: the service worker. It carries the Discord module's launch (the popup hands the click over) and opens the export tab when the collector's Save hands over.
-- `src/modules/discord/collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
-- `src/modules/discord/bridge.js`: hands the collector's export from the page to the export tab, in pieces.
-- `src/modules/discord/export.html`, `src/modules/discord/export.js`, `src/lib/`: fetch the attachments, write `index.html`, and build the zip.
+- `src/popup/commands.js`: what each card's buttons do, one map per module; the tests pin every registered command to an implementation here.
+- `src/modules/registry.js`: the supported sites, matched by URL, and each module's buttons.
+- `src/background.js`: the service worker. It carries the Discord module's launch (the popup hands the click over), opens the export tab when the collector's Save hands over, and runs the reddit save (it opens the offscreen document and downloads what that prepares).
+- `src/modules/discord/`: the Discord module.
+  - `launch.js`: its command — what the popup's button does.
+  - `collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
+  - `bridge.js`: hands the collector's export from the page to the export tab, in pieces.
+  - `export.html`, `export.js`: the export tab. With `src/lib/`, it fetches the attachments, writes `index.html` and builds the zip.
+- `src/modules/reddit/`: the Reddit module.
+  - `json.js`: its command; it hands the save to the worker.
+  - `offscreen.html`, `offscreen.js`, `prepare.js`: the offscreen document, which fetches the post's JSON and prepares both files, so the save outlives the popup.
+  - `md.js`: the post-to-Markdown converter (pure).
+  - `download.js`: the worker's half, which downloads the two files, overwriting an earlier save.
+- `src/modules/etsy/`: the Etsy module. `page.html`, `page.js`: its page; `messages.js`: paging through each conversation (no extension APIs); `redact.js`: the optional name redaction.
+- `src/modules/claude-sessions/`: the claude.ai sessions module. `page.html`, `page.js`: its page; `listing.js`: lists every session; `export.js`, `save.js`, `narration.js`: the export, its downloads, and what the page says about the export, rename and delete; `rename.js`, `delete.js`: rename and delete, each read back.
+- `src/modules/claude-chat/`: the claude.ai chat-outputs module. `page.html`, `page.js`: its page; `outputs.js`: lists and fetches each chat's delivered files (no extension APIs).
+- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
+- `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).
 
 ## License
 
