@@ -71,9 +71,11 @@ export function orderRenames(list, currentTitles) {
   return null;
 }
 
-// The run: PUT {title}, then GET and require response_shape.title === target; a
-// mismatch is a failure. A failure at index 0 (after orderRenames) stops the whole
-// list — nothing else was changed.
+// The run: PUT {title}, then GET and require response_shape.title === target. A failure
+// at index 0 (after orderRenames) stops the whole list — nothing else was changed. A
+// later one is recorded and the run goes on; when it may still have taken (no answer, or
+// accepted but the read-back failed or differed) its line says so and it counts in
+// `uncertain`, apart from the refusals.
 export async function renameAll(list, { fetch: doFetch = fetch, timeoutMs = 60_000, onProgress } = {}) {
   const headers = { "anthropic-version": "2023-06-01", "content-type": "application/json" };
   const titleOf = async (id) => {
@@ -85,7 +87,7 @@ export async function renameAll(list, { fetch: doFetch = fetch, timeoutMs = 60_0
     if (typeof title !== "string") throw new Error("read: no response_shape.title (the API shape changed)");
     return title;
   };
-  // three outcomes for the first rename's stop line: refused (a non-OK answer: it
+  // three outcomes, for the first rename's stop line and every later line: refused (a non-OK answer: it
   // didn't take), unanswered (the PUT threw or timed out: it may have reached the
   // server), and accepted but unverified (2xx, then the read-back failed or differed)
   const rename = async (id, title) => {

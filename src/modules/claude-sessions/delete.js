@@ -64,7 +64,8 @@ export async function deleteAll(hits, { fetch: doFetch = fetch, timeoutMs = 60_0
   // instead of holding a stream nobody drains
   const get = async (s) => {
     const r = await doFetch(urlOf(s), { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
-    r.body?.cancel().catch(() => {});
+    // best-effort: a stand-in body with no promise-returning cancel must not fail the read
+    try { Promise.resolve(r.body?.cancel?.()).catch(() => {}); } catch { /* nothing to free */ }
     return r;
   };
   // a DELETE that throws or times out got no answer: it may still have reached the
