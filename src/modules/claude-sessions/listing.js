@@ -6,7 +6,7 @@ export const API_ORIGIN = "https://claude.ai";
 export const STATUSES = ["active", "paused", "archived"];
 export const LIST_LIMIT = 50;
 
-export async function listSessions({ fetch: doFetch = fetch, statuses = STATUSES, limit = LIST_LIMIT } = {}) {
+export async function listSessions({ fetch: doFetch = fetch, statuses = STATUSES, limit = LIST_LIMIT, timeoutMs = 60_000 } = {}) {
   const headers = { "anthropic-version": "2023-06-01" };
   const sessions = new Map();
   for (const st of statuses) {
@@ -20,7 +20,7 @@ export async function listSessions({ fetch: doFetch = fetch, statuses = STATUSES
       if (cursor != null) seenCursors.add(cursor);
       const url = `${API_ORIGIN}/v1/code/sessions?statuses=${st}&limit=${limit}`
         + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
-      const r = await doFetch(url, { credentials: "include", headers });
+      const r = await doFetch(url, { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) throw new Error(`Listing ${st} sessions failed: HTTP ${r.status}.`);
       const j = await r.json();
       for (const s of j.data || []) sessions.set(s.id, s);

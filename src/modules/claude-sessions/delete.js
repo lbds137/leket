@@ -1,10 +1,10 @@
 // The delete half, ported from dev-docs/browser/claude-sessions-delete.js — the script
 // is the spec. The delete call (DELETE /v1/code/sessions/session_<id>) was never tried
-// before that script, so the port keeps its guard: the FIRST match is deleted, read
-// back, and unless the read says it's gone (404) nothing else runs. The confirm is
-// bound to the dry run — its prefix, its exact session ids, and the count it printed
-// must all still match at delete time — so a list that changed in between deletes
-// nothing.
+// before that script, so the port keeps its guard: the FIRST match is read before (200),
+// deleted, and read back after (404) — unless both reads answer as expected, nothing
+// else runs. The confirm is bound to the dry run — its prefix, its exact session ids,
+// and the count it printed must all still match at delete time — so a list that changed
+// in between deletes nothing.
 import { API_ORIGIN } from "./listing.js";
 import { sid } from "./rename.js";
 
@@ -54,26 +54,49 @@ export function confirmHits(stored, prefix, hits, typed) {
   deleteGuard(hits, typed);
 }
 
-// The run, in the script's order: delete the first hit, GET it back, and stop unless
-// the read says 404. Only then the rest, one at a time — a later failure is recorded,
-// it doesn't stop the run.
-export async function deleteAll(hits, { fetch: doFetch = fetch, onProgress } = {}) {
+// The run: read the first hit before (200), delete it, GET it back after (404), and stop
+// unless both reads answer as expected. Only then the rest, one at a time — a later
+// failure is recorded, it doesn't stop the run.
+export async function deleteAll(hits, { fetch: doFetch = fetch, timeoutMs = 60_000, onProgress } = {}) {
   const headers = { "anthropic-version": "2023-06-01" };
   const urlOf = (s) => `${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(s.id))}`;
+  const get = (s) => doFetch(urlOf(s), { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
+  // a DELETE that throws or times out got no answer: it may still have reached the
+  // server, so it is never reported as a plain failure
   const del = async (s) => {
-    const r = await doFetch(urlOf(s), { method: "DELETE", credentials: "include", headers });
+    let r;
+    try {
+      r = await doFetch(urlOf(s), { method: "DELETE", credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err) {
+      const e = new Error(`no answer (${(err && err.message) || err}) — it may have been deleted`);
+      e.unanswered = true;
+      throw e;
+    }
     if (!r.ok) throw new Error(`delete ${r.status}: ${(await r.text()).slice(0, 200)}`);
   };
   if (!hits.length) return { deleted: 0, failed: [], stopped: false };
+  let precheck;
+  try {
+    precheck = (await get(hits[0])).status;
+  } catch (e) {
+    return { deleted: 0, failed: [], stopped: true,
+      error: `The first session didn't read as present before the delete (${e.message}), so a 404 afterwards would prove nothing: stopped, nothing deleted.` };
+  }
+  if (precheck !== 200) {
+    return { deleted: 0, failed: [], stopped: true,
+      error: `The first session didn't read as present before the delete (answered ${precheck}), so a 404 afterwards would prove nothing: stopped, nothing deleted.` };
+  }
   try {
     await del(hits[0]);
   } catch (e) {
     return { deleted: 0, failed: [], stopped: true,
-      error: `First delete failed (${e.message}): stopped, nothing else deleted.` };
+      error: e.unanswered
+        ? `First delete got ${e.message}: stopped, nothing else deleted — check the session list before running again.`
+        : `First delete failed (${e.message}): stopped, nothing else deleted.` };
   }
   let readBack;
   try {
-    readBack = (await doFetch(urlOf(hits[0]), { credentials: "include", headers })).status;
+    readBack = (await get(hits[0])).status;
   } catch (e) {
     return { deleted: 0, failed: [], stopped: true,
       error: `First delete succeeded, but the read-back failed (${e.message}): stopped, nothing else deleted — check the session list before running again.` };

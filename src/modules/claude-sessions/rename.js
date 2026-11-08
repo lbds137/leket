@@ -39,11 +39,13 @@ export function parseRenames(text) {
 
 // Each entry's current title, read live like the script's first loop does — the keys are
 // the ids exactly as the list carries them, which is what orderRenames looks up.
-export async function currentTitles(list, { fetch: doFetch = fetch } = {}) {
+export async function currentTitles(list, { fetch: doFetch = fetch, timeoutMs = 60_000 } = {}) {
   const headers = { "anthropic-version": "2023-06-01" };
   const titles = new Map();
   for (const [id] of list) {
-    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, { credentials: "include", headers });
+    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, {
+      credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!r.ok) throw new Error(`read ${r.status} (for ${id})`);
     const title = (await r.json()).response_shape?.title;
     // strict, like the script's titleOf: a read this run can't verify stops everything
@@ -72,22 +74,41 @@ export function orderRenames(list, currentTitles) {
 // The run: PUT {title}, then GET and require response_shape.title === target; a
 // mismatch is a failure. A failure at index 0 (after orderRenames) stops the whole
 // list — nothing else was changed.
-export async function renameAll(list, { fetch: doFetch = fetch, onProgress } = {}) {
+export async function renameAll(list, { fetch: doFetch = fetch, timeoutMs = 60_000, onProgress } = {}) {
   const headers = { "anthropic-version": "2023-06-01", "content-type": "application/json" };
   const titleOf = async (id) => {
-    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, { credentials: "include", headers });
+    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, {
+      credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!r.ok) throw new Error(`read ${r.status}`);
     const title = (await r.json()).response_shape?.title;
     if (typeof title !== "string") throw new Error("read: no response_shape.title (the API shape changed)");
     return title;
   };
+  // three outcomes for the first rename's stop line: refused (a non-OK answer: it
+  // didn't take), unanswered (the PUT threw or timed out: it may have reached the
+  // server), and accepted but unverified (2xx, then the read-back failed or differed)
   const rename = async (id, title) => {
-    const r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, {
-      method: "PUT", credentials: "include", headers, body: JSON.stringify({ title }),
-    });
+    let r;
+    try {
+      r = await doFetch(`${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(id))}`, {
+        method: "PUT", credentials: "include", headers, body: JSON.stringify({ title }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      e.unanswered = true;
+      throw e;
+    }
     if (!r.ok) throw new Error(`rename ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    const now = await titleOf(id);
-    if (now !== title) throw new Error(`read back "${now}"`);
+    try {
+      const now = await titleOf(id);
+      if (now !== title) throw new Error(`read back "${now}"`);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      e.accepted = true;
+      throw e;
+    }
   };
   const failed = [];
   let ok = 0;
@@ -99,7 +120,11 @@ export async function renameAll(list, { fetch: doFetch = fetch, onProgress } = {
       failed.push(`${id}: ${err.message}`);
       if (i === 0) {
         return { ok, failed, stopped: true,
-          error: `Stopped: the first rename didn't take (${err.message}). Nothing else was changed.` };
+          error: err.accepted
+            ? `Stopped: the first rename was accepted, but its check failed (${err.message}) — it may have taken (the server can also normalise a title); check that session. Nothing else was changed.`
+            : err.unanswered
+              ? `Stopped: the first rename got no answer (${err.message}) — it may have taken; check that session. Nothing else was changed.`
+              : `Stopped: the first rename didn't take (${err.message}). Nothing else was changed.` };
       }
     }
     if (onProgress) onProgress(i + 1, list.length);

@@ -157,6 +157,27 @@ test("a gallery item whose caption is a number stringifies it as the alt, withou
   assert.ok(md.includes("![5](https://preview.redd.it/one.png)"), md);
 });
 
+test("a gallery item caption of 0 renders \"0\", and an object caption renders empty", () => {
+  const post = {
+    is_gallery: true,
+    gallery_data: { items: [
+      { media_id: "m1", caption: 0 },
+      { media_id: "m2", caption: { text: "object" } },
+    ] },
+    media_metadata: {
+      m1: { status: "valid", m: "image/png", s: { u: "https://preview.redd.it/one.png" } },
+      m2: { status: "valid", m: "image/png", s: { u: "https://preview.redd.it/two.png" } },
+    },
+  };
+  assert.deepEqual(images(post), [
+    [1, "https://preview.redd.it/one.png", "0", ".png", ""],
+    [2, "https://preview.redd.it/two.png", "", ".png", ""],
+  ]);
+  const md = render(postPage(post));
+  assert.ok(md.includes("![0](https://preview.redd.it/one.png)"), md);
+  assert.ok(md.includes("![image 2](https://preview.redd.it/two.png)"), md);
+});
+
 // --- crossposts: the media comes from the parent ---
 
 test("a crosspost takes its image from the parent and still links the child's url", () => {

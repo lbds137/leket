@@ -58,7 +58,7 @@ export function images(p) {
       const m = (item.media_id && meta[item.media_id]) || {};
       const s = m.s || {};
       const u = s.u || s.gif;
-      const caption = item.caption ? String(item.caption) : "";
+      const caption = typeof item.caption === "string" || typeof item.caption === "number" ? String(item.caption) : "";
       if ((m.status ?? "valid") !== "valid") {
         out.push([n, null, caption, "", `status ${m.status}`]);
       } else if (!u) {

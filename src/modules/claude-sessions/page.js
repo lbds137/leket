@@ -55,13 +55,15 @@ const exportPanel = panel("export-status", "export-bar", "export-failures");
 // late note can then update the line without touching the stop message
 const resumeEl = $("export-resume");
 
-// a button sleeps while its run is in flight, so a double click can't double-delete
+// a button (or pair of buttons) sleeps while its run is in flight, so a double click
+// can't double-delete and a dry run can't race a delete
 const busy = async (button, run) => {
-  button.disabled = true;
+  const buttons = Array.isArray(button) ? button : [button];
+  for (const b of buttons) b.disabled = true;
   try {
     await run();
   } finally {
-    button.disabled = false;
+    for (const b of buttons) b.disabled = false;
   }
 };
 
@@ -70,7 +72,7 @@ const busy = async (button, run) => {
 // carries a sequence number (the claude-chat page's pattern)
 let runSeq = 0;
 
-$("export-run").addEventListener("click", (e) => busy(e.target, async () => {
+$("export-run").addEventListener("click", () => busy($("export-run"), async () => {
   const seq = ++runSeq;
   exportPanel.failures([]);
   resumeEl.textContent = "";
@@ -174,7 +176,7 @@ $("export-run").addEventListener("click", (e) => busy(e.target, async () => {
   }
 }));
 
-$("rename-run").addEventListener("click", (e) => busy(e.target, async () => {
+$("rename-run").addEventListener("click", () => busy($("rename-run"), async () => {
   renamePanel.failures([]);
   try {
     const list = parseRenames($("renames").value);
@@ -191,8 +193,14 @@ $("rename-run").addEventListener("click", (e) => busy(e.target, async () => {
       onProgress: (d, t) => { renamePanel.progress(d, t); renamePanel.say(`Renamed ${d} of ${t}…`); },
     });
     renamePanel.failures(done.failed);
-    renamePanel.say(done.stopped ? done.error : `Done: ${done.ok}/${ordered.length} renamed, every one read back.`,
-      done.stopped || done.failed.length ? "warn" : "ok");
+    renamePanel.say(
+      done.stopped
+        ? done.error
+        : done.failed.length
+          ? `Done: ${done.ok}/${ordered.length} renamed and read back; ${done.failed.length} failed (listed below).`
+          : `Done: ${done.ok}/${ordered.length} renamed, every one read back.`,
+      done.stopped || done.failed.length ? "warn" : "ok",
+    );
   } catch (err) {
     renamePanel.say((err && err.message) || String(err), "warn");
   }
@@ -210,7 +218,7 @@ const dryRun = async () => {
   return { prefix, ids: hits.map((s) => s.id) };
 };
 
-$("dry-run").addEventListener("click", (e) => busy(e.target, async () => {
+$("dry-run").addEventListener("click", () => busy([$("dry-run"), $("delete-run")], async () => {
   deletePanel.failures([]);
   try {
     storedDryRun = await dryRun();
@@ -219,20 +227,22 @@ $("dry-run").addEventListener("click", (e) => busy(e.target, async () => {
   }
 }));
 
-$("delete-run").addEventListener("click", (e) => busy(e.target, async () => {
+$("delete-run").addEventListener("click", () => busy([$("dry-run"), $("delete-run")], async () => {
   deletePanel.failures([]);
   try {
     // every input is read once, before any await: the boxes stay editable while a run
     // is in flight, and a mid-run edit must not re-target what this run deletes (an
-    // empty prefix matches every session — checkPrefix refuses it here, at capture)
+    // empty prefix matches every session — checkPrefix refuses it here, at capture);
+    // the dry run it is checked against is pinned here too
     const prefix = checkPrefix($("prefix").value);
     const typed = $("delete-confirm").value;
+    const dry = storedDryRun;
     // the listing runs again at delete time, and the result must match the dry run —
     // prefix, exact ids, and the typed count — not the count alone: a session that
     // started matching after the dry run could slip in under an unchanged count
     deletePanel.say("Listing every session again — the confirm must still match the dry run…");
     const hits = findHits(await listSessions(), prefix);
-    confirmHits(storedDryRun, prefix, hits, typed);
+    confirmHits(dry, prefix, hits, typed);
     deletePanel.progress(0, hits.length);
     deletePanel.say(`Deleting ${hits.length} session(s) — the first is read back before the rest… keep this tab open.`);
     const done = await deleteAll(hits, {
@@ -240,8 +250,12 @@ $("delete-run").addEventListener("click", (e) => busy(e.target, async () => {
     });
     deletePanel.failures(done.failed);
     if (!done.stopped) $("delete-confirm").value = ""; // a completed run resets the confirm
-    deletePanel.say(done.stopped ? done.error : `Done: ${done.deleted} deleted, ${done.failed.length} failed.`,
-      done.stopped || done.failed.length ? "warn" : "ok");
+    deletePanel.say(
+      done.stopped
+        ? done.error
+        : `Done: ${done.deleted} deleted (the first read back as gone; the rest on the server's OK), ${done.failed.length} failed.`,
+      done.stopped || done.failed.length ? "warn" : "ok",
+    );
   } catch (err) {
     deletePanel.say((err && err.message) || String(err), "warn");
   }
