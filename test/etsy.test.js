@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson }
+const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson, finishMessage, conflictActionFor }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -121,8 +121,46 @@ test("each page attempt carries the cumulative offset on the exact path and quer
     `${url("111")}?offset=3&fetch_older=true&load_shop_convos=false`,
     `${url("111")}?offset=4&fetch_older=true&load_shop_convos=false`,
   ]);
-  // the fetch rides the page's session, asking Etsy for JSON
-  assert.deepEqual(fetch.calls[0].opts, { credentials: "include", headers: { accept: "application/json" } });
+  // the fetch rides the page's session, asking Etsy for JSON, with a per-page timeout signal
+  assert.ok(fetch.calls[0].opts.signal instanceof AbortSignal, "the fetch carries an abort timeout");
+  assert.notEqual(fetch.calls[0].opts.signal, fetch.calls[1].opts.signal, "a fresh timeout signal per page");
+  assert.deepEqual(fetch.calls[0].opts, {
+    credentials: "include",
+    headers: { accept: "application/json" },
+    signal: fetch.calls[0].opts.signal,
+  });
+});
+
+test("a fetch that times out records the error on its conversation; the next id still runs", async () => {
+  const fetch = async (u) => {
+    if (u.includes("/111/")) throw new DOMException("The operation timed out.", "TimeoutError");
+    return { ok: true, status: 200, json: async () => [msg(9)] };
+  };
+  const convos = await collectConversations(["111", "222"], { fetch, sleep: async () => {} });
+  assert.equal(convos[0].error, "The operation timed out.");
+  assert.deepEqual(convos[1].messages.map((m) => m.conversation_message_id), [9]);
+  assert.equal(convos[1].error, undefined);
+});
+
+test("timeoutMs reaches the abort signal: a fetch that never answers ends as a timeout", async () => {
+  const fetch = (u, opts) => new Promise((_, reject) => {
+    opts.signal.addEventListener("abort", () => reject(opts.signal.reason));
+  });
+  const convos = await collectConversations(["111"], { fetch, sleep: async () => {}, timeoutMs: 1 });
+  assert.match(convos[0].error, /timed? ?out|timeout/i);
+});
+
+test("a body read the timeout aborts is a timeout, not a sign-out", async () => {
+  const fetch = async (u, opts) => ({
+    ok: true,
+    status: 200,
+    json: () => new Promise((_, reject) => {
+      opts.signal.addEventListener("abort", () => reject(opts.signal.reason));
+    }),
+  });
+  const convos = await collectConversations(["111"], { fetch, sleep: async () => {}, timeoutMs: 1 });
+  assert.doesNotMatch(convos[0].error, /signed out/);
+  assert.match(convos[0].error, /timed? ?out|timeout/i);
 });
 
 test("a !ok page marks its conversation with the HTTP error; the next id still runs", async () => {
@@ -321,14 +359,12 @@ test("parsesAsJson: serializePayload's own identity output parses", () => {
   assert.equal(parsesAsJson(out), true);
 });
 
-// The seam the whole-blob guard corrupts today: a message text whose newline sits right
-// before an email bearing the config's own name makes the guard's match start on the
-// JSON escape letter, leaving a dangling backslash — the redacted file does not parse.
+// The whole-blob seam pin: a message text whose newline sits right before an email
+// bearing the config's own name used to make the guard's match start on the JSON escape
+// letter, leaving a dangling backslash. With pastEscape in the guard, the escape stays
+// intact and the redacted payload parses as JSON.
 // (The newline is built fromCharCode so the source carries no escape to mis-transcribe.)
-// This pin passes today — it pins the detection, not the guard — and stays green until
-// the guard's fix lands, at which point it flips to the strict parse-pin: the same
-// payload serialized with a fixed guard parses, and this assertion inverts.
-test("parsesAsJson catches the guard's corrupt output: a newline before a name-bearing email", () => {
+test("parsesAsJson: a newline before a name-bearing email stays valid JSON after redaction", () => {
   const newline = String.fromCharCode(10);
   const text = `Email me:${newline}betsy@gmail.com`;
   const convo = {
@@ -341,7 +377,8 @@ test("parsesAsJson catches the guard's corrupt output: a newline before a name-b
     extractedAt: "2026-11-05T00:00:00.000Z",
     redact: makeRedact({ name: "betsy", short: "bpt", firstSounds: "bpt" }),
   });
-  assert.equal(parsesAsJson(out), false);
+  assert.equal(parsesAsJson(out), true);
+  assert.equal(JSON.parse(out).conversations[0].messages[0].text, `Email me:${newline}[email redacted]`);
 });
 
 test("the manifest grants the bare etsy.com host the registry already matches", () => {
@@ -364,9 +401,110 @@ test("the etsy open carries the matched tab's id as a query; a tabless call open
   assert.ok(!created[1].includes("?"), created[1]);
 });
 
-test("redactionCollisions: a name one edit from Etsy's own words reaches them; a clean one does not", () => {
+test("redactionCollisions: a name one edit from Etsy's own words or payload keys reaches them; a clean one does not", () => {
   const colliding = redactionCollisions(makeRedact({ name: "betsy", short: "bpt", firstSounds: "bpt" }));
   assert.deepEqual(colliding, ["etsy", "www.etsy.com", "https://www.etsy.com/messages/123456"]);
+  assert.deepEqual(redactionCollisions(makeRedact({ name: "paige", short: "pai", firstSounds: "p" })), ["pages"]);
   assert.deepEqual(redactionCollisions(makeRedact({ ...VALID })), []);
   assert.deepEqual(redactionCollisions((s) => s), []);
+  assert.deepEqual(redactionCollisions(() => "[redacted]"), [
+    "etsy",
+    "www.etsy.com",
+    "https://www.etsy.com/messages/123456",
+    "source",
+    "extracted_at",
+    "redact",
+    "method",
+    "conversations",
+    "id",
+    "url",
+    "pages",
+    "messages",
+    "error",
+    "conversation_message_id",
+    "create_date",
+    "message_order",
+  ]);
+});
+
+test("finishMessage: ok class only when saved, no errors, redact on, and JSON sound; warn otherwise", () => {
+  const cleanConvo = { id: "111", messages: [msg(1), msg(2)] };
+  const errConvo = { id: "222", messages: [msg(3)], error: "HTTP 500 at offset 0" };
+  const filename = "etsy-conversations-2026-11-05.json";
+
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: true }),
+    { text: "Saved 1 conversations, 2 messages. Redact: on.", cls: "ok" },
+  );
+
+  // conversation errors force warn and name the error count
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [cleanConvo, errConvo], filename, redactState: "on", sound: true }),
+    { text: "Saved 2 conversations, 3 messages, 1 with errors (listed in the file). Redact: on.", cls: "warn" },
+  );
+
+  // unguarded exports (either off state) force warn even with zero conversation errors
+  for (const redactState of ["off (no etsyRedact config)", "off (etsyRedact config incomplete)"]) {
+    assert.deepEqual(
+      finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState, sound: true }),
+      { text: `Saved 1 conversations, 2 messages. Redact: ${redactState}.`, cls: "warn" },
+    );
+  }
+
+  // an unparseable redacted output forces warn and appends the do-not-share warning
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: false }),
+    {
+      text: "Saved 1 conversations, 2 messages. Redact: on. The redacted file does NOT parse as JSON — do not share it, and report it. It was saved beside any earlier export of the day, not over it.",
+      cls: "warn",
+    },
+  );
+  // a no-word save of an unsound file carries the same warning: its late end may never be said
+  assert.deepEqual(
+    finishMessage({ saved: null, conversations: [cleanConvo], filename, redactState: "on", sound: false }),
+    {
+      text: "No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: on. The redacted file does NOT parse as JSON — do not share it, and report it. It was saved beside any earlier export of the day, not over it.",
+      cls: "warn",
+    },
+  );
+
+  // interrupted/refused (false) and no-word (null) saves always warn
+  assert.deepEqual(
+    finishMessage({ saved: false, conversations: [cleanConvo], filename, redactState: "on", sound: true }),
+    {
+      text: `The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads. Redact: on.`,
+      cls: "warn",
+    },
+  );
+  assert.deepEqual(
+    finishMessage({ saved: null, conversations: [cleanConvo], filename, redactState: "on", sound: true }),
+    {
+      text: "No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: on.",
+      cls: "warn",
+    },
+  );
+});
+
+test("finishMessage: the seq === runSeq guard drops a stale run's late finish and keeps the current run's", () => {
+  const cleanConvo = { id: "111", messages: [msg(1)] };
+  const filename = "etsy-conversations-2026-11-05.json";
+  assert.equal(
+    finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: true, seq: 1, runSeq: 2 }),
+    null,
+  );
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: true, seq: 2, runSeq: 2 }),
+    { text: "Saved 1 conversations, 1 messages. Redact: on.", cls: "ok" },
+  );
+});
+
+test("conflictActionFor: a sound export overwrites the same-day file, an unsound one lands beside it", () => {
+  assert.equal(conflictActionFor(true), "overwrite");
+  assert.equal(conflictActionFor(false), "uniquify");
+});
+
+test("page.js wires the pure decisions: finishMessage and conflictActionFor are what it calls", () => {
+  const src = readFileSync(new URL("../src/modules/etsy/page.js", import.meta.url), "utf8");
+  assert.match(src, /conflictAction: conflictActionFor\(sound\)/);
+  assert.match(src, /finishMessage\(\{ saved, conversations, filename, redactState, sound, seq, runSeq \}\)/);
 });

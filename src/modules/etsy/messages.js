@@ -24,6 +24,7 @@ const collectConversations = async (ids, {
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   pauseMs = 400,
   maxPages = 400,
+  timeoutMs = 60_000,
   onProgress,
 } = {}) => {
   const conversations = [];
@@ -38,13 +39,15 @@ const collectConversations = async (ids, {
         const r = await fetch(
           `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list` +
             `?offset=${offset}&fetch_older=true&load_shop_convos=false`,
-          { credentials: "include", headers: { accept: "application/json" } },
+          { credentials: "include", headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) },
         );
         if (!r.ok) throw new Error(`HTTP ${r.status} at offset ${offset}`);
         let data;
         try {
           data = await r.json();
-        } catch {
+        } catch (e) {
+          // the timeout signal also aborts a stalled body read: that is a timeout, not a sign-out
+          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw e;
           throw new Error(`not JSON (signed out of Etsy?) at offset ${offset}`);
         }
         const page = messagesIn(data);
@@ -87,10 +90,27 @@ const redactStateFor = (stored) => {
   return ok ? "on" : "off (etsyRedact config incomplete)";
 };
 
-// the module's own constants the whole-blob guard can reach; the page warns when a
-// configured name also matches one of these — the rewrite itself is by design (the
-// guard's owner ruled it stays whole-blob), the warning is what's new here
-const PROBES = ["etsy", "www.etsy.com", "https://www.etsy.com/messages/123456"];
+// the module's own constants and JSON key names the whole-blob guard can reach; the
+// page warns when a configured name also matches one of these — the rewrite itself is
+// by design (the guard's owner ruled it stays whole-blob), the warning is what's new here
+const PROBES = [
+  "etsy",
+  "www.etsy.com",
+  "https://www.etsy.com/messages/123456",
+  "source",
+  "extracted_at",
+  "redact",
+  "method",
+  "conversations",
+  "id",
+  "url",
+  "pages",
+  "messages",
+  "error",
+  "conversation_message_id",
+  "create_date",
+  "message_order",
+];
 const redactionCollisions = (redact) => PROBES.filter((s) => redact(s) !== s);
 
 const serializePayload = (conversations, opts = {}) => {
@@ -117,10 +137,8 @@ const serializePayload = (conversations, opts = {}) => {
   return redact(json);
 };
 
-// the whole-blob guard can corrupt the serialized JSON (a match starting on a JSON
-// escape letter leaves a dangling backslash — escalated to the guard's owner). The
-// page checks the redacted output before it claims success, and never claims ok when
-// the file would not parse.
+// defence in depth over the whole-blob guard: the page checks the redacted output still
+// parses before it claims success, so a guard regression never rides a green line.
 const parsesAsJson = (text) => {
   try {
     JSON.parse(text);
@@ -132,4 +150,43 @@ const parsesAsJson = (text) => {
 
 const outputName = (date = new Date()) => `etsy-conversations-${date.toISOString().slice(0, 10)}.json`;
 
-export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson };
+// what the page says when a download settles (in time or late): a download Chrome
+// interrupted or refused is not a Saved, however green the collection was; the ok
+// class needs no conversation errors AND redact on AND a parseable file — an
+// unguarded export or a corrupt one never looks clean. When seq and runSeq are
+// given (the late-finish path), a stale run's end returns null so a later run
+// keeps the status line.
+const UNSOUND = " The redacted file does NOT parse as JSON — do not share it, and report it."
+  + " It was saved beside any earlier export of the day, not over it.";
+const finishMessage = ({ saved, conversations = [], filename, redactState, sound = true, seq, runSeq }) => {
+  if (seq !== undefined && runSeq !== undefined && seq !== runSeq) return null;
+  const failed = conversations.filter((c) => c.error).length;
+  const total = conversations.reduce((s, c) => s + (c.messages ? c.messages.length : 0), 0);
+  if (saved === true) {
+    return {
+      text: `Saved ${conversations.length} conversations, ${total} messages`
+        + (failed ? `, ${failed} with errors (listed in the file)` : "")
+        + `. Redact: ${redactState}.`
+        + (sound ? "" : UNSOUND),
+      cls: failed || redactState !== "on" || !sound ? "warn" : "ok",
+    };
+  }
+  if (saved === false) {
+    return {
+      text: `The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads. Redact: ${redactState}.`,
+      cls: "warn",
+    };
+  }
+  // a no-word save of an unsound file may still land, and its late end may never be
+  // said (a newer run owns the line): the do-not-share warning rides this line too
+  return {
+    text: `No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: ${redactState}.`
+      + (sound ? "" : UNSOUND),
+    cls: "warn",
+  };
+};
+
+// an unparseable export never replaces a same-day good one: it lands beside it
+const conflictActionFor = (sound) => (sound ? "overwrite" : "uniquify");
+
+export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson, finishMessage, conflictActionFor };

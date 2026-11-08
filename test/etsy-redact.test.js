@@ -107,3 +107,86 @@ test("a folded variant of the name matches even when no other rule would catch i
   const dotless = String.fromCodePoint(0x131);
   assert.equal(g(`xyz${dotless}r${dotless}sxyz`), "xyz[redacted]xyz");
 });
+
+const POSITIVES = [
+  // 1. the class that cuts escapes (email after a control character)
+  "Email me:\njanedoe@gmail.com",
+  "Email me:\tjane.x@y.com",
+  "x\x1fjanedoe@x.com",
+  // 2. the short form after an escape that ends in a letter
+  "x\x1fjane", "x\x08jane", "x\x0cjane", "see\njane",
+  // 3. a misheard form after backslash-b or -f
+  "to\x08jnedoe", "to\x0cjnedoe",
+  // 4. a split name with one edit across backslash-b or -f
+  "jan\x0cedoo", "jan\x08edoo",
+  // 5. a split name across a two-character gap containing an escape
+  "jan\r\nedoe", "jan\n\nedoe", "jan\n edoe", "jan\t edoe",
+  // baseline
+  "janedoe", "gane doe", "xjanedoex", "jnaedoe", "janedoes",
+];
+const NEGATIVES = ["janet", "ajane", "jan"];
+const RESIDUES = ["jane", "gane", "jnedo", "jnaed", "edoo"];
+
+test("all 20 acceptance positives redact and still JSON.parse with no residue and escapes intact", () => {
+  for (const [i, input] of POSITIVES.entries()) {
+    const fed = JSON.stringify(input);
+    const out = f(fed);
+    let parsed;
+    assert.doesNotThrow(() => { parsed = JSON.parse(out); }, `case ${i + 1} must parse as JSON: ${out}`);
+    const low = parsed.toLowerCase();
+    for (const r of RESIDUES) {
+      assert.ok(!low.includes(r), `case ${i + 1} left residue "${r}" in ${JSON.stringify(parsed)}`);
+    }
+  }
+  // the email cases keep their escape intact in both the JSON text and the parsed value
+  const emailNl = f(JSON.stringify(POSITIVES[0]));
+  assert.ok(emailNl.includes("\\n"), emailNl);
+  assert.equal(JSON.parse(emailNl), "Email me:\n[email redacted]");
+  const emailTab = f(JSON.stringify(POSITIVES[1]));
+  assert.ok(emailTab.includes("\\t"), emailTab);
+  assert.equal(JSON.parse(emailTab), "Email me:\t[email redacted]");
+  const emailUs = f(JSON.stringify(POSITIVES[2]));
+  assert.ok(emailUs.includes("\\u001f"), emailUs);
+  assert.equal(JSON.parse(emailUs), "x\x1f[email redacted]");
+});
+
+test("acceptance negatives stay byte-untouched when fed through JSON.stringify", () => {
+  for (const input of NEGATIVES) {
+    const fed = JSON.stringify(input);
+    assert.equal(f(fed), fed);
+  }
+});
+
+test("acceptance positive-control config maryanne/mary/m leaves all 20 positives and 3 negatives untouched", () => {
+  const control = makeRedact({ name: "maryanne", short: "mary", firstSounds: "m" });
+  for (const input of [...POSITIVES, ...NEGATIVES]) {
+    const fed = JSON.stringify(input);
+    assert.equal(control(fed), fed);
+  }
+});
+
+// Known-and-accepted over-redaction: when the configured name starts with n/r/t/b/f,
+// readings(w) tries w[1] + w[2] (prepending the JSON escape's letter) before w[2] alone.
+// A word after \n whose letters, with "n" in front, are within one edit of the name
+// ("atalia" -> "natalia", one substitution from "natalie"; "atali" -> "natali", one
+// deletion) is redacted after \n even though the same word after a space is untouched
+// (two edits from "natalie" without the "n"). pastEscape still keeps the \n intact.
+test("known-and-accepted over-redaction: a name starting with n/r/t/b/f over-redacts after that escape while keeping valid JSON", () => {
+  const nat = makeRedact({ name: "natalie", short: "nat", firstSounds: "n" });
+  assert.equal(nat(JSON.stringify("line atalia")), JSON.stringify("line atalia"));
+  const afterEscape = nat(JSON.stringify("line\natalia"));
+  assert.equal(afterEscape, JSON.stringify("line\n[redacted]"));
+  assert.equal(JSON.parse(afterEscape), "line\n[redacted]");
+
+  assert.equal(nat(JSON.stringify("line atali")), JSON.stringify("line atali"));
+  const shortAfterEscape = nat(JSON.stringify("line\natali"));
+  assert.equal(shortAfterEscape, JSON.stringify("line\n[redacted]"));
+  assert.equal(JSON.parse(shortAfterEscape), "line\n[redacted]");
+
+  // the short-form path reaches further: the escape letter plus a common word spells the
+  // short form exactly, so a line starting with "at" loses that word ("n" + "at" = "nat")
+  assert.equal(nat(JSON.stringify("see you at noon")), JSON.stringify("see you at noon"));
+  const lineStart = nat(JSON.stringify("see you\nat noon"));
+  assert.equal(lineStart, JSON.stringify("see you\n[redacted] noon"));
+  assert.equal(JSON.parse(lineStart), "see you\n[redacted] noon");
+});
