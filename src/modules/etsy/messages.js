@@ -1,6 +1,8 @@
 // The Etsy module's pure half, ported from the console script in docs/etsy-script-spec.md
 // — the script is the spec. No chrome, no document, no Blob: the page (page.js) is the
 // seam, everything here runs under node; fetch and sleep are injectable opts.
+import { makeRedact } from "./redact.js";
+
 const messagesIn = (node, out = []) => {
   if (Array.isArray(node)) node.forEach((x) => messagesIn(x, out));
   else if (node && typeof node === "object") {
@@ -34,7 +36,13 @@ const collectConversations = async (ids, {
     let offset = 0;
     let stale = 0;
     try {
-      while (convo.pages < maxPages) {
+      for (;;) {
+        // the cap ends the walk without an error, but never silently: the file and the
+        // page both say older messages may be missing
+        if (convo.pages >= maxPages) {
+          convo.truncated = true;
+          break;
+        }
         if (onProgress) onProgress(i + 1, ids.length, id, seen.size);
         const r = await fetch(
           `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list` +
@@ -114,6 +122,7 @@ const PROBES = [
   "conversation_message_id",
   "create_date",
   "message_order",
+  "truncated",
 ];
 const redactionCollisions = (redact) => PROBES.filter((s) => redact(s) !== s);
 
@@ -138,8 +147,17 @@ const redactLineFor = (redactState, hits = []) => {
   if (redactState === "off (no etsyRedact config)") {
     return { text: "Redact: off — no etsyRedact config; the export is unredacted.", cls: "warn" };
   }
-  // a state this helper doesn't know yet still says its own reason, never another's
-  return { text: `Redact: ${redactState}; the export is unredacted.`, cls: "warn" };
+  // a state this helper doesn't know yet names itself and warns, claiming nothing about
+  // what the export holds — it might be off, or a partial "on" added later
+  return { text: `Redact: ${String(redactState)} — this page has no description for that state; check the export before sharing it.`, cls: "warn" };
+};
+
+// the page's whole redact setup in one pure step, so the test runs the page's own chain:
+// the state, the guard (only when on) and the line that narrates both
+const redactSetup = (stored) => {
+  const redactState = redactStateFor(stored);
+  const redact = redactState === "on" ? makeRedact(stored) : undefined;
+  return { redactState, redact, line: redactLineFor(redactState, redact ? redactionCollisions(redact) : []) };
 };
 
 const serializePayload = (conversations, opts = {}) => {
@@ -148,7 +166,13 @@ const serializePayload = (conversations, opts = {}) => {
   // key-presence-based: "on" only when a redact fn was actually passed, the reason it
   // is off otherwise (the page passes both options explicitly; the override covers its
   // "config incomplete" state)
-  const redactState = opts.redactState ?? (typeof opts.redact === "function" ? "on" : "off (no etsyRedact config)");
+  const hasRedact = typeof opts.redact === "function";
+  const redactState = opts.redactState ?? (hasRedact ? "on" : "off (no etsyRedact config)");
+  // an override that contradicts the function is a wiring bug: the file would claim a
+  // guard that never ran (or hide one that did), so it fails loudly instead of saving
+  if ((redactState === "on") !== hasRedact) {
+    throw new Error(`redact state "${redactState}" ${hasRedact ? "with" : "without"} a redact function — not saving a mislabelled export`);
+  }
   const json = JSON.stringify(
     {
       source: "etsy",
@@ -181,22 +205,36 @@ const outputName = (date = new Date()) => `etsy-conversations-${date.toISOString
 
 // what the page says when a download settles (in time or late): a download Chrome
 // interrupted or refused is not a Saved, however green the collection was; the ok
-// class needs no conversation errors AND redact on AND a parseable file — an
+// class needs no conversation errors, empty answers or capped walks AND redact on AND a parseable file — an
 // unguarded export or a corrupt one never looks clean. When seq and runSeq are
 // given (the late-finish path), a stale run's end returns null so a later run
 // keeps the status line.
 const UNSOUND = " The redacted file does NOT parse as JSON — do not share it, and report it.";
+// an id that answered with nothing, and no error to say why: almost always a wrong id
+const isEmpty = (c) => !c.error && !(c.messages && c.messages.length);
+
+// the page's per-conversation list: every conversation that isn't a clean full walk,
+// one line each — an error, an empty answer, or a walk the page cap stopped
+const failureLines = (conversations = []) => conversations.flatMap((c) => [
+  ...(c.error ? [`${c.id}: ${c.error}`] : []),
+  ...(isEmpty(c) ? [`${c.id}: no messages — check the id`] : []),
+  ...(c.truncated ? [`${c.id}: stopped at the page cap — older messages may be missing`] : []),
+]);
 const finishMessage = ({ saved, conversations = [], filename, redactState, sound = true, seq, runSeq }) => {
   if (seq !== undefined && runSeq !== undefined && seq !== runSeq) return null;
   const failed = conversations.filter((c) => c.error).length;
+  const empty = conversations.filter(isEmpty).length;
+  const truncated = conversations.filter((c) => c.truncated).length;
   const total = conversations.reduce((s, c) => s + (c.messages ? c.messages.length : 0), 0);
   if (saved === true) {
     return {
       text: `Saved ${conversations.length} conversations, ${total} messages`
         + (failed ? `, ${failed} with errors (listed in the file)` : "")
+        + (empty ? `, ${empty} with no messages (wrong id?)` : "")
+        + (truncated ? `, ${truncated} stopped at the page cap (older messages may be missing)` : "")
         + `. Redact: ${redactState}.`
         + (sound ? "" : UNSOUND + " It was saved beside any earlier export of the day, not over it."),
-      cls: failed || redactState !== "on" || !sound ? "warn" : "ok",
+      cls: failed || empty || truncated || redactState !== "on" || !sound ? "warn" : "ok",
     };
   }
   if (saved === false) {
@@ -217,4 +255,4 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
 // an unparseable export never replaces a same-day good one: it lands beside it
 const conflictActionFor = (sound) => (sound ? "overwrite" : "uniquify");
 
-export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, parsesAsJson, finishMessage, conflictActionFor };
+export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor };
