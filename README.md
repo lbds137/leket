@@ -133,6 +133,7 @@ Layout:
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).
+- `icons/`: the toolbar and extension icons. `source/logo.svg` draws the 48 and 128 px ones; `source/logo-16.svg` is a simplified version for 16 px, where the full one blurs. Regenerate with `rsvg-convert -w N -h N icons/source/logo.svg -o icons/iconN.png` (`logo-16.svg` for N = 16).
 
 ## License
 
