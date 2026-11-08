@@ -276,6 +276,17 @@ test("Stop in the wait after a nudge, and Auto-scroll again, wait out the pacing
   // fix; the long-rest path overwrites the gap exactly as before.
 });
 
+test("Stop in the wait after the 20th nudge, and Auto-scroll again, still take the long rest", () => {
+  const { paces, restNotes, restLoads, loads, status } = runPage("auto", [], { AUTO_STOP_WAIT: "20" });
+  // the rest is owed from the 20th nudge on: the restart waits it out (all of it: the
+  // clock is still at the nudge), with the note up, instead of moving on after 2-4 s
+  assert.deepEqual(restLoads, [20], paces.join(","));
+  assert.equal(paces.filter((ms) => ms >= 30000).length, 1, paces.join(","));
+  assert.match(restNotes[0], /resting for up to a minute/);
+  assert.equal(loads, 25);
+  assert.match(status, /reached the start of the channel/);
+});
+
 test("Stop and Auto-scroll again during the long rest wait out the rest", () => {
   const { paces, restNotes, loads, status } = runPage("auto", [], { AUTO_RESTART: "rest" });
   const long = paces.filter((ms) => ms >= 30000);

@@ -681,9 +681,12 @@
     const s = scroller();
     const before = seen.size;
     if (s) nudge(s);
-    // the step counts as it nudges, not when its wait ends: a Stop in the wait, then
-    // Auto-scroll again, must not push the long rest one step further back each time
-    const n = ++steps;
+    // the step counts, and its pause is chosen, when the step starts (with its nudge, if
+    // there is a scroller to nudge), not when its wait ends: a Stop in the wait, or a
+    // climb that ends there, then Auto-scroll again, must neither push the long rest
+    // back nor skip it
+    const ms = pause(++steps);
+    restOwed = ms >= LONG_REST[0];
     const started = Date.now();
     const wait = () => {
       if (!timer) return;
@@ -705,7 +708,6 @@
         stopAuto();
         status.textContent += " — STALLED, not at the start: scroll up by hand, then Auto-scroll again";
       } else {
-        const ms = pause(n);
         // render() keeps the note on through any redraw until the rest is over
         nextStepAt = Date.now() + ms;
         if (ms >= LONG_REST[0]) { restUntil = nextStepAt; render(); }
@@ -713,8 +715,9 @@
       }
     };
     // the pacing gap runs from the nudge on: a Stop in the wait, then Auto-scroll again,
-    // waits out what is left of it (the pause chosen below replaces this once it is known)
-    nextStepAt = Date.now() + between(SHORT_REST);
+    // waits out what is left of this step's pause, a long rest included (once the wait
+    // ends, the pause runs from there instead)
+    nextStepAt = Date.now() + ms;
     timer = setTimeout(wait, 250);
   };
   // Pacing: each history page Discord loads is a request on the account, so the climb goes
@@ -726,15 +729,16 @@
   const pause = (n) => between(n % REST_EVERY === 0 ? LONG_REST : SHORT_REST);
   // Stop and Auto-scroll again skip no pacing: steps keeps counting toward the next long
   // rest, and a restart first waits out whatever pacing the Stop cut short (nextStepAt:
-  // the gap since the last nudge, then the pause that follows it)
-  let steps = 0, restUntil = 0, nextStepAt = 0, restCut = false;
+  // the gap since the last nudge, then the pause that follows it; restOwed: the last
+  // step's pause is a long rest, so a restart before it shows the rest note)
+  let steps = 0, restUntil = 0, nextStepAt = 0, restCut = false, restOwed = false;
   const autoBtn = btn("Auto-scroll", () => {
     if (timer) return stopAuto();
     if (!scroller()) return alert("Open the conversation first, then press Auto-scroll again.");
     idle = 0;
     autoBtn.textContent = "Stop";
     const left = Math.max(0, nextStepAt - Date.now());
-    if (restCut && left > 0) { restUntil = nextStepAt; render(); }
+    if ((restCut || restOwed) && left > 0) { restUntil = nextStepAt; render(); }
     restCut = false;
     timer = setTimeout(step, left);
   });
