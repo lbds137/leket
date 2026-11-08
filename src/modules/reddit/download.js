@@ -10,8 +10,9 @@ import { trackDownload } from "../../lib/download.js";
 // with no word yet may still be reading the blob, so it fires only then — the worker
 // uses it to ask the document to revoke that blob).
 // Background always passes exactly two files, json then md; the message builder's
-// three shapes below assume that count.
-export async function downloadPrepared(downloads, files, { timeout, onSettled } = {}) {
+// three shapes below assume that count, and notFetched (> 0) appends the unfetched-
+// comments note to the two Saved shapes.
+export async function downloadPrepared(downloads, files, { timeout, onSettled, notFetched } = {}) {
   // saveAs is pinned off so the save never raises a prompt of its own; Chrome's own
   // "ask where to save each file" setting still asks when it is on — the API flag
   // can't suppress the user's setting (runtime-confirmed 11-04) — and the save lands
@@ -44,6 +45,9 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled } 
     message = `Saved ${settled[0].name} to Downloads. ${unsettled[0].name} is still saving, with no word for a long while — if it never lands in Downloads, click Save again.`;
   } else {
     message = `${unsettled.map((f) => f.name).join(" and ")} are still saving, with no word for a long while — if they never land in Downloads, click Save again.`;
+  }
+  if (Number.isFinite(notFetched) && notFetched > 0 && message.startsWith("Saved")) {
+    message += ` ${notFetched} more comment${notFetched === 1 ? " wasn't" : "s weren't"} fetched — the .md links to them on reddit.`;
   }
   return { settled: unsettled.length === 0, message };
 }

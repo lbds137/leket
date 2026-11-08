@@ -83,6 +83,7 @@ const redditSave = async (tabUrl) => {
     { url: prep.url, name: prep.name },
     { url: prep.mdUrl, name: prep.mdName },
   ], {
+    notFetched: prep.notFetched,
     onSettled: (file) => chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-revoke", url: file.url }).catch(() => {}),
   });
   return { ok: true, message: done.message };

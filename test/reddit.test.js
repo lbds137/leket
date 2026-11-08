@@ -214,6 +214,25 @@ test("an unreachable reddit says so", async () => {
   );
 });
 
+test("a fetch whose body read rejects is reported as an unreachable reddit", async () => {
+  const fetch = async () => ({ ok: true, status: 200, text: async () => { throw new Error("reset"); } });
+  await assert.rejects(
+    preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch }),
+    /Couldn't reach reddit.*\(reset\)/,
+  );
+});
+
+test("preparePostJson returns notFetched for the comment tree", async () => {
+  const plain = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch: okFetch().fetch });
+  assert.equal(plain.notFetched, 0);
+  const withMore = okFetch(JSON.stringify(postPage({}, [
+    { kind: "more", data: { count: 4, parent_id: "t1_abc9" } },
+    { kind: "more", data: { count: 0, parent_id: "t1_abc9" } },
+  ])));
+  const partial = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch: withMore.fetch });
+  assert.equal(partial.notFetched, 5);
+});
+
 test("a page without a post id in its path is refused, in the script's words, and nothing is fetched", async () => {
   const { fetch, calls } = okFetch();
   await assert.rejects(
@@ -243,6 +262,18 @@ test("both files settle: they download in order, saveAs pinned off, and each set
   assert.equal(done.settled, true);
   assert.equal(done.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
   assert.deepEqual(settledFiles, twoFiles);
+  workerDownloads.calls.length = 0;
+});
+
+test("downloadPrepared appends the notFetched note when notFetched > 0 and keeps the message unchanged for 0 or undefined", async () => {
+  const three = await downloadPrepared(workerDownloads, twoFiles, { notFetched: 3 });
+  assert.equal(three.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 3 more comments weren't fetched — the .md links to them on reddit.");
+  const one = await downloadPrepared(workerDownloads, twoFiles, { notFetched: 1 });
+  assert.equal(one.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 1 more comment wasn't fetched — the .md links to them on reddit.");
+  const zero = await downloadPrepared(workerDownloads, twoFiles, { notFetched: 0 });
+  assert.equal(zero.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
+  const undef = await downloadPrepared(workerDownloads, twoFiles, {});
+  assert.equal(undef.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
   workerDownloads.calls.length = 0;
 });
 
