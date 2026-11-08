@@ -77,7 +77,9 @@ evidence.
   result line, never the file. The button also saves `reddit-<id>.md`, rendered by
   md.js as a straight port of dev-docs `bin/reddit-export`'s converter, images remote,
   image-folder download CLI-only. Chrome floor 109 (the offscreen API's own floor, per its
-  reference page; `hasDocument()` keeps it there — `getContexts()` would force 116).
+  reference page). The open-document check is `runtime.getContexts()` from 116 and the
+  worker's `clients.matchAll()` below it, as that page shows; not `hasDocument()`, which
+  the page lists as Chrome 150+ (checked 2026-11-08, #48).
 - **Etsy** — pages Etsy's own read-only message-list endpoint
   (`/api/v3/ajax/member/conversations/detail/<id>/message-list` with `offset` +
   `fetch_older=true`), dedupes on `conversation_message_id`, stops only after two

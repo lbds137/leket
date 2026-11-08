@@ -30,6 +30,7 @@ const workerDownloads = {
 
 let onMessageListener = null;
 let offscreenHas = false;
+const OFFSCREEN_URL = "chrome-extension://test-extension-id/src/modules/reddit/offscreen.html";
 const offscreenCreates = [];
 const relayedRuns = [];
 const revokesSent = [];
@@ -42,6 +43,10 @@ globalThis.chrome = {
     id: "test-extension-id",
     onMessage: { addListener: (fn) => { onMessageListener = fn; } },
     getURL: (p) => `chrome-extension://test-extension-id/${p}`,
+    // Chrome 116+'s check; answers only for the exact document the worker asks about
+    getContexts: async ({ contextTypes, documentUrls }) =>
+      offscreenHas && contextTypes.includes("OFFSCREEN_DOCUMENT")
+        && documentUrls.includes(OFFSCREEN_URL) ? [{ documentUrl: OFFSCREEN_URL }] : [],
     sendMessage: async (msg) => {
       if (msg && msg.type === "discord-tools:reddit-save-run") {
         relayedRuns.push(msg);
@@ -57,7 +62,7 @@ globalThis.chrome = {
     },
   },
   offscreen: {
-    hasDocument: async () => offscreenHas,
+    // no hasDocument: the worker must not lean on it (Chrome 150+, past the 109 floor)
     createDocument: async (o) => { offscreenCreates.push(o); offscreenHas = true; },
   },
   downloads: workerDownloads,
@@ -439,6 +444,26 @@ test("an existing offscreen document is reused, not re-created", async () => {
   const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a save, got ${JSON.stringify(reply)}`);
   assert.equal(offscreenCreates.length, 0, "no second document");
+});
+
+test("below Chrome 116 (no getContexts) the worker's clients say whether the document is open", async () => {
+  const getContexts = chrome.runtime.getContexts;
+  delete chrome.runtime.getContexts;
+  const hadSelf = "self" in globalThis, oldSelf = globalThis.self;
+  // the worker's clients list the document by its URL once it is open
+  globalThis.self = { clients: { matchAll: async () => (offscreenHas ? [{ url: OFFSCREEN_URL }] : [{ url: "chrome-extension://test-extension-id/other.html" }]) } };
+  try {
+    const save = () => handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+    reset();
+    relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
+    assert.ok((await save()).ok);
+    assert.equal(offscreenCreates.length, 1, "no document among the clients: one is created");
+    assert.ok((await save()).ok);
+    assert.equal(offscreenCreates.length, 1, "the open document is found among the clients and reused");
+  } finally {
+    chrome.runtime.getContexts = getContexts;
+    if (hadSelf) globalThis.self = oldSelf; else delete globalThis.self;
+  }
 });
 
 test("two saves racing still create only one offscreen document, and the second waits for its listener", async () => {

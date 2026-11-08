@@ -88,7 +88,8 @@ test("a click saves the part before the build returned: the first draw keeps the
 });
 
 test("a clean save closes on its first draw; saved by a click later, it stays with an answer", () => {
-  const clean = { failed: [], messages: 5, attachments: 2, streamed: false, results: [{ ok: true }] };
+  const clean = { failed: [], messages: 5, attachments: 2, streamed: false, results: [{ index: 1, ok: true }],
+    records: [{ filename: "a", part: 1 }, { filename: "b", part: 1 }] };
   const first = summarize({ ...clean, first: true });
   assert.equal(first.close, true);
   assert.equal(first.release, true);
@@ -111,7 +112,38 @@ test("files left out of every part keep the save held, whatever the parts do", (
   assert.match(failing.status, /The save stopped there — 4 attachment\(s\) never got into a part/);
 });
 
-test("a save without attachments counts only messages", () => {
-  const s = summarize({ failed: [], messages: 3, attachments: 0, streamed: false, results: [{ ok: false }], first: true });
-  assert.match(s.status, /^Saved 3 messages\. 1 part\(s\) didn't finish/);
+test("a save without attachments counts only messages, and only once their zip is saved", () => {
+  const s = summarize({ failed: [], messages: 3, attachments: 0, streamed: false, results: [{ index: 1, ok: false }], first: true });
+  assert.match(s.status, /^The 3 messages are in the zip, which isn't saved yet\. 1 part\(s\) didn't finish/);
+  const saved = summarize({ failed: [], messages: 3, attachments: 0, streamed: false, results: [{ index: 1, ok: true }], first: true });
+  assert.match(saved.status, /^Saved 3 messages\. Every part is downloaded\./);
+});
+
+// a small save in 3 parts: 10 files, one dead link, four of them in part 2
+const smallSave = () => {
+  const records = Array.from({ length: 10 }, (_, k) => ({ filename: `f${k}`, part: k < 3 ? 1 : k < 7 ? 2 : 3 }));
+  records[9] = { filename: "dead.png", error: "x" };   // never fetched: in no part
+  return { records, failed: [records[9]], messages: 40, attachments: 10, streamed: false };
+};
+
+test("a small save's failed part: its files aren't counted as saved until a click saves it", () => {
+  const s = summarize({ ...smallSave(), first: true,
+    results: [{ index: 1, ok: true }, { index: 2, ok: false }, { index: 3, ok: true }] });
+  assert.match(s.status, /^Saved 40 messages and 5 of 10 attachments\. 1 part\(s\) didn't finish/);
+  assert.equal(s.lost.length, 1, "the part's files are waiting on a click, not lost");
+  const later = summarize({ ...smallSave(), first: false,
+    results: [{ index: 1, ok: true }, { index: 2, ok: true }, { index: 3, ok: true }] });
+  assert.match(later.status, /^Saved 40 messages and 9 of 10 attachments\./);
+});
+
+test("part 1 not saved: the messages aren't counted as saved, in either kind of save", () => {
+  const small = summarize({ ...smallSave(), first: true,
+    results: [{ index: 1, ok: false }, { index: 2, ok: true }, { index: 3, ok: true }] });
+  assert.match(small.status, /^The 40 messages are in part 1, which isn't saved yet; saved 6 of 10 attachments\. 1 part\(s\) didn't finish/);
+  // a streamed save stops at its failed first part: every file is left behind, and only
+  // the manifest's own part goes out after it
+  const left = Array.from({ length: 10 }, (_, k) => rec(`f${k}`, { error: "not saved — the save stopped early" }));
+  const streamed = summarize({ failed: left, leftBehind: 10, messages: 40, attachments: 10, streamed: true, first: true,
+    results: [{ index: 1, ok: false }, { index: 2, ok: true }] });
+  assert.match(streamed.status, /^The 40 messages are in part 1, which isn't saved yet; saved 0 of 10 attachments\. 1 part\(s\) didn't finish/);
 });

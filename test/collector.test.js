@@ -268,6 +268,9 @@ test("Stop in the wait after a nudge, and Auto-scroll again, wait out the pacing
   // Stop lands in the wait after step 3's nudge, with the clock still at the nudge: the
   // restart's own step waits the unexpired 2-4 s gap out, it doesn't nudge at once
   assert.ok(restarted.paces[3] >= 2000 && restarted.paces[3] < 4000, restarted.paces.join(","));
+  // step 3's nudge was made before the Stop, so it counts toward the long rest: the rest
+  // still comes after the 20th nudge (here, the 20th load), not one step late
+  assert.deepEqual(restarted.restLoads, [20]);
   // A climb that ends in a quick wait (reached-since) leaves the nudge gap standing, so
   // a restart inside it still paces — the same in kind as a pause remainder before this
   // fix; the long-rest path overwrites the gap exactly as before.

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, fetchFile, restBetweenFiles } from "../src/lib/build.js";
-import { attachmentList, fetchable, fileName, needsParts } from "../src/lib/files.js";
+import { FOLDER, attachmentList, fetchable, fileName, needsParts } from "../src/lib/files.js";
 import { PART_LIMIT } from "../src/lib/zip.js";
 import { render } from "../src/lib/render.js";
 
@@ -112,6 +112,38 @@ test("a download that stalls is dropped after the idle time, and the build goes 
   assert.ok(Date.now() - t < 2000);
 });
 
+test("a stop cuts a retry's back-off short and drops the try in flight", async () => {
+  // stopped during the back-off after a 503: no second try, and no 3 s wait
+  let calls = 0;
+  const halt = new AbortController();
+  const t = Date.now();
+  const backingOff = fetchFile(`${CDN}/a`, { fetchFn: async () => { calls++; return new Response("", { status: 503 }); },
+    wait: 3000, signal: halt.signal });
+  await new Promise((r) => setTimeout(r, 20));
+  halt.abort();
+  assert.deepEqual(await backingOff, { stopped: true });
+  assert.equal(calls, 1);
+  assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
+  // stopped mid-download: the fetch's own signal is aborted, and the answer is the stop,
+  // not the download's error
+  const halt2 = new AbortController();
+  let seen;
+  const hangs = async (url, { signal }) => {
+    seen = signal;
+    return new Response(new ReadableStream({ start(c) { signal.addEventListener("abort", () => c.error(signal.reason)); } }));
+  };
+  const reading = fetchFile(`${CDN}/a`, { fetchFn: hangs, wait: 3000, signal: halt2.signal });
+  await new Promise((r) => setTimeout(r, 20));
+  halt2.abort();
+  assert.deepEqual(await reading, { stopped: true });
+  assert.equal(seen.aborted, true, "the try in flight was dropped");
+  // a stop that came first: nothing is fetched at all
+  calls = 0;
+  assert.deepEqual(await fetchFile(`${CDN}/a`, { fetchFn: async () => { calls++; return new Response("ok"); }, signal: AbortSignal.abort() }),
+    { stopped: true });
+  assert.equal(calls, 0);
+});
+
 test("the zip holds the JSON, the page, the manifest and the files that came", async () => {
   const fetchFn = fakeFetch({ [`${CDN}/10/cat.png`]: "PNGDATA", [`${CDN}/11/gone.mp4`]: 404, [`${CDN}/12/f.ogg`]: "OGG" });
   const r = await build(exp(), { file: "discord-general-600.json", fetchFn, wait: 0, gap: 0 });
@@ -152,6 +184,15 @@ test("past the part limit the save comes in numbered parts, the page in the firs
   const parts = await unzip(r.parts);
   assert.ok("index.html" in parts[0]);
   assert.equal(parts.flatMap((p) => Object.keys(p)).filter((n) => n.startsWith("discord-attachments/")).length, 3);
+  // each part is numbered, and each file names the part it went into (the export tab
+  // counts a file as saved only once that part is)
+  assert.deepEqual(r.parts.map((p) => p.index), [1, 2, 3]);
+  const packed = r.records.filter((m) => !m.error);
+  assert.equal(packed.length, 3);
+  for (const rec of packed) {
+    assert.ok(`${FOLDER}/${rec.file}` in parts[rec.part - 1], `${rec.file} is in part ${rec.part}`);
+  }
+  assert.ok(r.records.filter((m) => m.error).every((m) => m.part === undefined), "a file not fetched is in no part");
 });
 
 test("streamed, the text part goes out first and the attachment parts follow, one part at a time", async () => {
@@ -580,7 +621,10 @@ test("attachments are fetched two at a time by default, each worker resting betw
   let settled = false;
   const run = build(six, { file: "d.json", fetchFn, wait: 0, gap: () => { rests.push(1); return 40; } })
     .finally(() => { settled = true; });
-  // a real setImmediate lets the pending promise work run before each tick
+  // a real setImmediate lets the pending promise work run before each tick. This assumes
+  // the fetch path is microtask-only between timers: a macrotask hop added to it (a
+  // setImmediate, blob.arrayBuffer(), real I/O) shifts the offsets below by 1 ms a hop,
+  // and the exact offsets then fail every run, not flakily
   for (let ms = 0; !settled && ms < 1000; ms++) {
     await new Promise((resolve) => setImmediate(resolve));
     t.mock.timers.tick(1);
@@ -593,6 +637,42 @@ test("attachments are fetched two at a time by default, each worker resting betw
   assert.equal(rests.length, 4);
   // the pairs start one fetch (5 ms) plus one rest (40 ms) apart
   assert.deepEqual(starts.map((s) => s - starts[0]), [0, 0, 45, 45, 90, 90]);
+});
+
+test("a worker that finishes while the last file is still unclaimed rests, then finds nothing left", async (t) => {
+  // The interleaving the lockstep test above rules out: staggered fetches (5 and 7 ms,
+  // f5 only 1 ms) let worker 1 finish f5 at 91 ms while f6 is still unclaimed. It starts
+  // a fifth rest; worker 2 claims f6 at 94 ms; worker 1 wakes to nothing and stops.
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const six = exp();
+  six.messages = Array.from({ length: 6 }, (_, k) => ({
+    id: String(k + 1), datetime: `2021-01-01T10:0${k}:00.000Z`,
+    attachments: [{ filename: `f${k + 1}.bin`, url: `${CDN}/${k + 1}/f.bin` }],
+  }));
+  const took = { 1: 5, 2: 7, 3: 5, 4: 7, 5: 1, 6: 7 };
+  const starts = [];
+  const fetchFn = async (url) => {
+    const k = Number(url.split("/")[5]);
+    starts.push([k, Date.now()]);
+    await new Promise((r) => setTimeout(r, took[k]));
+    return new Response("data", { status: 200 });
+  };
+  const rests = [];
+  let settled = false;
+  const run = build(six, { file: "d.json", fetchFn, wait: 0, gap: () => { rests.push(Date.now()); return 40; } })
+    .finally(() => { settled = true; });
+  // the same drive loop as the lockstep test, with the same microtask-only assumption
+  for (let ms = 0; !settled && ms < 1000; ms++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(1);
+  }
+  assert.ok(settled, "the build did not settle within 1000 fake ms");
+  const r = await run;
+  assert.equal(r.failed.length, 0);
+  const t0 = starts[0][1];
+  assert.deepEqual(starts.map(([k, at]) => [k, at - t0]), [[1, 0], [2, 0], [3, 45], [4, 47], [5, 90], [6, 94]],
+    "six fetches, each file once: no seventh after the fifth rest");
+  assert.deepEqual(rests.map((at) => at - t0), [5, 7, 50, 54, 91], "the fifth rest starts as f5 ends, f6 unclaimed");
 });
 
 test("the default rest between files is 0.5-1 s", () => {
@@ -624,7 +704,7 @@ test("a worker that rests past the last file stops there: an odd count with two 
   assert.equal(calls, 3);
 });
 
-test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fetches nothing more", async () => {
+test("a stop landing during a worker's rest: nothing more is fetched after it", async () => {
   const big = "x".repeat(40000);
   const four = exp();
   four.messages = [1, 2, 3, 4].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k - 1}:00.000Z`,
@@ -639,15 +719,17 @@ test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fe
   // post-add rest, so the stop lands mid-rest: it must wake, see the stop, and claim
   // nothing more. Its own file sits in the discarded half-filled part, so only the file
   // inside the handed part counts as saved.
-  // The stop checks live in three places (the worker's while condition, the post-rest
-  // break, the streamed-gate break), so this pins the invariant — no claim once the stop
-  // has landed — not any one line: killing all three reddens it, each alone stays green.
+  // The stop is checked in four places, each a backstop for the others: the worker's
+  // while condition, the post-rest break, the streamed-gate break, and fetchFile's check
+  // before each try. This pins the invariant (nothing is fetched once the stop has
+  // landed), not any one line: killing all four reddens it, while killing the worker's
+  // three, together or one at a time, stays green. fetchFile's check has its own tests.
   const handed = [];
   const r = await build(four, { file: "d.json", fetchFn, wait: 0, gap: 250, partLimit: 60000, concurrency: 2,
     onPart: async (p) => { handed.push(p.index); return p.index !== 2; } });
   assert.deepEqual(handed, [1, 2, 3], "text, the part whose hand-off stopped the save, then the manifest");
   assert.deepEqual(fetched.slice().sort(), [`${CDN}/1/f.bin`, `${CDN}/2/f.bin`],
-    "only the first two files were fetched; the resting worker claimed no more");
+    "only the first two files were fetched; the resting worker fetched no more");
   // which of the two fetched files sits in part 2 follows the add race; either way that
   // part's hand-off said false, so nothing counts as saved (as in the onPart-false test)
   assert.equal(r.saved, 0);
@@ -661,7 +743,7 @@ test("a stop landing during a worker's rest ends it: it wakes, sees the stop, fe
   }
 });
 
-test("a stop landing while a worker sits in the part hand-off ends it: it claims nothing more", async () => {
+test("a stop landing while a worker sits in the part hand-off: nothing more is fetched after it", async () => {
   const big = "x".repeat(40000);
   const four = exp();
   four.messages = [1, 2, 3, 4].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k - 1}:00.000Z`,
@@ -683,9 +765,9 @@ test("a stop landing while a worker sits in the part hand-off ends it: it claims
   // seals part 2 — and parks inside the held hand-off (the post-add drain), not the
   // streamed-gate loop: both workers' gate checks there run on an empty queue. Releasing
   // the hand-off lands the stop while worker 2 sits in drain(); only then f1 is released,
-  // too late to be added. Neither worker may claim f4. (The same three-layer note as the
+  // too late to be added. Neither worker may fetch f4. (The same four-layer note as the
   // rest test; with gap 0 the rest break never fires, and here both workers exit at the
-  // while condition — the gate break is the backstop the mutation run exercises.)
+  // while condition, with the gate break and fetchFile's check as backstops.)
   const handed = [];
   const building = build(four, { file: "d.json", fetchFn, wait: 0, gap: () => 0, partLimit: 60000, concurrency: 2,
     onPart: async (p) => {
@@ -700,7 +782,7 @@ test("a stop landing while a worker sits in the part hand-off ends it: it claims
   const r = await building;
   assert.deepEqual(handed, [1, 2, 3], "text, the refused part, then the manifest");
   assert.deepEqual(fetched.slice().sort(), [`${CDN}/1/f.bin`, `${CDN}/2/f.bin`, `${CDN}/3/f.bin`],
-    "f4 was never claimed, least of all by the worker parked at the gate");
+    "f4 was never fetched, least of all by the worker parked at the gate");
   assert.equal(r.saved, 0);
   assert.equal(r.failed.length, 4);
   assert.equal(r.leftBehind, 3);
@@ -710,4 +792,29 @@ test("a stop landing while a worker sits in the part hand-off ends it: it claims
     assert.equal(r.records.find((m) => m.filename === name).error, "not saved — the save stopped early");
     assert.equal(r.records.find((m) => m.filename === name).failedPart, undefined, `${name} is in no part`);
   }
+});
+
+test("a stop reaches a worker retrying a 503: the manifest goes out without waiting the back-off", async () => {
+  const big = "x".repeat(40000);
+  const three = exp();
+  three.messages = [1, 2, 3].map((k) => ({ id: String(k), datetime: `2021-01-01T10:0${k - 1}:00.000Z`,
+    attachments: [{ filename: `f${k}.bin`, url: `${CDN}/${k}/f.bin` }] }));
+  let busyTries = 0;
+  const fetchFn = async (url) => {
+    if (url.startsWith(`${CDN}/2/`)) { busyTries++; return new Response("", { status: 503 }); }
+    return new Response(big, { status: 200, headers: { "content-length": String(Buffer.byteLength(big)) } });
+  };
+  // worker 1 takes f1 then f3, whose add seals part 2 (f1); part 2's hand-off says
+  // false. Worker 2 is backing off from f2's 503 by then (3 s, then 6, 9, 12): the stop
+  // must cut that short rather than hold the manifest for half a minute.
+  const handed = [];
+  const t = Date.now();
+  const r = await build(three, { file: "d.json", fetchFn, wait: 3000, gap: 0, partLimit: 60000, concurrency: 2,
+    onPart: async (p) => { handed.push(p.index); return p.index !== 2; } });
+  assert.ok(Date.now() - t < 2000, `the build took ${Date.now() - t} ms`);
+  assert.deepEqual(handed, [1, 2, 3], "text, the refused part, then the manifest");
+  assert.equal(busyTries, 1, "no retry after the stop");
+  const f2 = r.records.find((m) => m.filename === "f2.bin");
+  assert.equal(f2.error, "not saved — the save stopped early", "the stop, not the 503, is why f2 is unsaved");
+  assert.equal(r.leftBehind, 2, "f2 and f3 never got into a part");
 });

@@ -36,12 +36,13 @@ export function endStep({ ok, saved, latest, inFlight }) {
 
 // The summary, from where things stand now. results: one { index, ok } per part handed to
 // a download; failed: the build's records with an error; leftBehind: records a stopped
-// streamed save kept out of every part. first: the build has just returned (later calls
-// follow a click or a late finish that saved a part).
+// streamed save kept out of every part; records: all the build's records, where a small
+// save's notes which part each file went into (part). first: the build has just returned
+// (later calls follow a click or a late finish that saved a part).
 // Returns lost (the records still not saved), release (every part is down and nothing is
 // left out, so the Discord tab can let go of the save), close (all done on the first
 // draw), detail and status (the page's two lines) and warn (status is a warning).
-export function summarize({ results, failed, leftBehind = 0, messages, attachments, streamed, first }) {
+export function summarize({ results, failed, leftBehind = 0, records = [], messages, attachments, streamed, first }) {
   const badParts = results.filter((r) => !r.ok);
   // a streamed part's files are marked as in it until it downloads: once that part is
   // saved (by a click, or a download that finished late), they are saved after all
@@ -54,7 +55,14 @@ export function summarize({ results, failed, leftBehind = 0, messages, attachmen
   const intro = results.length > 1 ? `The save is in ${results.length} parts: unzip them all into the same folder, then open index.html. `
     : "Unzip it and open index.html to read it. ";
   const detail = intro + (badParts.length ? `${badParts.length} part(s) above didn't finish — click them to try again. ` : "");
-  const savedText = `Saved ${messages} messages${attachments ? ` and ${attachments - lost.length} of ${attachments} attachments` : ""}.`;
+  // a small save's parts download after its build, so its files carry no failedPart: a
+  // file in a part that isn't saved (yet) isn't saved either
+  const waiting = records.filter((r) => r.part && !r.error && !savedParts.has(r.part)).length;
+  const attachText = `${attachments - lost.length - waiting} of ${attachments} attachments`;
+  // part 1 holds the messages and the readable page, in both kinds of save
+  const savedText = savedParts.has(1)
+    ? `Saved ${messages} messages${attachments ? ` and ${attachText}` : ""}.`
+    : `The ${messages} messages are in ${results.length > 1 ? "part 1" : "the zip"}, which isn't saved yet${attachments ? `; saved ${attachText}` : ""}.`;
   const staleNote = !staleParts.length ? ""
     : ` discord-attachments.json was written before part ${staleParts.join(", ")} was saved, so it still lists that part's files as not downloaded: they are in the part.`;
   // a streamed save stops at its first failed part; whether anything was left out of
