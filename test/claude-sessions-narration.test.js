@@ -203,9 +203,9 @@ test("renameDoneLine: all read back is ok; uncertain results are counted apart f
   const { renameDoneLine } = await import("../src/modules/claude-sessions/narration.js");
   assert.deepEqual(renameDoneLine({ ok: 3, failed: [], uncertain: 0 }, 3),
     { text: "Done: 3/3 renamed, every one read back.", cls: "ok" });
-  // both kinds: one parenthetical, and it says the list holds all of them
+  // both kinds: one parenthetical, and it says the list holds both kinds
   assert.deepEqual(renameDoneLine({ ok: 1, failed: ["x", "y", "z"], uncertain: 2 }, 4), {
-    text: "Done: 1/4 renamed and read back; 1 failed, 2 may have taken (no answer, or unverified — check those sessions; all listed below).",
+    text: "Done: 1/4 renamed and read back; 1 failed, 2 may have taken (no answer, or unverified — check those sessions; both kinds listed below).",
     cls: "warn",
   });
   assert.equal(renameDoneLine({ ok: 2, failed: ["x"], uncertain: 0 }, 3).text,
