@@ -44,6 +44,7 @@ const REDDIT_POST = "https://www.reddit.com/r/x/comments/abc123/a_post/";
 const REDDIT_JSON = "https://www.reddit.com/comments/abc123.json?raw_json=1&limit=500";
 const redditBody = JSON.stringify(postPage({}, [
   { kind: "t1", data: { id: "c1", author: "someone_else", body: "a comment", score: 3, created_utc: 1699000100, replies: "" } },
+  { kind: "more", data: { count: 2, parent_id: "t1_c1", children: ["x", "y"] } },
 ]));
 const DISCORD_DM = "https://discord.com/channels/@me/111";
 const ATTACHMENT = "https://cdn.discordapp.com/attachments/1/2/note.txt";
@@ -278,6 +279,7 @@ async function scenarios(cdp, downloads) {
       `(() => { const p = document.getElementById("card").lastElementChild; const t = p && !p.hidden ? p.textContent : ""; return t && t !== "Working…" ? { t, warn: p.classList.contains("warn") } : false; })()`),
     "the popup's result line", 30000);
     check(!line.warn, `reddit save ${round}: the popup reports success (it said: ${line.t})`);
+    check(line.t.includes("2 more comments weren't fetched"), `reddit save ${round}: the popup notes unfetched comments (it said: ${line.t})`);
     // Chrome's own count of finished reddit saves: two per round. The files on disk can't
     // show a second round happened — the first left the very same bytes
     const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123", state: "complete" }).then((d) => d.length)`)

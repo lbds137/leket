@@ -8,7 +8,7 @@
 // reading one. The console script dev-docs/browser/reddit-json.js is the spec, as-is;
 // its old.reddit advice stays advice in the error text — never an auto-retry.
 import { POST_PATHNAME } from "../registry.js";
-import { render } from "./md.js";
+import { render, notFetched } from "./md.js";
 
 export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   const here = new URL(tabUrl);
@@ -22,14 +22,20 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   // the script fetches a relative path from the post's own page; the port fetches the
   // same origin the tab is on (www or old), so the same logged-in session answers.
   // A timeout, so a stalled reddit says "unreachable" instead of parking the popup.
+  const unreachable = (e) => new Error(`Couldn't reach reddit to fetch this post's JSON — check the connection, then click Save again. (${(e && e.message) || e})`);
   let r;
   try {
     r = await doFetch(`${here.origin}/comments/${id[1]}.json?raw_json=1&limit=500`, { credentials: "include", signal: AbortSignal.timeout(60_000) });
   } catch (e) {
-    throw new Error(`Couldn't reach reddit to fetch this post's JSON — check the connection, then click Save again. (${(e && e.message) || e})`);
+    throw unreachable(e);
   }
   if (!r.ok) throw new Error(`reddit answered ${r.status}; try again from old.reddit.com/comments/${id[1]}`);
-  const text = await r.text();
+  let text;
+  try {
+    text = await r.text();
+  } catch (e) {
+    throw unreachable(e);
+  }
   let data;
   try {
     data = JSON.parse(text);
@@ -53,5 +59,6 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
     name: `reddit-${id[1]}.json`,
     mdUrl: URL.createObjectURL(new Blob([mdText], { type: "text/markdown" })),
     mdName: `reddit-${id[1]}.md`,
+    notFetched: notFetched(data),
   };
 }

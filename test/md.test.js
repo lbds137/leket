@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { postOf, mediaPost, images, when, quote, comments, render } from "../src/modules/reddit/md.js";
+import { postOf, mediaPost, images, when, quote, comments, notFetched, safeBody, render } from "../src/modules/reddit/md.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const comment = (over = {}) => ({ kind: "t1", data: {
@@ -75,16 +75,56 @@ test("replies = \"\" (reddit's no-replies marker) is skipped, not recursed into"
 
 // --- "load more comments" counts ---
 
-test("a more node with count 1 names one reply, count 2 names replies, count 0 is silent, other kinds are skipped", () => {
+test("a more node with count 1 names one reply, count 2 names replies, count 0 cuts link the branch or stay silent, other kinds are skipped", () => {
   const one = render(postPage({}, [{ kind: "more", data: { count: 1 } }]));
   assert.ok(one.includes("> *[1 more reply not loaded: https://www.reddit.com/r/x/comments/abc123/a_post/]*"), one);
   const two = render(postPage({}, [{ kind: "more", data: { count: 2 } }]));
   assert.ok(two.includes("*[2 more replies not loaded: https://www.reddit.com/r/x/comments/abc123/a_post/]*"), two);
+  const twoBranch = render(postPage({}, [{ kind: "more", data: { count: 2, parent_id: "t1_abc9" } }]));
+  assert.ok(twoBranch.includes("> *[2 more replies not loaded: https://www.reddit.com/r/x/comments/abc123/a_post/abc9/]*"), twoBranch);
+  const twoPost = render(postPage({}, [{ kind: "more", data: { count: 2, parent_id: "t3_abc123" } }]));
+  assert.ok(twoPost.includes("> *[2 more replies not loaded: https://www.reddit.com/r/x/comments/abc123/a_post/]*"), twoPost);
+  const twoBadId = render(postPage({}, [{ kind: "more", data: { count: 2, parent_id: "t1_../x" } }]));
+  assert.ok(twoBadId.includes("> *[2 more replies not loaded: https://www.reddit.com/r/x/comments/abc123/a_post/]*"), twoBadId);
+  const cut = render(postPage({}, [{ kind: "more", data: { count: 0, parent_id: "t1_abc9" } }]));
+  assert.ok(cut.includes("> *[thread continues: https://www.reddit.com/r/x/comments/abc123/a_post/abc9/]*"), cut);
   const zero = render(postPage({}, [{ kind: "more", data: { count: 0 } }]));
   assert.ok(zero.includes("*(no comments)*"), zero);
-  assert.ok(!zero.includes("more repl"), zero);
+  assert.ok(!zero.includes("more repl") && !zero.includes("thread continues"), zero);
   const t4 = render(postPage({}, [{ kind: "t4", data: {} }]));
   assert.ok(t4.includes("*(no comments)*"), t4);
+});
+
+test("notFetched sums nested more counts and count-0 cuts, and render() writes the note once after ## Comments", () => {
+  const tree = postPage({}, [
+    comment({
+      replies: {
+        kind: "Listing",
+        data: {
+          children: [
+            { kind: "more", data: { count: 3, parent_id: "t1_c1" } },
+            { kind: "more", data: { count: 0, parent_id: "t1_c1" } },
+          ],
+        },
+      },
+    }),
+    { kind: "more", data: { count: 4, parent_id: "t3_abc123" } },
+    { kind: "more", data: { count: 0 } },
+    { kind: "more", data: { count: "bad" } },
+  ]);
+  assert.equal(notFetched(tree), 8);
+  const md = render(tree);
+  const note = "*(This save holds the comments reddit sent in one page; reddit counts 8 more that were not fetched — the links below open them on reddit.)*";
+  assert.ok(md.includes(`## Comments\n\n${note}\n\n> **u/alice**`), md);
+  assert.equal(md.split("This save holds the comments reddit sent in one page").length - 1, 1);
+
+  const singleCut = postPage({}, [{ kind: "more", data: { count: 0, parent_id: "t1_abc9" } }]);
+  assert.equal(notFetched(singleCut), 1);
+  assert.ok(render(singleCut).includes("reddit counts 1 more that was not fetched — the links below open them on reddit."), render(singleCut));
+
+  const complete = postPage({}, [comment()]);
+  assert.equal(notFetched(complete), 0);
+  assert.ok(!render(complete).includes("not fetched"), render(complete));
 });
 
 // --- the "Links to:" line ---
@@ -98,13 +138,14 @@ test("a link post gets a Links to line; a url equal to the reddit link does not"
 
 // --- single images ---
 
-test("an image post renders a remote image line and no Links to line", () => {
+test("an image post renders a remote image line in angle brackets and no Links to line", () => {
   const hinted = render(postPage({ post_hint: "image", url_overridden_by_dest: "https://i.redd.it/pic.png" }));
-  assert.ok(hinted.includes("![image 1](https://i.redd.it/pic.png)"), hinted);
+  assert.ok(hinted.includes("![image 1](<https://i.redd.it/pic.png>)"), hinted);
   assert.ok(!hinted.includes("Links to:"), hinted);
-  assert.ok(!hinted.includes("(<"), "a remote image links out, without angle brackets");
   const byExtension = render(postPage({ url: "https://example.com/photo.png" }));
-  assert.ok(byExtension.includes("![image 1](https://example.com/photo.png)"), byExtension);
+  assert.ok(byExtension.includes("![image 1](<https://example.com/photo.png>)"), byExtension);
+  const parensAndSpace = render(postPage({ post_hint: "image", url_overridden_by_dest: "https://example.com/a (1).png" }));
+  assert.ok(parensAndSpace.includes("![image 1](<https://example.com/a%20(1).png>)"), parensAndSpace);
   // the pathname check, not the hint: post_hint "link" keeps a page whose pathname is
   // not an image extension a link (the CLI checks the .pathname, so a bare ".jpg" in
   // the middle of the path is not an image)
@@ -129,7 +170,7 @@ test("a gallery renders its items in order: image with sanitized alt, failed not
       m3: { e: "RedditVideo", s: { mp4: "https://v.redd.it/clip.mp4" } },
     },
   }));
-  assert.ok(md.includes("![A photo o/ here](https://preview.redd.it/one.png)"), md);
+  assert.ok(md.includes("![A photo o/ here](<https://preview.redd.it/one.png>)"), md);
   assert.ok(md.includes("*(gallery item 2: broken pic not saved: status failed)*"), md);
   assert.ok(!md.includes("broken [pic]"), "the note carries the sanitized alt, never the raw caption");
   assert.ok(md.includes("*(gallery item 3 not saved: a video or animation (mp4 only))*"), md);
@@ -154,7 +195,7 @@ test("a gallery item whose caption is a number stringifies it as the alt, withou
     gallery_data: { items: [{ media_id: "m1", caption: 5 }] },
     media_metadata: { m1: { status: "valid", m: "image/png", s: { u: "https://preview.redd.it/one.png" } } },
   }));
-  assert.ok(md.includes("![5](https://preview.redd.it/one.png)"), md);
+  assert.ok(md.includes("![5](<https://preview.redd.it/one.png>)"), md);
 });
 
 test("a gallery item caption of 0 renders \"0\", and an object caption renders empty", () => {
@@ -174,8 +215,8 @@ test("a gallery item caption of 0 renders \"0\", and an object caption renders e
     [2, "https://preview.redd.it/two.png", "", ".png", ""],
   ]);
   const md = render(postPage(post));
-  assert.ok(md.includes("![0](https://preview.redd.it/one.png)"), md);
-  assert.ok(md.includes("![image 2](https://preview.redd.it/two.png)"), md);
+  assert.ok(md.includes("![0](<https://preview.redd.it/one.png>)"), md);
+  assert.ok(md.includes("![image 2](<https://preview.redd.it/two.png>)"), md);
 });
 
 // --- crossposts: the media comes from the parent ---
@@ -186,7 +227,7 @@ test("a crosspost takes its image from the parent and still links the child's ur
     url: "https://example.com/thing",
     crosspost_parent_list: [{ post_hint: "image", url_overridden_by_dest: "https://i.redd.it/g1.jpg" }],
   }));
-  assert.ok(md.includes("![image 1](https://i.redd.it/g1.jpg)"), md);
+  assert.ok(md.includes("![image 1](<https://i.redd.it/g1.jpg>)"), md);
   assert.ok(md.includes("Links to: https://example.com/thing"), md);
 });
 
@@ -202,7 +243,7 @@ test("a crosspost whose PARENT holds a gallery renders the parent's items, and n
   }));
   // images() must reach the parent's gallery THROUGH mediaPost, and the render's
   // Links-to check looks at mediaPost(p).is_gallery — the parent's gallery suppresses it
-  assert.ok(md.includes("![image 1](https://preview.redd.it/p1.jpg)"), md);
+  assert.ok(md.includes("![image 1](<https://preview.redd.it/p1.jpg>)"), md);
   assert.ok(!md.includes("Links to:"), `the gallery parent suppresses the child's Links to line:\n${md}`);
 });
 
@@ -222,7 +263,7 @@ test("a gallery with a null item among its items renders the no-image note, with
     gallery_data: { items: [{ media_id: "m1" }, null] },
     media_metadata: { m1: { status: "valid", m: "image/png", s: { u: "https://preview.redd.it/one.png" } } },
   }));
-  assert.ok(md.includes("![image 1](https://preview.redd.it/one.png)"), md);
+  assert.ok(md.includes("![image 1](<https://preview.redd.it/one.png>)"), md);
   assert.ok(md.includes("*(gallery item 2 not saved: no image URL)*"), md);
 });
 
@@ -319,4 +360,53 @@ test("comments appends head, blank quote, body, blank — and recurses into repl
   const empty = [];
   comments(null, 1, "/r/x/", empty);
   assert.deepEqual(empty, []);
+});
+
+test("safeBody escapes < outside code and closes unclosed fences in post and comment bodies", () => {
+  assert.equal(safeBody("    <x>"), "    <x>");
+  assert.equal(safeBody("\t<x>"), "\t<x>");
+  assert.equal(safeBody("a <T> b"), "a &lt;T> b");
+  assert.equal(safeBody("<!-- x\nafter"), "&lt;!-- x\nafter");
+  assert.equal(safeBody("`a<b`"), "`a<b`");
+  assert.equal(safeBody("```\n<x>\n```\n<y>"), "```\n<x>\n```\n&lt;y>");
+  assert.equal(safeBody("~~~~\n<x>\n```\n<y>\n~~~~\n<z>"), "~~~~\n<x>\n```\n<y>\n~~~~\n&lt;z>");
+  assert.equal(safeBody("`` a <b `c<d` <e>"), "`` a &lt;b `c<d` &lt;e>");
+
+  const postMd = render(postPage({ selftext: "a <T> b\n```\n<x>" }));
+  assert.ok(postMd.includes("a &lt;T> b\n```\n<x>\n```\n\n---\n\n## Comments"), postMd);
+
+  const commentMd = render(postPage({}, [comment({ body: "<!-- x\n`a<b` and <c>\n~~~~\n<raw>" })]));
+  assert.ok(commentMd.includes("> &lt;!-- x\n> `a<b` and &lt;c>\n> ~~~~\n> <raw>\n> ~~~~"), commentMd);
+});
+
+test("a title's bare < is escaped like a body's, outside code spans", () => {
+  const md = render(postPage({ title: "Why <T> beats `a<b`" }));
+  assert.ok(md.startsWith("# Why &lt;T> beats `a<b`\n"), md);
+});
+
+test("a branch link needs a permalink to hang off: without one the more line links the post", () => {
+  const md = render(postPage({ permalink: null }, [{ kind: "more", data: { count: 2, parent_id: "t1_abc9" } }]));
+  assert.ok(md.includes("> *[2 more replies not loaded: https://www.reddit.com]*"), md);
+  assert.ok(!md.includes("reddit.comabc9"), md);
+});
+
+test("safeBody's fences: a longer same-char closer closes, a shorter one doesn't, a backtick info string isn't a fence", () => {
+  assert.equal(safeBody("```\n<x>\n`````\n<y>"), "```\n<x>\n`````\n&lt;y>");
+  assert.equal(safeBody("````\n<x>\n```\n<y>"), "````\n<x>\n```\n<y>\n````");
+  assert.equal(safeBody("``` a`b\n<x>"), "``` a`b\n&lt;x>");
+});
+
+test("safeBody tracks fences behind list and blockquote markers, and closes them inside their container", () => {
+  // a list item's fence closes on its indented closer: no stray fence, text after is escaped
+  assert.equal(safeBody("- ```\n  <x>\n  ```\n<y>"), "- ```\n  <x>\n  ```\n&lt;y>");
+  assert.equal(safeBody("1. ```\n   <x>\n   ```"), "1. ```\n   <x>\n   ```");
+  // a blockquoted fence keeps its code raw, and an unclosed one closes inside the quote
+  assert.equal(safeBody("> ```\n> <x>\n> ```"), "> ```\n> <x>\n> ```");
+  assert.equal(safeBody("> ```\n> <x>"), "> ```\n> <x>\n> ```");
+  assert.equal(safeBody("- ```\n  <x>"), "- ```\n  <x>\n  ```");
+});
+
+test("a list fence closes at its own content depth; a top-level fence keeps a 4-space closer as content", () => {
+  assert.equal(safeBody("10. ```\n    <x>\n    ```\n<y>"), "10. ```\n    <x>\n    ```\n&lt;y>");
+  assert.equal(safeBody("```\n    ```\n<x>"), "```\n    ```\n<x>\n```");
 });

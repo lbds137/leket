@@ -9,7 +9,10 @@
 // Where the port deliberately differs from the python: null fields fall back to the
 // placeholder (u/[deleted], r/?, (untitled)) where python's .get(key, default) would
 // print None; ?? guards keep 0 falsy-safe (score: 0 renders "0 points"); null
-// children/body/replies cannot crash the port.
+// children/body/replies cannot crash the port; count-0 cuts render a thread-continues
+// link; more lines link to their branch; render() adds the not-fetched note; safeBody
+// escapes bare `<` and closes unclosed code fences; remote image links are wrapped in
+// `<...>`.
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -74,14 +77,128 @@ export function images(p) {
   return out;
 }
 
+function t1Parent(d) {
+  if (typeof d.parent_id !== "string" || !d.parent_id.startsWith("t1_")) return null;
+  const id = d.parent_id.slice(3);
+  return /^[a-z0-9]+$/i.test(id) ? id : null;
+}
+
+function encodeAngle(u) {
+  return String(u).replace(/</g, "%3C").replace(/>/g, "%3E").replace(/ /g, "%20");
+}
+
+function escapeLine(line) {
+  if (!line.includes("<")) return line;
+  const parts = line.split(/(`+)/);
+  let out = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) {
+      out += parts[i].replace(/</g, "&lt;");
+    } else {
+      const run = parts[i];
+      let close = -1;
+      for (let j = i + 2; j < parts.length; j += 2) {
+        if (parts[j].length === run.length) {
+          close = j;
+          break;
+        }
+      }
+      if (close !== -1) {
+        for (let k = i; k <= close; k++) out += parts[k];
+        i = close;
+      } else {
+        out += run;
+      }
+    }
+  }
+  return out;
+}
+
+// A fence may sit behind blockquote and list markers ("> ```", "- ```", "1. ```"), and a
+// list item's closer is indented to its content ("  ```"), so both regexes allow that
+// container prefix. A backtick fence's info string can't hold a backtick (CommonMark).
+// A closer may sit as deep as its opener's content ("10. ```" closes at 4 spaces) plus
+// the usual 3, so FENCE_CLOSE takes any indent and safeBody checks the width.
+const MARKERS = String.raw`(?: {0,3}(?:>[ ]?|[-*+][ ]+|\d{1,9}[.)][ ]+))*`;
+const FENCE_OPEN = new RegExp(`^(${MARKERS}[ ]{0,3})` + "(`{3,}|~{3,})(.*)$");
+const FENCE_CLOSE = new RegExp(`^(${MARKERS}[ ]*)` + "(`{3,}|~{3,})\\s*$");
+
+export function safeBody(text) {
+  const lines = String(text ?? "").split("\n");
+  const out = [];
+  let fenceChar = "";
+  let fenceLen = 0;
+  let fencePrefix = "";
+  for (const line of lines) {
+    if (fenceLen) {
+      const m = line.match(FENCE_CLOSE);
+      if (m && m[2][0] === fenceChar && m[2].length >= fenceLen && m[1].length <= fencePrefix.length + 3) {
+        fenceChar = "";
+        fenceLen = 0;
+      }
+      out.push(line);
+      continue;
+    }
+    const open = line.match(FENCE_OPEN);
+    if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
+      fenceChar = open[2][0];
+      fenceLen = open[2].length;
+      // the closer, if one must be added, stays inside the same blockquote (a bare one
+      // would open a new top-level fence there); list markers become their width in spaces
+      fencePrefix = open[1].replace(/[^>]/g, " ");
+      out.push(line);
+      continue;
+    }
+    if (/^(?: {4,}|\t)/.test(line)) {
+      out.push(line);
+      continue;
+    }
+    out.push(escapeLine(line));
+  }
+  if (fenceLen) out.push(fencePrefix + fenceChar.repeat(fenceLen));
+  return out.join("\n");
+}
+
+function sumMore(children) {
+  let total = 0;
+  for (const c of children || []) {
+    const kind = c && c.kind;
+    const d = (c && c.data) || {};
+    if (kind === "more") {
+      const n = Number.isFinite(d.count) && d.count > 0 ? d.count : 0;
+      if (n > 0) total += n;
+      else if (t1Parent(d)) total += 1;
+      continue;
+    }
+    if (kind !== "t1") continue;
+    const replies = d.replies;
+    if (replies && typeof replies === "object") {
+      total += sumMore(((replies.data || {}).children) || []);
+    }
+  }
+  return total;
+}
+
+export function notFetched(data) {
+  return sumMore(Array.isArray(data) && data[1] && data[1].data && data[1].data.children);
+}
+
 export function comments(children, depth, permalink, out) {
   for (const c of children || []) {
     const kind = c && c.kind;
     const d = (c && c.data) || {};
     if (kind === "more") {
-      const n = d.count ?? 0;
-      if (n) {
-        out.push(quote(`*[${n} more repl${n === 1 ? "y" : "ies"} not loaded: https://www.reddit.com${permalink}]*`, depth));
+      const parent = t1Parent(d);
+      // the branch is <post permalink><comment id>/, so it needs a permalink to hang off:
+      // without one the line links the post, as before
+      const branch = parent && permalink.endsWith("/") ? `${parent}/` : "";
+      const url = `https://www.reddit.com${permalink}${branch}`;
+      const n = Number.isFinite(d.count) && d.count > 0 ? d.count : 0;
+      if (n > 0) {
+        out.push(quote(`*[${n} more repl${n === 1 ? "y" : "ies"} not loaded: ${url}]*`, depth));
+        out.push("");
+      } else if (parent) {
+        out.push(quote(`*[thread continues: ${url}]*`, depth));
         out.push("");
       }
       continue;
@@ -90,7 +207,7 @@ export function comments(children, depth, permalink, out) {
     const head = `**u/${d.author ?? "[deleted]"}** · ${d.score ?? "?"} points · ${when(d.created_utc)}`;
     out.push(quote(head, depth));
     out.push(quote("", depth));
-    out.push(quote(d.body, depth));
+    out.push(quote(safeBody(d.body), depth));
     out.push("");
     const replies = d.replies;
     if (replies && typeof replies === "object") {
@@ -114,7 +231,7 @@ export function render(data, saved = {}, folderRel = "") {
   const p = postOf(data);
   const link = `https://www.reddit.com${p.permalink ?? ""}`;
   const out = [
-    `# ${p.title ?? "(untitled)"}`,
+    `# ${p.title == null ? "(untitled)" : escapeLine(String(p.title))}`,
     "",
     `r/${p.subreddit ?? "?"} · u/${p.author ?? "[deleted]"} · ${p.score ?? "?"} points · ${p.num_comments ?? "?"} comments · ${when(p.created_utc)}`,
     `Source: ${link}`,
@@ -132,10 +249,14 @@ export function render(data, saved = {}, folderRel = "") {
     } else if (saved[n]) {
       out.push("", `![${alt}](<${folderRel}/${saved[n]}>)`, `Image ${n} source: ${u}`);
     } else {
-      out.push("", `![${alt}](${u})`);
+      out.push("", `![${alt}](<${encodeAngle(u)}>)`);
     }
   }
-  out.push("", p.selftext || "*(no body text)*", "", "---", "", "## Comments", "");
+  out.push("", p.selftext ? safeBody(p.selftext) : "*(no body text)*", "", "---", "", "## Comments", "");
+  const missing = notFetched(data);
+  if (missing > 0) {
+    out.push(`*(This save holds the comments reddit sent in one page; reddit counts ${missing} more that ${missing === 1 ? "was" : "were"} not fetched — the links below open them on reddit.)*`, "");
+  }
   const before = out.length;
   comments(data[1] && data[1].data && data[1].data.children, 1, p.permalink ?? "", out);
   if (out.length === before) out.push("*(no comments)*");
