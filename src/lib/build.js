@@ -182,8 +182,9 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
       const r = records[i];
       fetchedLast = fetchable(r.url);
       const res = fetchedLast ? await fetchFile(r.url, { fetchFn, wait, idle, signal: halt.signal }) : { error: "not a Discord attachment link" };
-      if (stopped && !got) {
-        // the save stopped while this was being fetched: it never reaches a part
+      if ((stopped && !got) || res.stopped) {
+        // the save stopped while this was being fetched: it never reaches a part (and a
+        // stopped answer carries no blob, whichever kind of save this is)
         r.error = res.error || STOP_ERROR;
         failed++;
       } else if (res.error) {

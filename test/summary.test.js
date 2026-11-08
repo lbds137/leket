@@ -146,4 +146,9 @@ test("part 1 not saved: the messages aren't counted as saved, in either kind of 
   const streamed = summarize({ failed: left, leftBehind: 10, messages: 40, attachments: 10, streamed: true, first: true,
     results: [{ index: 1, ok: false }, { index: 2, ok: true }] });
   assert.match(streamed.status, /^The 40 messages are in part 1, which isn't saved yet; saved 0 of 10 attachments\. 1 part\(s\) didn't finish/);
+  // build.js's drain names every streamed part `${base}-part${index}.zip`, so even with
+  // only the first handed over, "part 1" is its name
+  const alone = summarize({ failed: left, leftBehind: 10, messages: 40, attachments: 10, streamed: true, first: true,
+    results: [{ index: 1, ok: false }] });
+  assert.match(alone.status, /^The 40 messages are in part 1, which isn't saved yet/);
 });
