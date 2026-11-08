@@ -137,7 +137,7 @@ test("a fetch that times out records the error on its conversation; the next id 
     return { ok: true, status: 200, json: async () => [msg(9)] };
   };
   const convos = await collectConversations(["111", "222"], { fetch, sleep: async () => {} });
-  assert.equal(convos[0].error, "The operation timed out.");
+  assert.equal(convos[0].error, "timed out after 60 s at offset 0");
   assert.deepEqual(convos[1].messages.map((m) => m.conversation_message_id), [9]);
   assert.equal(convos[1].error, undefined);
 });
@@ -147,7 +147,17 @@ test("timeoutMs reaches the abort signal: a fetch that never answers ends as a t
     opts.signal.addEventListener("abort", () => reject(opts.signal.reason));
   });
   const convos = await collectConversations(["111"], { fetch, sleep: async () => {}, timeoutMs: 1 });
-  assert.match(convos[0].error, /timed? ?out|timeout/i);
+  assert.equal(convos[0].error, "timed out after 0.001 s at offset 0");
+});
+
+test("a timeout on a later page names that page's offset", async () => {
+  const fetch = async (u) => {
+    if (!u.includes("offset=0&")) throw new DOMException("The operation timed out.", "TimeoutError");
+    return { ok: true, status: 200, json: async () => [msg(1), msg(2), msg(3)] };
+  };
+  const convos = await collectConversations(["111"], { fetch, sleep: async () => {} });
+  assert.equal(convos[0].error, "timed out after 60 s at offset 3");
+  assert.equal(convos[0].messages.length, 3);
 });
 
 test("a body read the timeout aborts is a timeout, not a sign-out", async () => {
@@ -160,7 +170,7 @@ test("a body read the timeout aborts is a timeout, not a sign-out", async () => 
   });
   const convos = await collectConversations(["111"], { fetch, sleep: async () => {}, timeoutMs: 1 });
   assert.doesNotMatch(convos[0].error, /signed out/);
-  assert.match(convos[0].error, /timed? ?out|timeout/i);
+  assert.equal(convos[0].error, "timed out after 0.001 s at offset 0");
 });
 
 test("a !ok page marks its conversation with the HTTP error; the next id still runs", async () => {
@@ -460,13 +470,15 @@ test("finishMessage: ok class only when saved, no errors, redact on, and JSON so
     },
   );
   // a no-word save of an unsound file carries the same warning: its late end may never be said
+  const lateUnsound = finishMessage({ saved: null, conversations: [cleanConvo], filename, redactState: "on", sound: false });
   assert.deepEqual(
-    finishMessage({ saved: null, conversations: [cleanConvo], filename, redactState: "on", sound: false }),
+    lateUnsound,
     {
-      text: "No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: on. The redacted file does NOT parse as JSON — do not share it, and report it. It was saved beside any earlier export of the day, not over it.",
+      text: "No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: on. The redacted file does NOT parse as JSON — do not share it, and report it. It is being saved beside any earlier export of the day, not over it.",
       cls: "warn",
     },
   );
+  assert.ok(lateUnsound.text.includes("is being saved") && !lateUnsound.text.includes("was saved"));
 
   // interrupted/refused (false) and no-word (null) saves always warn
   assert.deepEqual(
@@ -506,5 +518,8 @@ test("conflictActionFor: a sound export overwrites the same-day file, an unsound
 test("page.js wires the pure decisions: finishMessage and conflictActionFor are what it calls", () => {
   const src = readFileSync(new URL("../src/modules/etsy/page.js", import.meta.url), "utf8");
   assert.match(src, /conflictAction: conflictActionFor\(sound\)/);
-  assert.match(src, /finishMessage\(\{ saved, conversations, filename, redactState, sound, seq, runSeq \}\)/);
+  // onLate no longer checks the run itself: finish handing seq and runSeq to
+  // finishMessage is what drops a stale run's late end, so both names are pinned
+  assert.match(src, /finishMessage\(\{[^}]*\bseq\b[^}]*\}\)/);
+  assert.match(src, /finishMessage\(\{[^}]*\brunSeq\b[^}]*\}\)/);
 });

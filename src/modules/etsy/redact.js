@@ -2,6 +2,7 @@
 // short: its short form, lowercase ASCII, same first letter ("jane").
 // firstSounds: letters speech recognition hears for the first letter, the real one FIRST ("jgy").
 // Returns text => text. Run it on the SERIALIZED JSON string (we call it once on the whole export blob).
+// The block below keeps a 2-space top-level indent on purpose, so it stays byte-identical with the copy it was delivered from.
   const makeRedact = ({ name, short, firstSounds }) => {
     // name, short: lowercase ASCII letters ("janedoe", "jane"; short shares name's first letter);
     // firstSounds: letters heard for the first one, the real one FIRST ("jgy"). Returns text => text

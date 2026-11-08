@@ -87,6 +87,9 @@ evidence.
   Redaction is a pluggable `redact(text)` hook: the configured name, short form and
   mishearing set build one regex that runs over the whole serialized JSON — which is why
   it must also catch `\n` and `\uXXXX` escapes; an empty config redacts nothing.
+  The guard's escape handling also redacts a name starting with n, r, t, b or f where it
+  follows a backslash escape letter, so such names over-redact (e.g. short "nan" takes a
+  line-initial "an" after `\n`); accepted and pinned in test/etsy-redact.test.js.
   Script received from Jackalope 11-04 with its personal-data literals flagged out;
   changes to the Etsy logic go back to Jackalope as a diff, same as collector.js.
 
@@ -110,7 +113,7 @@ The headline: **the CLI tools change nothing.**
 | `reddit-<post id>.json` | `reddit-export --from-json` |
 | `reddit-<post id>.md` | opens directly |
 | `claude-chat-outputs-<date>.json` | read directly (no tool wired yet) |
-| `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical) |
+| `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical; an export that fails the JSON check never overwrites — beside a same-day file it lands as `etsy-conversations-<date> (1).json`, the file NOT to ingest) |
 
 `chrome.downloads.download` with `saveAs: false` lands in ~/Downloads under the given
 filename — the same place the scripts' Blob-plus-click put it. (Chrome's own

@@ -79,7 +79,7 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
       // narrated, never a failure of the run
       sayRedact(
         "Redact: on." + (hits.length
-          ? ` This name also matches Etsy's own words (${hits.join(", ")}) — those strings read [redacted] in the export.`
+          ? ` This name also matches words Etsy or the export's own field names use (${hits.join(", ")}) — those read [redacted] in the export, and a redacted field name changes the file's shape.`
           : ""),
         hits.length ? "warn" : "",
       );
@@ -120,9 +120,9 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
       conflictAction: conflictActionFor(sound),
     }, {
       // a save with no word in 15 minutes may still be reading the blob URL: free it
-      // only once the download truly ends; its end is said only if this run is still
-      // the latest — a no-word save outlives its click, and a second run owns the line
-      onLate: (ok) => { URL.revokeObjectURL(blobUrl); if (seq === runSeq) finish(ok); },
+      // only once the download truly ends; finishMessage drops a stale run's late end
+      // (stale run → null) so a second run keeps the line
+      onLate: (ok) => { URL.revokeObjectURL(blobUrl); finish(ok); },
     });
     if (saved !== null) URL.revokeObjectURL(blobUrl);
     finish(saved);
