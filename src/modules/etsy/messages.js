@@ -220,6 +220,7 @@ const failureLines = (conversations = []) => conversations.flatMap((c) => [
   ...(isEmpty(c) ? [`${c.id}: no messages — check the id`] : []),
   ...(c.truncated ? [`${c.id}: stopped at the page cap — older messages may be missing`] : []),
 ]);
+const counted = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const finishMessage = ({ saved, conversations = [], filename, redactState, sound = true, seq, runSeq }) => {
   if (seq !== undefined && runSeq !== undefined && seq !== runSeq) return null;
   const failed = conversations.filter((c) => c.error).length;
@@ -228,7 +229,7 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
   const total = conversations.reduce((s, c) => s + (c.messages ? c.messages.length : 0), 0);
   if (saved === true) {
     return {
-      text: `Saved ${conversations.length} conversations, ${total} messages`
+      text: `Saved ${counted(conversations.length, "conversation")}, ${counted(total, "message")}`
         + (failed ? `, ${failed} with errors (listed in the file)` : "")
         + (empty ? `, ${empty} with no messages (wrong id?)` : "")
         + (truncated ? `, ${truncated} stopped at the page cap (older messages may be missing)` : "")

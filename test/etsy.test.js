@@ -524,7 +524,7 @@ test("finishMessage: ok class only when saved, no errors, redact on, and JSON so
 
   assert.deepEqual(
     finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: true }),
-    { text: "Saved 1 conversations, 2 messages. Redact: on.", cls: "ok" },
+    { text: "Saved 1 conversation, 2 messages. Redact: on.", cls: "ok" },
   );
 
   // conversation errors force warn and name the error count
@@ -537,7 +537,7 @@ test("finishMessage: ok class only when saved, no errors, redact on, and JSON so
   for (const redactState of ["off (no etsyRedact config)", "off (etsyRedact config incomplete)"]) {
     assert.deepEqual(
       finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState, sound: true }),
-      { text: `Saved 1 conversations, 2 messages. Redact: ${redactState}.`, cls: "warn" },
+      { text: `Saved 1 conversation, 2 messages. Redact: ${redactState}.`, cls: "warn" },
     );
   }
 
@@ -545,7 +545,7 @@ test("finishMessage: ok class only when saved, no errors, redact on, and JSON so
   assert.deepEqual(
     finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: false }),
     {
-      text: "Saved 1 conversations, 2 messages. Redact: on. The redacted file does NOT parse as JSON — do not share it, and report it. It was saved beside any earlier export of the day, not over it.",
+      text: "Saved 1 conversation, 2 messages. Redact: on. The redacted file does NOT parse as JSON — do not share it, and report it. It was saved beside any earlier export of the day, not over it.",
       cls: "warn",
     },
   );
@@ -585,7 +585,7 @@ test("finishMessage: the seq === runSeq guard drops a stale run's late finish an
   );
   assert.deepEqual(
     finishMessage({ saved: true, conversations: [cleanConvo], filename, redactState: "on", sound: true, seq: 2, runSeq: 2 }),
-    { text: "Saved 1 conversations, 1 messages. Redact: on.", cls: "ok" },
+    { text: "Saved 1 conversation, 1 message. Redact: on.", cls: "ok" },
   );
 });
 
@@ -606,10 +606,12 @@ test("page.js wires the pure decisions: finishMessage and conflictActionFor are 
   assert.match(src, /failures\(failureLines\(conversations\)\)/);
   assert.doesNotMatch(src, /redactionCollisions|redactLineFor|makeRedact/);
   // the redact line is cleared when a run starts and when a run throws
-  const hides = [...src.matchAll(/redactLine\.hidden = true;/g)].map((m) => m.index);
-  assert.equal(hides.length, 2);
-  assert.ok(hides[0] < src.indexOf("parseIds($(\"ids\").value"), "cleared before the run reads its inputs");
-  assert.ok(hides[1] > src.indexOf("} catch (err) {"), "cleared in the run's catch");
+  // (comment lines are stripped first, so a commented-out hide doesn't count; each hide
+  // is pinned to its place: right after the failures reset, and first in the catch)
+  const code = src.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  assert.equal([...code.matchAll(/redactLine\.hidden = true;/g)].length, 2);
+  assert.match(code, /const seq = \+\+runSeq;\s*failures\(\[\]\);\s*redactLine\.hidden = true;/, "cleared as the run starts");
+  assert.match(code, /\} catch \(err\) \{\s*redactLine\.hidden = true;/, "cleared first thing in the run's catch");
 });
 
 test("finishMessage + failureLines: an empty answer and a capped walk warn and are listed", () => {
@@ -620,7 +622,7 @@ test("finishMessage + failureLines: an empty answer and a capped walk warn and a
   const filename = "etsy-conversations-2026-11-05.json";
   assert.deepEqual(
     finishMessage({ saved: true, conversations: [clean, empty], filename, redactState: "on", sound: true }),
-    { text: "Saved 2 conversations, 1 messages, 1 with no messages (wrong id?). Redact: on.", cls: "warn" },
+    { text: "Saved 2 conversations, 1 message, 1 with no messages (wrong id?). Redact: on.", cls: "warn" },
   );
   assert.deepEqual(
     finishMessage({ saved: true, conversations: [clean, capped], filename, redactState: "on", sound: true }),
@@ -629,7 +631,7 @@ test("finishMessage + failureLines: an empty answer and a capped walk warn and a
   // an errored conversation with no messages counts once, as an error, not also as empty
   assert.deepEqual(
     finishMessage({ saved: true, conversations: [clean, errored], filename, redactState: "on", sound: true }),
-    { text: "Saved 2 conversations, 1 messages, 1 with errors (listed in the file). Redact: on.", cls: "warn" },
+    { text: "Saved 2 conversations, 1 message, 1 with errors (listed in the file). Redact: on.", cls: "warn" },
   );
   assert.deepEqual(failureLines([clean, empty, capped, errored]), [
     "222: no messages — check the id",
