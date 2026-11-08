@@ -45,7 +45,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // current chrome-linux64, the older chrome-linux); elsewhere LEKET_CHROME names the browser
 function findChrome() {
   if (process.env.LEKET_CHROME) return process.env.LEKET_CHROME;
-  const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || join(homedir(), ".cache", "ms-playwright");
+  // "0" is Playwright's "under node_modules" setting: this repo has none, so the default cache
+  const set = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  const cache = set && set !== "0" ? set : join(homedir(), ".cache", "ms-playwright");
   const builds = existsSync(cache)
     ? readdirSync(cache).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.slice(9)) - Number(a.slice(9)))
     : [];
@@ -238,7 +240,9 @@ async function main() {
   // what the browser said: its FATAL and ERROR lines first (a crash's stack trace runs
   // long and would push the line naming the cause out of the tail), then the tail
   const said = () => {
-    const causes = stderr.split("\n").filter((l) => /:(FATAL|ERROR):/.test(l)).slice(0, 10);
+    // FATAL first: a runner prints many unrelated early ERROR lines (dbus, gpu)
+    const lines = stderr.split("\n");
+    const causes = [...lines.filter((l) => l.includes(":FATAL:")), ...lines.filter((l) => l.includes(":ERROR:"))].slice(0, 10);
     return `${causes.length ? `${causes.join("\n")}\n  ...\n` : ""}${stderr.slice(-2000)}`;
   };
   try {
@@ -269,7 +273,10 @@ async function scenarios(cdp, downloads) {
   // every target, as it appears: intercept its requests before it runs a line
   const sessions = new Map(); // targetId -> { sessionId, type, url }
   // interception on a target that fetches: a failure is said, not swallowed (the DNS wall
-  // still keeps such a target offline, but "every request is served" would no longer hold)
+  // still keeps such a target offline, but "every request is served" would no longer hold).
+  // It is a log line, not a FAIL. A dead browser's error is rethrown, which ends the run
+  // from target(); in the attach handler below it is dropped, since the next call fails
+  // the same way
   const intercept = (sessionId, type, url) => cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId).catch((e) => {
     if (e && e.fatal) throw e;
     if (type === "page" || type === "service_worker") console.log(`smoke: no interception on ${type} ${url}: ${e.message}`);
@@ -460,7 +467,8 @@ async function scenarios(cdp, downloads) {
     const first = await waitFor(() => evalIn(tab.sessionId, `${link}?.textContent.includes("didn't finish") && ${link}.textContent`),
       "the cancelled part's link to say it didn't finish", 30000);
     console.log(`     the cancelled first try shows on its link: ${first}`);
-    const cancelled = await extEval("self.smokeCancelled");
+    // the cancel's promise may settle a moment after the link says so
+    const cancelled = await waitFor(() => extEval("self.smokeCancelled"), "the smoke's cancel to settle", 5000).catch(soft(() => null));
     check(typeof cancelled === "number", `discord: the smoke cancelled the zip's first try (${cancelled})`);
     await evalIn(tab.sessionId, `${link}.click(), true`);
     // saved: the link says so, or the summary closed the tab — it closes only once every
@@ -473,8 +481,15 @@ async function scenarios(cdp, downloads) {
       return t.endsWith("— saved") && { saved: true, how: t };
     }, "the clicked part to save", 30000).catch(soft((e) => ({ saved: false, how: e.message })));
     check(after.saved, `discord: a click on the part's link saves it (${after.how})`);
-    const retried = await extEval(`chrome.downloads.search({ filenameRegex: "\\\\.zip$", state: "complete" }).then((d) => d.map((x) => x.id))`);
-    check(retried.length === 1 && retried[0] !== cancelled, `discord: Chrome finished one zip, the retry, not the cancelled try (finished ids: ${retried.join(", ") || "none"}; cancelled: ${cancelled})`);
+    // the cancelled try, by id (cancelled before it was named, its filename is empty, so a
+    // name search can't find it), stays interrupted; and every zip Chrome knows, in any
+    // state, is one other download — the retry — which completed
+    const [gone] = await extEval(`chrome.downloads.search({ id: ${JSON.stringify(cancelled)} }).then((d) => d.map((x) => [x.state, x.filename]))`);
+    const zipsSeen = await extEval(`chrome.downloads.search({ filenameRegex: "\\\\.zip$" }).then((d) => d.map((x) => [x.id, x.state]))`);
+    const seen = zipsSeen.map(([id, state]) => `${id} ${state}`).join(", ") || "none";
+    check(gone?.[0] === "interrupted", `discord: the cancelled try stays interrupted (${gone ? `${gone[0]}, filename "${gone[1]}"` : "not in Chrome's list"})`);
+    check(zipsSeen.length === 1 && zipsSeen[0][0] !== cancelled && zipsSeen[0][1] === "complete",
+      `discord: Chrome holds one other zip, the retry, complete (${seen}; cancelled: ${cancelled})`);
     const zips = landed().filter((f) => f.endsWith(".zip"));
     if (check(zips.length === 1, `discord: one zip on disk (found: ${zips.join(", ") || "none"})`)) {
       const names = JSON.parse(execFileSync("python3", ["-I", "-c",
