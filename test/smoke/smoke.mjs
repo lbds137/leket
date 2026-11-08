@@ -14,7 +14,8 @@
 // is on disk at once; what's covered is the stop and the late-end narration). The chat page is driven only as far as
 // its paste parse — its org probe and fetches are not covered. The Etsy page runs for
 // real: prefilled from the tab, it pages a synthetic message-list endpoint under a stored
-// redact config and saves twice, the second save over the first.
+// redact config and saves twice, the second save over the first. Not covered there: an
+// emptied ids box falling back to the tab's conversation (this run never empties the prefilled box).
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
 //
@@ -471,9 +472,11 @@ async function scenarios(cdp, downloads) {
   // words, and saves the file twice: the second save overwrites the first ----
   console.log("smoke: etsy save");
   await extEval(`chrome.storage.local.set({ etsyRedact: ${JSON.stringify(ETSY_REDACT)} }).then(() => true)`);
-  await open(ETSY_CONVO);
+  const etsyTab = await open(ETSY_CONVO);
   await clickPopup("Save conversations");
-  const ep = (await target((s) => s.type === "page" && /\/src\/modules\/etsy\/page\.html\?tab=\d+$/.test(s.url), "the Etsy page (with its tab id)")).sessionId;
+  const etsyPageTarget = await target((s) => s.type === "page" && /\/src\/modules\/etsy\/page\.html\?tab=\d+$/.test(s.url), "the Etsy page (with its tab id)");
+  const ep = etsyPageTarget.sessionId;
+  const etsyFirst = {}; // round 1's file name and extracted_at
   await wired(ep, "etsy-run", "etsy");
   const prefilled = await waitFor(() => evalIn(ep, `document.getElementById("ids").value`), "the ids box to prefill from the tab")
     .catch((e) => e.message);
@@ -483,8 +486,8 @@ async function scenarios(cdp, downloads) {
       bar: b.hidden ? null : [b.value, b.max], fails: document.getElementById("etsy-fails").children.length }; })()`;
   const expectedRedact = redactSetup(ETSY_REDACT).line;
   for (const round of [1, 2]) {
-    // the lines are blanked with the click: round 1's "Saved" stays up until the page's
-    // first await, and round 2 must read its own end, not that one
+    // the lines are blanked with the click: round 1's "Saved" stays up until the run's
+    // first progress line, and round 2 must read its own end, not that one
     await evalIn(ep, `(() => { for (const id of ["etsy-status", "etsy-redact"]) { const p = document.getElementById(id); p.textContent = ""; p.className = ""; }
       document.getElementById("etsy-run").click(); return true; })()`);
     const end = await waitFor(() => evalIn(ep, etsyState).then((s) => (s.t.startsWith("Saved") || s.t.startsWith("The download") || s.cls === "warn") && s),
@@ -502,16 +505,31 @@ async function scenarios(cdp, downloads) {
       .then((n) => n >= round && n), `etsy round ${round}'s finished download`).catch((e) => e.message);
     check(done === round, `etsy save ${round}: Chrome finished ${round} Etsy download(s) so far (${done})`);
     await sleep(500); // a renamed copy would have a moment to land
+    // the file is named by the UTC date: round 1's name, plus today's when midnight UTC
+    // fell between the rounds (then round 2's file is the new one, beside round 1's)
     const files = landed().filter((f) => f.startsWith("etsy-"));
-    if (check(files.length === 1 && /^etsy-conversations-\d{4}-\d{2}-\d{2}\.json$/.test(files[0]),
+    // (read from disk, not recomputed here, so a midnight between the page's naming and
+    // this check can't redden it): sorted, a later date sorts after round 1's
+    const dated = (f) => /^etsy-conversations-\d{4}-\d{2}-\d{2}\.json$/.test(f || "");
+    const name = files[files.length - 1];
+    const shapeOk = round === 1 ? files.length === 1
+      : files[0] === etsyFirst.name && (files.length === 1 || (files.length === 2 && name > etsyFirst.name));
+    if (check(shapeOk && files.every(dated),
       `etsy save ${round}: one dated file on disk, no renamed copy (found: ${files.join(", ") || "none"})`)) {
-      const text = readFileSync(join(downloads, files[0]), "utf8");
+      const text = readFileSync(join(downloads, name), "utf8");
       const saved = JSON.parse(text);
       check(saved.redact === "on" && saved.conversations?.[0]?.messages?.length === 2,
         `etsy save ${round}: the file says redact on and holds the conversation's 2 messages`);
       check(!/betsy/i.test(text) && text.includes("[redacted]"), `etsy save ${round}: the configured name is redacted in the file`);
+      // round 2's file is round 2's: the overwrite replaced round 1's content
+      if (round === 1) Object.assign(etsyFirst, { name, at: saved.extracted_at });
+      else check(typeof saved.extracted_at === "string" && saved.extracted_at !== etsyFirst.at,
+        `etsy save 2: the file is the second save's (extracted_at ${etsyFirst.at} -> ${saved.extracted_at})`);
     }
   }
+  // nothing of this scenario reaches a later one: the stored config, its tabs
+  await extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`);
+  for (const t of [etsyTab, etsyPageTarget]) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
 
   if (blocked.length) console.log(`smoke: blocked ${blocked.length} request(s) the synthetic web doesn't serve:\n  ${[...new Set(blocked)].join("\n  ")}`);
   console.log(failures.length ? `smoke: ${failures.length} FAILED` : "smoke: all passed");
