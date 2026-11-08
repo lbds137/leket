@@ -1,6 +1,6 @@
 {
   "name": "discord-tools",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "private": true,
   "description": "A Chrome extension that saves a Discord DM, channel or thread, with its attachments, as one zip.",
   "type": "module",

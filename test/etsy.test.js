@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, parsesAsJson, finishMessage, conflictActionFor }
+const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -211,13 +211,24 @@ test("messages sort by create_date asc, ties by message_order asc, missing creat
   assert.deepEqual(convos[0].messages.map((m) => m.conversation_message_id), [4, 3, 2, 1]);
 });
 
-test("the page cap stops the walk with no error", async () => {
+test("the page cap stops the walk with no error, and marks it truncated", async () => {
   let n = 0;
   const fetch = standIn({ [url("111")]: () => [msg(++n)] }); // every page brings something new
   const convos = await collectConversations(["111"], { fetch, sleep: async () => {}, maxPages: 5 });
   assert.equal(convos[0].pages, 5);
   assert.equal(fetch.calls.length, 5);
   assert.equal(convos[0].error, undefined);
+  assert.equal(convos[0].truncated, true);
+});
+
+test("a walk that ends on its own is never truncated, even on the cap's last page", async () => {
+  // the third page is empty: the walk breaks on it, the same page that reaches maxPages
+  const pages = [[msg(1)], [msg(2)], []];
+  const fetch = standIn({ [url("111")]: (k) => pages[k] });
+  const convos = await collectConversations(["111"], { fetch, sleep: async () => {}, maxPages: 3 });
+  assert.equal(convos[0].pages, 3);
+  assert.equal(convos[0].truncated, undefined);
+  assert.ok(!("truncated" in convos[0]), "the field is absent, so an uncapped file keeps the script's shape");
 });
 
 test("sleeps: one per continuing page attempt, none on the break, one trailing per conversation", async () => {
@@ -273,6 +284,23 @@ test("serializePayload: a redact fn — the field says on, redact runs once over
     conversations: [],
   }, null, 1)]);
   assert.equal(out, "REDACTED", "the redact fn's return value is the result");
+});
+
+test("serializePayload: a state that contradicts the function throws instead of mislabelling the file", () => {
+  // "on" with no guard would claim a redaction that never ran
+  assert.throws(
+    () => serializePayload([], { redactState: "on" }),
+    /redact state "on" without a redact function — not saving a mislabelled export/,
+  );
+  assert.throws(() => serializePayload([], { redactState: "on", redact: undefined }), /without a redact function/);
+  // a guard with an off state would hide one that did
+  assert.throws(
+    () => serializePayload([], { redactState: "off (etsyRedact config incomplete)", redact: (t) => t }),
+    /redact state "off \(etsyRedact config incomplete\)" with a redact function/,
+  );
+  // the consistent pairs still serialize
+  assert.doesNotThrow(() => serializePayload([], { redactState: "on", redact: (t) => t }));
+  assert.doesNotThrow(() => serializePayload([], { redactState: "off (no etsyRedact config)" }));
 });
 
 test("serializePayload: an explicit redactState override goes into the field verbatim", () => {
@@ -434,10 +462,11 @@ test("redactionCollisions: a name one edit from Etsy's own words or payload keys
     "conversation_message_id",
     "create_date",
     "message_order",
+    "truncated",
   ]);
 });
 
-test("redactLineFor: on is quiet unless a name collides; a collision and both off states warn, each saying what it costs", () => {
+test("redactLineFor: on is quiet unless a name collides; a collision, both off states and an unknown state warn", () => {
   assert.deepEqual(redactLineFor("on"), { text: "Redact: on.", cls: "" });
   assert.deepEqual(redactLineFor("on", []), { text: "Redact: on.", cls: "" });
   assert.deepEqual(redactLineFor("on", ["etsy", "pages"]), {
@@ -457,18 +486,35 @@ test("redactLineFor: on is quiet unless a name collides; a collision and both of
   assert.equal(redactLineFor(redactStateFor(undefined)).text, "Redact: off — no etsyRedact config; the export is unredacted.");
   assert.match(redactLineFor(redactStateFor({ name: "X" })).text, /^Redact: off — config invalid/);
   assert.equal(redactLineFor(redactStateFor({ ...VALID })).text, "Redact: on.");
-  // a state added later without its own line still names itself, and still warns
-  assert.deepEqual(redactLineFor("off (some new reason)"), {
-    text: "Redact: off (some new reason); the export is unredacted.",
-    cls: "warn",
-  });
-  // the page's own chain: a colliding config's hits reach the warning
+  // a state added later without its own line names itself and warns, claiming nothing
+  // about what the export holds (it could be a partial "on")
+  for (const state of ["off (some new reason)", "on (partial)"]) {
+    assert.deepEqual(redactLineFor(state), {
+      text: `Redact: ${state} — this page has no description for that state; check the export before sharing it.`,
+      cls: "warn",
+    });
+  }
+});
+
+test("redactSetup: the page's own chain — state, guard only when on, and the line", () => {
+  // a colliding config's hits reach the warning, and the guard it hands back is live
   const betsy = { name: "betsy", short: "bpt", firstSounds: "bpt" };
-  assert.equal(redactStateFor(betsy), "on");
-  assert.deepEqual(redactLineFor("on", redactionCollisions(makeRedact(betsy))), {
+  const on = redactSetup(betsy);
+  assert.equal(on.redactState, "on");
+  assert.equal(typeof on.redact, "function");
+  assert.notEqual(on.redact("betsy"), "betsy");
+  assert.deepEqual(on.line, {
     text: "Redact: on. This name also matches Etsy's own words or the export's field names (etsy, www.etsy.com, https://www.etsy.com/messages/123456) — those read [redacted] in the export, and a redacted field name changes the file's shape.",
     cls: "warn",
   });
+  assert.deepEqual(redactSetup({ ...VALID }).line, { text: "Redact: on.", cls: "" });
+  // both off states: no guard, and the matching loud line
+  for (const [stored, start] of [[undefined, "Redact: off — no etsyRedact config"], [{ name: "X" }, "Redact: off — config invalid"]]) {
+    const off = redactSetup(stored);
+    assert.equal(off.redact, undefined);
+    assert.ok(off.line.text.startsWith(start), off.line.text);
+    assert.equal(off.line.cls, "warn");
+  }
 });
 
 test("finishMessage: ok class only when saved, no errors, redact on, and JSON sound; warn otherwise", () => {
@@ -555,4 +601,40 @@ test("page.js wires the pure decisions: finishMessage and conflictActionFor are 
   // finishMessage is what drops a stale run's late end, so both names are pinned
   assert.match(src, /finishMessage\(\{[^}]*\bseq\b[^}]*\}\)/);
   assert.match(src, /finishMessage\(\{[^}]*\brunSeq\b[^}]*\}\)/);
+  // the redact setup and the failure list come from the pure helpers, not inline copies
+  assert.match(src, /= redactSetup\(stored\);/);
+  assert.match(src, /failures\(failureLines\(conversations\)\)/);
+  assert.doesNotMatch(src, /redactionCollisions|redactLineFor|makeRedact/);
+  // the redact line is cleared when a run starts and when a run throws
+  const hides = [...src.matchAll(/redactLine\.hidden = true;/g)].map((m) => m.index);
+  assert.equal(hides.length, 2);
+  assert.ok(hides[0] < src.indexOf("parseIds($(\"ids\").value"), "cleared before the run reads its inputs");
+  assert.ok(hides[1] > src.indexOf("} catch (err) {"), "cleared in the run's catch");
+});
+
+test("finishMessage + failureLines: an empty answer and a capped walk warn and are listed", () => {
+  const clean = { id: "111", messages: [msg(1)] };
+  const empty = { id: "222", messages: [] };
+  const capped = { id: "333", messages: [msg(2), msg(3)], truncated: true };
+  const errored = { id: "444", messages: [], error: "HTTP 500 at offset 0" };
+  const filename = "etsy-conversations-2026-11-05.json";
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [clean, empty], filename, redactState: "on", sound: true }),
+    { text: "Saved 2 conversations, 1 messages, 1 with no messages (wrong id?). Redact: on.", cls: "warn" },
+  );
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [clean, capped], filename, redactState: "on", sound: true }),
+    { text: "Saved 2 conversations, 3 messages, 1 stopped at the page cap (older messages may be missing). Redact: on.", cls: "warn" },
+  );
+  // an errored conversation with no messages counts once, as an error, not also as empty
+  assert.deepEqual(
+    finishMessage({ saved: true, conversations: [clean, errored], filename, redactState: "on", sound: true }),
+    { text: "Saved 2 conversations, 1 messages, 1 with errors (listed in the file). Redact: on.", cls: "warn" },
+  );
+  assert.deepEqual(failureLines([clean, empty, capped, errored]), [
+    "222: no messages — check the id",
+    "333: stopped at the page cap — older messages may be missing",
+    "444: HTTP 500 at offset 0",
+  ]);
+  assert.deepEqual(failureLines([clean]), []);
 });

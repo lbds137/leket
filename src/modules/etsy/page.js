@@ -3,8 +3,7 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, parsesAsJson, finishMessage, conflictActionFor } from "./messages.js";
-import { makeRedact } from "./redact.js";
+import { parseIds, collectConversations, serializePayload, outputName, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor } from "./messages.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
@@ -58,6 +57,9 @@ let runSeq = 0;
 $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
   const seq = ++runSeq;
   failures([]);
+  // a new run starts with no redact line: an earlier run's line never sits beside this
+  // run's error
+  redactLine.hidden = true;
   // read every input once, before any await — an empty box falls back to the conversation
   // the popup was opened on
   const ids = parseIds($("ids").value, tabPathname);
@@ -70,9 +72,7 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     // or one of the two loud off states — neither off state is silent (an unguarded
     // export must never pass for a guarded one)
     const stored = (await chrome.storage.local.get("etsyRedact")).etsyRedact;
-    const redactState = redactStateFor(stored);
-    const redact = redactState === "on" ? makeRedact(stored) : undefined;
-    const redactNote = redactLineFor(redactState, redact ? redactionCollisions(redact) : []);
+    const { redactState, redact, line: redactNote } = redactSetup(stored);
     sayRedact(redactNote.text, redactNote.cls);
 
     progress(0, ids.length);
@@ -92,11 +92,10 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     const sound = parsesAsJson(json);
     const blobUrl = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     const filename = outputName();
-    const failed = conversations.filter((c) => c.error);
     const finish = (saved) => {
       const done = finishMessage({ saved, conversations, filename, redactState, sound, seq, runSeq });
       if (!done) return;
-      failures(failed.map((c) => `${c.id}: ${c.error}`));
+      failures(failureLines(conversations));
       say(done.text, done.cls);
     };
     const saved = await trackDownload(chrome.downloads, {
@@ -113,6 +112,8 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     if (saved !== null) URL.revokeObjectURL(blobUrl);
     finish(saved);
   } catch (err) {
+    // no export came of this run, so there is nothing for a redact line to describe
+    redactLine.hidden = true;
     say((err && err.message) || String(err), "warn");
   }
 }));
