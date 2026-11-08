@@ -410,3 +410,18 @@ test("a list fence closes at its own content depth; a top-level fence keeps a 4-
   assert.equal(safeBody("10. ```\n    <x>\n    ```\n<y>"), "10. ```\n    <x>\n    ```\n&lt;y>");
   assert.equal(safeBody("```\n    ```\n<x>"), "```\n    ```\n<x>\n```");
 });
+
+test("inside a top-level fence, a marker-prefixed fence line is code, not the closer", () => {
+  // the review's case: a fenced markdown example holding a fenced list item
+  assert.equal(safeBody("```md\n- ```\n<x>\n```\nafter <y>"), "```md\n- ```\n<x>\n```\nafter &lt;y>");
+  assert.equal(safeBody("```\n> ```\n<x>\n```\n<y>"), "```\n> ```\n<x>\n```\n&lt;y>");
+  // a blockquoted fence isn't closed by a bare closer either
+  assert.ok(safeBody("> ```\n> <x>\n```\n<y>").startsWith("> ```\n> <x>\n```\n<y>"));
+});
+
+test("a 4-space line is indented code only where no paragraph is continuing", () => {
+  assert.equal(safeBody("- item\n    <T> here"), "- item\n    &lt;T> here");
+  assert.equal(safeBody("text\n    <b>"), "text\n    &lt;b>");
+  assert.equal(safeBody("text\n\n    <b>\n    <c>"), "text\n\n    <b>\n    <c>");
+  assert.equal(safeBody("    <a>\n\n    <b>\nafter <c>"), "    <a>\n\n    <b>\nafter &lt;c>");
+});
