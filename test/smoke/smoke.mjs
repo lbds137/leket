@@ -39,15 +39,19 @@ import { redactSetup } from "../../src/modules/etsy/messages.js";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// auto-discovery is Linux-only: Playwright's Linux cache and its two Linux layouts (the
+// current chrome-linux64, the older chrome-linux); elsewhere LEKET_CHROME names the browser
 function findChrome() {
   if (process.env.LEKET_CHROME) return process.env.LEKET_CHROME;
-  const cache = join(homedir(), ".cache", "ms-playwright");
+  const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || join(homedir(), ".cache", "ms-playwright");
   const builds = existsSync(cache)
     ? readdirSync(cache).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.slice(9)) - Number(a.slice(9)))
     : [];
   for (const d of builds) {
-    const bin = join(cache, d, "chrome-linux64", "chrome");
-    if (existsSync(bin)) return bin;
+    for (const layout of ["chrome-linux64", "chrome-linux"]) {
+      const bin = join(cache, d, layout, "chrome");
+      if (existsSync(bin)) return bin;
+    }
   }
   return null;
 }
@@ -190,7 +194,8 @@ async function main() {
   const bin = findChrome();
   if (!bin || !existsSync(bin)) {
     console.error("smoke: no Chromium found. Set LEKET_CHROME to a Chromium binary that honors --load-extension "
-      + "(a Playwright Chromium works: npx playwright install chromium), then run npm run smoke again.");
+      + "(a Playwright Chromium works: npx playwright install chromium), then run npm run smoke again. "
+      + "Without LEKET_CHROME the smoke looks only in Playwright's Linux cache (~/.cache/ms-playwright or PLAYWRIGHT_BROWSERS_PATH).");
     return 2;
   }
   const work = mkdtempSync(join(tmpdir(), "leket-smoke-"));
@@ -228,10 +233,16 @@ async function main() {
   process.on("exit", stop);
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { stop(); process.exit(1); });
   let stderr = "";
+  // what the browser said: its FATAL and ERROR lines first (a crash's stack trace runs
+  // long and would push the line naming the cause out of the tail), then the tail
+  const said = () => {
+    const causes = stderr.split("\n").filter((l) => /:(FATAL|ERROR):/.test(l)).slice(0, 10);
+    return `${causes.length ? `${causes.join("\n")}\n  ...\n` : ""}${stderr.slice(-2000)}`;
+  };
   try {
     const wsUrl = await new Promise((ok, fail) => {
-      const t = setTimeout(() => fail(new Error(`the browser printed no DevTools address in 20s:\n${stderr.slice(-2000)}`)), 20000);
-      browser.on("exit", (code) => fail(new Error(`the browser exited (${code}) before it was ready:\n${stderr.slice(-2000)}`)));
+      const t = setTimeout(() => fail(new Error(`the browser printed no DevTools address in 20s:\n${said()}`)), 20000);
+      browser.on("exit", (code) => fail(new Error(`the browser exited (${code}) before it was ready:\n${said()}`)));
       browser.stderr.on("data", (d) => {
         stderr += d;
         const m = /DevTools listening on (ws:\S+)/.exec(stderr);
@@ -255,11 +266,17 @@ async function main() {
 async function scenarios(cdp, downloads) {
   // every target, as it appears: intercept its requests before it runs a line
   const sessions = new Map(); // targetId -> { sessionId, type, url }
+  // interception on a target that fetches: a failure is said, not swallowed (the DNS wall
+  // still keeps such a target offline, but "every request is served" would no longer hold)
+  const intercept = (sessionId, type, url) => cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId).catch((e) => {
+    if (e && e.fatal) throw e;
+    if (type === "page" || type === "service_worker") console.log(`smoke: no interception on ${type} ${url}: ${e.message}`);
+  });
   cdp.on(async (m) => {
     if (m.method === "Target.attachedToTarget") {
       const { sessionId, targetInfo } = m.params;
       sessions.set(targetInfo.targetId, { sessionId, type: targetInfo.type, url: targetInfo.url });
-      await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId).catch(() => {});
+      await intercept(sessionId, targetInfo.type, targetInfo.url).catch(() => {});
       await cdp.send("Runtime.runIfWaitingForDebugger", {}, sessionId).catch(() => {});
     } else if (m.method === "Target.targetInfoChanged") {
       const s = sessions.get(m.params.targetInfo.targetId);
@@ -294,7 +311,7 @@ async function scenarios(cdp, downloads) {
     if (!sessions.has(info.targetId)) {
       const { sessionId } = await cdp.send("Target.attachToTarget", { targetId: info.targetId, flatten: true });
       if (!sessions.has(info.targetId)) sessions.set(info.targetId, { sessionId, type: info.type, url: info.url });
-      await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId).catch(() => {});
+      await intercept(sessionId, info.type, info.url);
       await cdp.send("Runtime.runIfWaitingForDebugger", {}, sessionId).catch(() => {});
     }
     return { ...sessions.get(info.targetId), targetId: info.targetId, type: info.type, url: info.url };
@@ -390,7 +407,9 @@ async function scenarios(cdp, downloads) {
       const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123", state: "complete" }).then((d) => d.length)`)
         .then((n) => n >= 2 * round && n), `round ${round}'s two finished downloads`).catch(soft((e) => e.message));
       check(done === 2 * round, `reddit save ${round}: Chrome finished ${2 * round} reddit downloads so far (${done})`);
-      await sleep(500); // a duplicate save would have a moment to land
+      await sleep(500); // a duplicate save would have a moment to land: Chrome's count, read again, still matches
+      const settled = await extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123" }).then((d) => d.length)`);
+      check(settled === 2 * round, `reddit save ${round}: no further reddit download started (${settled} in Chrome's list)`);
       // its own files only: no scenario's position in the run depends on another's downloads
       const mine = landed().filter((f) => f.startsWith("reddit-"));
       check(JSON.stringify(mine) === JSON.stringify(["reddit-abc123.json", "reddit-abc123.md"]),
@@ -407,9 +426,19 @@ async function scenarios(cdp, downloads) {
   // cancelled, so the part's link must take a click to save it (the export tab's listener) ----
   await scenario("discord", async () => {
     console.log("smoke: discord save");
+    // the cancel comes while Chrome is still asking for the file's name: a download can't
+    // finish before that, so the cancel can't lose to a fast local blob (an onCreated
+    // cancel could). Unarmed, the listener returns without suggesting and Chrome keeps
+    // the extension's own name; the cleanup takes it off again
     await extEval(`(() => {
       self.smokeCancelArmed = true;
-      chrome.downloads.onCreated.addListener((d) => { if (self.smokeCancelArmed) { self.smokeCancelArmed = false; chrome.downloads.cancel(d.id); } });
+      self.smokeCancelled = null;
+      self.smokeNaming = (d) => {
+        if (!self.smokeCancelArmed) return;
+        self.smokeCancelArmed = false;
+        chrome.downloads.cancel(d.id).then(() => { self.smokeCancelled = d.id; }, (e) => { self.smokeCancelled = "failed: " + e.message; });
+      };
+      chrome.downloads.onDeterminingFilename.addListener(self.smokeNaming);
       return true; })()`);
     const dm = await open(DISCORD_DM);
     const launcher = await clickPopup("Save this conversation");
@@ -429,16 +458,21 @@ async function scenarios(cdp, downloads) {
     const first = await waitFor(() => evalIn(tab.sessionId, `${link}?.textContent.includes("didn't finish") && ${link}.textContent`),
       "the cancelled part's link to say it didn't finish", 30000);
     console.log(`     the cancelled first try shows on its link: ${first}`);
+    const cancelled = await extEval("self.smokeCancelled");
+    check(typeof cancelled === "number", `discord: the smoke cancelled the zip's first try (${cancelled})`);
     await evalIn(tab.sessionId, `${link}.click(), true`);
     // saved: the link says so, or the summary closed the tab — it closes only once every
     // part's saved() hook ran, which only the page's click listener can bring about here
-    // (a bare a[download] click saves a file but never tells the page)
+    // (a bare a[download] click saves a file but never tells the page). Either way Chrome
+    // holds a finished zip that isn't the cancelled try
     const after = await waitFor(async () => {
       if (!sessions.get(tab.targetId)) return { saved: true, how: "the export tab closed itself: every part saved" };
       const t = await evalIn(tab.sessionId, `${link}?.textContent || ""`);
       return t.endsWith("— saved") && { saved: true, how: t };
     }, "the clicked part to save", 30000).catch(soft((e) => ({ saved: false, how: e.message })));
     check(after.saved, `discord: a click on the part's link saves it (${after.how})`);
+    const retried = await extEval(`chrome.downloads.search({ filenameRegex: "\\\\.zip$", state: "complete" }).then((d) => d.map((x) => x.id))`);
+    check(retried.length === 1 && retried[0] !== cancelled, `discord: Chrome finished one zip, the retry, not the cancelled try (finished ids: ${retried.join(", ") || "none"}; cancelled: ${cancelled})`);
     const zips = landed().filter((f) => f.endsWith(".zip"));
     if (check(zips.length === 1, `discord: one zip on disk (found: ${zips.join(", ") || "none"})`)) {
       const names = JSON.parse(execFileSync("python3", ["-I", "-c",
@@ -447,24 +481,27 @@ async function scenarios(cdp, downloads) {
       check(names.some((n) => n.endsWith("note.txt")), `discord: the zip holds the attachment (names: ${names.join(", ")})`);
     }
   },
-  // the cleanup: disarmed whatever happened above — a discord block that failed before
-  // its first download must not leave the cancel waiting for a later scenario's
-  () => extEval("self.smokeCancelArmed = false, true"));
+  // the cleanup: disarmed and unhooked whatever happened above — a discord block that
+  // failed before its first download must not leave the cancel waiting for a later
+  // scenario's, nor the naming listener on every later download
+  () => extEval(`(() => { self.smokeCancelArmed = false;
+    if (self.smokeNaming) chrome.downloads.onDeterminingFilename.removeListener(self.smokeNaming);
+    return true; })()`));
 
   // ---- claude sessions: popup -> the module's page -> a real export whose one part gets
   // no word from Chrome, stops the run, then lands late and rebuilds the resume line ----
-  let sessionsPage = null; // for the cleanup: the levers come off the page whatever happened
   await scenario("sessions", async () => {
     console.log("smoke: claude sessions export");
     await open(CLAUDE_CODE);
     await clickPopup("Export sessions");
     const sp = (await target((s) => s.type === "page" && s.url.includes("/src/modules/claude-sessions/page.html#export"), "the sessions page")).sessionId;
-    sessionsPage = sp;
     await wired(sp, "export-run", "sessions");
     // two test-side levers, set after load (page.js looks both up at call time): the
     // 15-minute no-word wait (NO_WORD_MS) becomes 0 ms, and the download call's answer is
     // held until released — Chrome saves the file at once, but the page hears of it only
-    // after release, so it is silent first and its late end narrated after, every run
+    // after release, so it is silent first and its late end narrated after, every run.
+    // Both live on this page's own window and chrome object, so no undo is needed: the
+    // page closes with the scenario, and that is what keeps them out of later ones
     const levers = await evalIn(sp, `(() => {
       const st = window.setTimeout;
       window.setTimeout = (f, ms, ...a) => st(f, ms === ${NO_WORD_MS} ? 0 : ms, ...a);
@@ -472,8 +509,6 @@ async function scenarios(cdp, downloads) {
       const held = new Promise((r) => { window.smokeRelease = r; });
       const hold = (req) => { const p = dl(req); return held.then(() => p); };
       chrome.downloads.download = hold;
-      // the cleanup's undo: the page's own timer and download call back in place
-      window.smokeRestore = () => { window.setTimeout = st; chrome.downloads.download = dl; };
       return chrome.downloads.download === hold; })()`);
     if (!check(levers, "sessions: the smoke holds the page's download call (chrome.downloads.download is writable)")) throw new Error("no hold on the sessions page's download");
     // the generator's whole file, script tail included: only paste.js's strip parses it.
@@ -507,8 +542,6 @@ async function scenarios(cdp, downloads) {
       check(Object.keys(titles._titles || {}).length === 2, "sessions: the part opens with both sessions' titles");
       check(events.length === 1 && events[0]._session === NEW_SESSION, `sessions: the part holds the new session's one event (${events.length})`);
     }
-  }, async () => {
-    if (sessionsPage) await evalIn(sessionsPage, "window.smokeRestore?.(), true");
   });
 
   // ---- claude chat: popup -> the module's page, which parses a pasted whole file, then
@@ -580,12 +613,15 @@ async function scenarios(cdp, downloads) {
       await evalIn(ep, `(() => { for (const id of ["etsy-status", "etsy-redact"]) { const p = document.getElementById(id); p.textContent = ""; p.className = ""; }
         ${ids === null ? "" : `document.getElementById("ids").value = ${JSON.stringify(ids)};`}
         document.getElementById("etsy-run").click(); return true; })()`);
-      const end = await waitFor(() => evalIn(ep, etsyState).then((s) => (s.t.startsWith("Saved") || s.t.startsWith("The download") || (s.cls === "warn" && !s.t.startsWith("Conversation"))) && s),
+      // progress lines ("Conversation 1/1 …", "Saving…") carry no class, so any warn line is an end
+      const end = await waitFor(() => evalIn(ep, etsyState).then((s) => (s.t.startsWith("Saved") || s.t.startsWith("The download") || s.cls === "warn") && s),
         `etsy save ${round}'s end line`, 20000).catch(soft((e) => ({ t: e.message, fails: [] })));
       const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-", state: "complete" }).then((d) => d.length)`)
         .then((n) => n >= round && n), `etsy round ${round}'s finished download`).catch(soft((e) => e.message));
       check(done === round, `etsy save ${round}: Chrome finished ${round} Etsy download(s) so far (${done})`);
-      await sleep(500); // a renamed copy would have a moment to land
+      await sleep(500); // a renamed copy would have a moment to land: Chrome's count, read again, still matches
+      const settled = await extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-" }).then((d) => d.length)`);
+      check(settled === round, `etsy save ${round}: no further Etsy download started (${settled} in Chrome's list)`);
       // one dated file, overwritten each round. Named by the UTC date, so a midnight UTC
       // between rounds puts the later rounds' file beside round 1's; the name is read
       // from disk, not recomputed here, so a midnight between the page's naming and this
@@ -605,6 +641,9 @@ async function scenarios(cdp, downloads) {
           `etsy save ${round}: the file is this save's (extracted_at ${first.at} -> ${saved.extracted_at})`);
         first.at = saved.extracted_at;
       }
+      // the later rounds compare against round 1's file: without it each would fail for
+      // round 1's reason, so the scenario stops here with that reason alone
+      if (round === 1 && !first.name) throw new Error("etsy save 1 landed no file, so the overwrite rounds have nothing to compare against");
       return { end, saved, text };
     };
 
