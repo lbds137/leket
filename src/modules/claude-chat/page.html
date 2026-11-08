@@ -27,7 +27,7 @@ ul{padding-left:20px}
 
 <section id="outputs">
 <h2>Save chat outputs</h2>
-<p class="advice">Paste the generated chat list — the bare JSON array of [chat, name, source] triples, or the whole window.CLAUDE_OUTPUT_CHATS = [...]; line. Every file Claude delivered under /mnt/user-data/outputs/ in each chat is downloaded (text inline, the rest base64) into one dated JSON.</p>
+<p class="advice">Paste the generated chat list: the whole generated file as-is, just its window.CLAUDE_OUTPUT_CHATS = [...]; line, or the bare JSON array of [chat, name, source] triples. Every file Claude delivered under /mnt/user-data/outputs/ in each chat is downloaded (text inline, the rest base64) into one dated JSON.</p>
 <textarea id="chats" rows="8" placeholder='[["&lt;chat uuid&gt;", "name", "source"], …]'></textarea>
 <button id="outputs-run">Save chat outputs</button>
 <p id="outputs-status" hidden></p>
