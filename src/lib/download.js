@@ -7,7 +7,9 @@ export const NO_WORD_MS = 15 * 60 * 1000;
 // by name) is done. saveAs passes through to chrome.downloads.download only when a caller
 // sets it — a caller that omits it gets Chrome's own default, as before. The promise is
 // true once it completes, false if it is interrupted or refused, and null after `timeout`
-// ms with no word (it may still be downloading). onStart(id) gets the id the moment Chrome
+// ms with no word (it may still be downloading). If downloads.download itself throws
+// synchronously, the promise rejects with that throw unchanged and nothing stays watched:
+// no timer, no listener, no onStart, no onLate. onStart(id) gets the id the moment Chrome
 // gives it, so a later click can ask about this download. With onLate, a download still
 // going at the timeout stays watched: onLate(ok, id) gets how it ended.
 export function trackDownload(downloads, { url, filename, saveAs, conflictAction }, { timeout = NO_WORD_MS, onStart = () => {}, onLate = null } = {}) {

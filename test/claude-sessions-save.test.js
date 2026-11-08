@@ -159,9 +159,9 @@ test("saveAs false and conflictAction overwrite ride on both download requests",
 });
 
 test("a downloads.download that throws propagates out of the save", async () => {
-  // the harness's 60 s timer would hold the process open if the throw left it live
+  // a 5 ms timeout, so a regression that left the timer live costs 5 ms, not a 60 s hang
   // (lib/download.js clears it on this path; test/download.test.js pins that)
-  const { d, saves } = harness();
+  const { d, saves } = harness(() => true, 5);
   d.download = () => { throw new Error("refused"); };
   await assert.rejects(saves.savePart(["x\n"], "part01.jsonl"), /refused/);
   await assert.rejects(saves.saveMarker({ parts: 1 }, "done.json"), /refused/);
@@ -186,7 +186,8 @@ test("a sync-throwing download revokes the blob URL once, rejection untouched, a
 const answering = (out) => async () => out;
 const recordStops = () => {
   const stops = [];
-  return { stops, onStop: (kind, err) => { stops.push([kind, err]); return `stop:${kind}`; } };
+  // records every argument onStop got, so an extra one shows up in the deepEquals
+  return { stops, onStop: (...args) => { stops.push(args); return `stop:${args[0]}`; } };
 };
 
 test("savePartOrStop returns a saved part's size and never calls onStop", async () => {
@@ -199,22 +200,23 @@ test("savePartOrStop stops a refused part with onStop's message", async () => {
   const { stops, onStop } = recordStops();
   await assert.rejects(savePartOrStop(answering({ saved: false, size: 1 }), [], "p01.jsonl", onStop),
     (err) => err.message === "stop:refused");
-  assert.deepEqual(stops, [["refused", undefined]]);
+  assert.deepEqual(stops, [["refused"]]);
 });
 
 test("savePartOrStop stops a silent part with onStop's message", async () => {
   const { stops, onStop } = recordStops();
   await assert.rejects(savePartOrStop(answering({ saved: null, size: 1 }), [], "p01.jsonl", onStop),
     (err) => err.message === "stop:silent");
-  assert.deepEqual(stops, [["silent", undefined]]);
+  assert.deepEqual(stops, [["silent"]]);
 });
 
 test("savePartOrStop converts a thrown save into a stop that hands onStop the throw", async () => {
   const { stops, onStop } = recordStops();
   const boom = new Error("Invalid filename");
   await assert.rejects(savePartOrStop(async () => { throw boom; }, [], "p01.jsonl", onStop),
-    (err) => err.message === "stop:error");
+    (err) => err.message === "stop:error" && err.cause === boom);
   assert.equal(stops.length, 1);
+  assert.equal(stops[0].length, 2, "onStop gets the kind and the throw, nothing more");
   assert.equal(stops[0][0], "error");
   assert.equal(stops[0][1], boom, "onStop sees the original throw, to name it");
 });
@@ -225,5 +227,5 @@ test("savePartOrStop passes the part's lines and name to the save and nothing of
   const { stops, onStop } = recordStops();
   await assert.rejects(savePartOrStop(async (l, n) => { seen.push([l, n]); return { saved: null }; }, lines, "p02.jsonl", onStop));
   assert.deepEqual(seen, [[lines, "p02.jsonl"]]);
-  assert.equal(stops[0].length, 2, "onStop's arguments are the kind and the throw only");
+  assert.deepEqual(stops, [["silent"]], "onStop gets the kind only: no lines, no name");
 });

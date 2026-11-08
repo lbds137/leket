@@ -47,8 +47,9 @@ export function createSaves({ downloads, note, stillCurrent }, { timeout } = {})
 // unless it saved. A saved part returns its blob size (the page's MB math). Anything else
 // calls onStop(kind, err) — kind "error" (the save threw; err is the throw, a synchronous
 // download failure among them), "refused" (Chrome interrupted or refused it) or "silent"
-// (no word in 15 minutes; it may still land) — and throws the message onStop returns,
-// which exportSessions propagates: later sessions are not fetched and no marker is
+// (no word in 15 minutes; it may still land) — and throws the message onStop returns
+// (with the save's own throw as its cause, for "error"), which exportSessions
+// propagates: later sessions are not fetched and no marker is
 // written. onStop is where the page records its stopped state and resume line; it gets
 // no lines, so nothing the page keeps can hold the part alive. (The marker never stops
 // the run: its null path stays page-side narration.)
@@ -57,7 +58,7 @@ export async function savePartOrStop(savePart, lines, name, onStop) {
   try {
     out = await savePart(lines, name);
   } catch (err) {
-    throw new Error(onStop("error", err));
+    throw new Error(onStop("error", err), { cause: err });
   }
   if (out.saved === true) return out.size;
   throw new Error(onStop(out.saved === false ? "refused" : "silent"));
