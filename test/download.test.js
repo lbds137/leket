@@ -71,6 +71,18 @@ test("an interrupted download or a refused start settles false", async () => {
   assert.equal(e.listening(), 0);
 });
 
+test("a download call that throws synchronously rejects with that throw and leaves no listener or timer", async () => {
+  const d = fakeDownloads();
+  d.download = () => { throw new Error("Invalid filename"); };
+  const late = [];
+  // a 60 s timer left live would hold the test process open past its end
+  const p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { timeout: 60000, onLate: (ok) => late.push(ok) });
+  await assert.rejects(p, /Invalid filename/);
+  assert.equal(d.listening(), 0, "the listener goes with the throw, even with onLate set");
+  d.fire(1, "complete");
+  assert.deepEqual(late, [], "nothing is watched, so nothing ends late");
+});
+
 test("a download done before its id came back is read from the download record", async () => {
   const d = fakeDownloads();
   const p = trackDownload(d, { url: "blob:x", filename: "a.zip" });

@@ -44,7 +44,19 @@ export function trackDownload(downloads, { url, filename, saveAs, conflictAction
     const request = { url, filename };
     if (saveAs !== undefined) request.saveAs = saveAs;
     if (conflictAction !== undefined) request.conflictAction = conflictAction;
-    downloads.download(request).then(async (mid) => {
+    let started;
+    try {
+      started = downloads.download(request);
+    } catch (err) {
+      // a synchronous throw: no id will come and nothing will end, so drop the timer and
+      // the listener now (left live, the timeout's done(null) would keep the listener for
+      // the page's life whenever onLate is set) and reject with the throw unchanged
+      settled = true;
+      clearTimeout(timer);
+      unwatch();
+      throw err;
+    }
+    started.then(async (mid) => {
       id = mid;
       onStart(mid);
       // a small part can finish before the promise resolved, and its `complete` event

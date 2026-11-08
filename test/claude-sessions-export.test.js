@@ -250,12 +250,13 @@ test("Invariant 1: three ~200-unit sessions at threshold 300 make two parts, who
 
 test("Invariant 1: partBytes exactly at threshold is not a flush (strict >)", async () => {
   // S's single event line lands partBytes at exactly 150, and a second session follows:
-  // strict > must not flush at S (a >= run would cut S off alone into its own part), so
-  // the whole run stays one part, written by the final flush
+  // strict > must not flush at S (a >= run would cut S off alone into its own part, then
+  // T into a second). T lifts partBytes to 350 > 150, so T's own boundary flush writes
+  // the one part, S and T together; the final flush then finds the buffer empty
   const s = oneEventSession("S", "t", 150), t = oneEventSession("T", "u", 200);
   const fetch = standIn(routesOneEvent([s, t]));
   const { parts } = await collect(sessionsOf(s, t), { fetch, threshold: 150 });
-  assert.equal(parts.length, 1, "exactly-at-threshold must not flush mid-walk");
+  assert.equal(parts.length, 1, "exactly-at-threshold must not flush at S");
   assert.equal(parts[0].lines.length, 3, "titles + both events, together in the one part");
   assert.match(parts[0].lines[2], /"_session":"T"/);
 });
@@ -422,6 +423,36 @@ test("the return's savedIds lists the sessions whose parts resolved, in flush or
   const { result, parts } = await collect(sessionsOf(a, b, c), { fetch, threshold: 300 });
   assert.equal(parts.length, 2);
   assert.deepEqual(result.savedIds, ["A", "B", "C"]);
+});
+
+test("a session whose fetch failed is in no part's ids, no later flush state and not the return's savedIds", async () => {
+  // A flushes alone (400 > 300); F's events fetch throws (no stand-in route); B and C
+  // then make the second part. F was never on disk, so a resume line naming it would
+  // skip it for good.
+  const a = oneEventSession("A", "tA", 400), b = oneEventSession("B", "tB", 200), c = oneEventSession("C", "tC", 200);
+  const f = listed("F", "tF");
+  const fetch = standIn(routesOneEvent([a, b, c]));
+  const flushes = [];
+  const { result } = await collect(sessionsOf(a, f, b, c), {
+    fetch, threshold: 300,
+    onFlush: async (lines, name, state, ids) => { flushes.push({ state, ids }); },
+  });
+  assert.equal(result.failed.length, 1);
+  assert.match(result.failed[0], /^F: /);
+  assert.deepEqual(flushes.map((x) => x.ids), [["A"], ["B", "C"]], "onFlush's fourth arg: each part's own session ids, in flush order");
+  assert.deepEqual(flushes[1].state, { savedIds: ["A"], partStart: 1 });
+  assert.deepEqual(result.savedIds, ["A", "B", "C"]);
+});
+
+test("onFlush's ids name a session with no events too: it was fetched whole, like a saved part promotes it", async () => {
+  const e = listed("E", "tE");
+  const fetch = standIn({ [`https://claude.ai/v1/code/sessions/E/events?limit=500`]: () => noEvents });
+  const flushes = [];
+  const { result } = await collect(sessionsOf(e), {
+    fetch, onFlush: async (lines, name, state, ids) => { flushes.push(ids); },
+  });
+  assert.deepEqual(flushes, [["E"]]);
+  assert.deepEqual(result.savedIds, ["E"], "the same ids the return promotes");
 });
 
 test("an all-skipped run returns savedIds [] — the titles-only part saves, promoting no ids", async () => {

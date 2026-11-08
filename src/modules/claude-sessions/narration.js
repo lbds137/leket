@@ -12,19 +12,36 @@ export function resumeLine(state) {
   return `window.CLAUDE_EXPORT_SKIP = ${JSON.stringify(state.savedIds)}; window.CLAUDE_EXPORT_PART_START = ${state.partStart};`;
 }
 
-// `resumeSessions(state, lines)` — the rebuild math for a stopped part that landed
-// late: the pasted skip and already-saved ids seed the chain, the landed part's own
-// `_session` values join in flush order (deduped — a session's id appears once), and
-// the numbering continues past the part that landed. `lines` is this module's own
-// output: every event line carries `_session`; the titles line carries none and
-// contributes nothing.
-export function resumeSessions(state, lines) {
+// `resumeSessions(state, ids)` — the rebuild math for a stopped part that landed late:
+// the pasted skip and already-saved ids seed the chain, the landed part's own session
+// ids (exportSessions' fourth onFlush arg) join in flush order, each once, and the
+// numbering continues past the part that landed. Ids, not the part's lines: keeping a
+// ~150 MB part alive to regex-scan it would hold the memory and freeze the tab.
+export function resumeSessions(state, ids) {
   const savedIds = [...state.savedIds];
-  for (const line of lines) {
-    const m = /"_session":"([^"]+)"/.exec(line);
-    if (m && !savedIds.includes(m[1])) savedIds.push(m[1]);
+  const seen = new Set(savedIds);
+  for (const id of ids) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      savedIds.push(id);
+    }
   }
   return { savedIds, partStart: state.partStart + 1 };
+}
+
+// `stopMessage(kind, name, err)` — the status line of a part save that stopped the run:
+// kind "error" (the save threw: err's message is named), "refused" (Chrome interrupted
+// or refused it) or "silent" (no word in 15 minutes; it may still land). Each points at
+// the resume element below the status line instead of embedding the line, so a late
+// note can update the line without touching this message.
+export function stopMessage(kind, name, err) {
+  if (kind === "error") {
+    return `Part ${name} didn't finish — ${(err && err.message) || String(err)}. Nothing more is fetched and no done marker is written. To resume, paste the resume line below into the resume box.`;
+  }
+  if (kind === "refused") {
+    return `Part ${name} didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written. To resume, paste the resume line below into the resume box.`;
+  }
+  return `Part ${name} got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste the resume line below into the resume box.`;
 }
 
 // `finalLine(...)` — the run's summary line, all three variants: plain (ok when nothing
@@ -51,14 +68,15 @@ export function finalLine({ markerFailed, markerPending, failedCount, totals, ru
 }
 
 // `lateNote(...)` — what a late end (the save seam's note hook) says. The page owns the
-// MB total and the per-run state (`stopped`: the onFlush args of the part that stopped
-// the run, plus the stop message and class its status line carries); this function only
+// MB total and the per-run state (`stopped`: the name, flush state and session ids of the
+// part that stopped the run — never its lines — plus the stop message and class its
+// status line carries); this function only
 // says what to print and, when a stopped part landed, the rebuilt resume line to write
 // into the resume element. A late marker end with a retained `doneLine` appends to the
 // run's summary rather than replacing it; without one it says the standalone line. A
 // late part end for the stopped part itself appends to the stop message and the resume
 // line is rebuilt; a different part's late end (an earlier silent part outliving a
-// later stop) appends only — its sessions are not in the stopped part's lines, so the
+// later stop) appends only — its sessions are not among the stopped part's ids, so the
 // chain view must not claim them. Mid-run it says today's Saved/warn lines (`savedMB`
 // is the total so far, `size` this part's own bytes). `run` rides along for callers'
 // context; today's lines name the marker by its late event's own name.
@@ -95,7 +113,7 @@ export function lateNote({ marker, ok, name, size, stopped, doneLine, savedMB, r
       return {
         text: `${stopped.message} The silent part (${name}) landed — the resume line below is updated.`,
         cls: stopped.cls,
-        resume: resumeLine(resumeSessions(stopped.state, stopped.lines)),
+        resume: resumeLine(resumeSessions(stopped.state, stopped.ids)),
       };
     }
     return {
@@ -121,19 +139,24 @@ export function lateNote({ marker, ok, name, size, stopped, doneLine, savedMB, r
 // The rename and delete runs' Done lines (an unstopped run; a stopped one prints its own
 // error). A result that may still have taken (no answer, or accepted but unverified) is
 // counted apart from the refusals: calling it "failed" would tell her it didn't happen.
+// A zero count gets no clause, and each line carries one parenthetical at most.
 export function renameDoneLine({ ok, failed, uncertain = 0 }, total) {
   if (!failed.length) return { text: `Done: ${ok}/${total} renamed, every one read back.`, cls: "ok" };
-  return {
-    text: `Done: ${ok}/${total} renamed and read back; ${failed.length - uncertain} failed`
-      + (uncertain ? `, ${uncertain} may have taken (no answer, or unverified — check those sessions)` : "")
-      + " (listed below).",
-    cls: "warn",
-  };
+  const refused = failed.length - uncertain;
+  const clauses = [];
+  if (refused) clauses.push(`${refused} failed`);
+  if (uncertain) clauses.push(`${uncertain} may have taken`);
+  const note = uncertain
+    ? `no answer, or unverified — check those sessions; ${refused ? "all " : ""}listed below`
+    : "listed below";
+  return { text: `Done: ${ok}/${total} renamed and read back; ${clauses.join(", ")} (${note}).`, cls: "warn" };
 }
 
 export function deleteDoneLine({ deleted, failed, unanswered = 0 }) {
+  const refused = failed.length - unanswered;
   return {
-    text: `Done: ${deleted} deleted (the first read back as gone; the rest on the server's OK), ${failed.length - unanswered} failed`
+    text: `Done: ${deleted} deleted (the first read back as gone; the rest on the server's OK)`
+      + (refused ? `, ${refused} failed` : "")
       + (unanswered ? `, ${unanswered} got no answer (may have been deleted — check the session list)` : "")
       + ".",
     cls: failed.length ? "warn" : "ok",
