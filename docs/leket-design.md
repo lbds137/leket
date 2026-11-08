@@ -149,6 +149,8 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
   (manifest name, extension strings, docs) renames as part of the module work; Deck
   renames the GitHub repo, the ~/Projects folder, the role file and the session at a
   clean break this session signals ("ready for rename"). The built 0.2.4 zip is moot.
+  **Done:** Deck's half landed first (the repo is lbds137/leket, the folder ~/Projects/leket);
+  the in-repo half shipped in 0.3.17 (names, message types, panel id, docs).
 - **Etsy script text** — received from Jackalope 11-04 (its repo is personal-data; never
   read from this session). Its deadname-guard literals stay out of Leket; the guard ships
   as the pluggable hook described under the module.

@@ -41,7 +41,7 @@ after(() => { globalThis.fetch = realFetch; });
 
 test("a save run prepares and answers with both blobs and both names, no downloads involved", async () => {
   fetchCalls = [];
-  const reply = await handled({ type: "discord-tools:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const reply = await handled({ type: "leket:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a prepared save, got ${JSON.stringify(reply)}`);
   assert.equal(reply.name, "reddit-abc123.json");
   assert.match(reply.url, /^blob:/);
@@ -53,7 +53,7 @@ test("a save run prepares and answers with both blobs and both names, no downloa
 
 test("a refused save run answers with the error text", async () => {
   fetchBody = "<html>login wall</html>";
-  const reply = await handled({ type: "discord-tools:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const reply = await handled({ type: "leket:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok === false, `expected a refusal, got ${JSON.stringify(reply)}`);
   assert.match(reply.error, /answered with a page/);
   fetchBody = okBody;
@@ -64,7 +64,7 @@ test("a revoke frees the blob url it names", async () => {
   const realRevoke = URL.revokeObjectURL;
   URL.revokeObjectURL = (u) => { revoked.push(u); return realRevoke(u); };
   try {
-    const reply = await handled({ type: "discord-tools:reddit-save-revoke", url: "blob:nodedata:one" });
+    const reply = await handled({ type: "leket:reddit-save-revoke", url: "blob:nodedata:one" });
     assert.deepEqual(reply, { ok: true });
   } finally {
     URL.revokeObjectURL = realRevoke;
@@ -75,7 +75,7 @@ test("a revoke frees the blob url it names", async () => {
 test("a message from a content-script relay (sender.tab) is declined", async () => {
   fetchCalls = [];
   const reply = await handled(
-    { type: "discord-tools:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" },
+    { type: "leket:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" },
     { id: "test-extension-id", tab: { id: 7 } },
   );
   assert.equal(reply, undefined, "the document must not answer a relayed message");

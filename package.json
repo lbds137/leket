@@ -1,8 +1,8 @@
 {
-  "name": "discord-tools",
-  "version": "0.3.16",
+  "name": "leket",
+  "version": "0.3.17",
   "private": true,
-  "description": "A Chrome extension that saves a Discord DM, channel or thread, with its attachments, as one zip.",
+  "description": "A Chrome extension that saves Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "type": "module",
   "license": "MIT",
   "scripts": {

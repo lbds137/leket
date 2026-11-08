@@ -9,12 +9,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   // the worker is the only caller that matters; mirror its sender line — a content
   // script's relay carries sender.tab, and websites cannot message the extension at all
   if (!msg || !sender || sender.tab || sender.id !== chrome.runtime.id) return;
-  if (msg.type === "discord-tools:reddit-save-revoke" && typeof msg.url === "string") {
+  if (msg.type === "leket:reddit-save-revoke" && typeof msg.url === "string") {
     URL.revokeObjectURL(msg.url);
     reply({ ok: true });
     return;
   }
-  if (msg.type === "discord-tools:reddit-save-run" && typeof msg.tabUrl === "string") {
+  if (msg.type === "leket:reddit-save-run" && typeof msg.tabUrl === "string") {
     preparePostJson(msg.tabUrl).then(
       ({ url, name, mdUrl, mdName, notFetched }) => reply({ ok: true, url, name, mdUrl, mdName, notFetched }),
       (e) => reply({ ok: false, error: (e && e.message) || String(e) }),

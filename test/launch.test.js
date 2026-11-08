@@ -55,7 +55,7 @@ const reset = () => {
 test("a launch on a conversation tab injects bridge then collector and answers ok", async () => {
   reset();
   const reply = await handled(
-    { type: "discord-tools:launch", command: "save", tabId: 5 },
+    { type: "leket:launch", command: "save", tabId: 5 },
     { id: "test-extension-id" }, // an extension page: no sender.tab
   );
   assert.deepEqual(reply, { ok: true });
@@ -68,7 +68,7 @@ test("a launch on a conversation tab injects bridge then collector and answers o
   // setBadgeText then setTitle, so the pair comes in that order)
   assert.deepEqual(calls.badges.slice(-2), [
     ["text", { tabId: 5, text: "" }],
-    ["title", { tabId: 5, title: "Discord tools: save this conversation" }],
+    ["title", { tabId: 5, title: "Leket: save this conversation" }],
   ]);
 });
 
@@ -76,7 +76,7 @@ test("a launch on a tab that navigated away says so, in the reply and on the bad
   reset();
   TAB_URL = "https://example.com/somewhere-else";
   const reply = await handled(
-    { type: "discord-tools:launch", command: "save", tabId: 6 },
+    { type: "leket:launch", command: "save", tabId: 6 },
     { id: "test-extension-id" },
   );
   assert.ok(reply && reply.ok === false, `expected a structured refusal, got ${JSON.stringify(reply)}`);
@@ -87,7 +87,7 @@ test("a launch on a tab that navigated away says so, in the reply and on the bad
 test("a content script cannot launch: sender.tab disqualifies the sender", async () => {
   reset();
   const reply = await handled(
-    { type: "discord-tools:launch", command: "save", tabId: 7 },
+    { type: "leket:launch", command: "save", tabId: 7 },
     { id: "test-extension-id", tab: { id: 7 } }, // the shape a content-script relay carries
   );
   assert.equal(reply, undefined, "the listener must not handle this message");
@@ -97,7 +97,7 @@ test("a content script cannot launch: sender.tab disqualifies the sender", async
 test("a command the worker does not have is refused, not run as save", async () => {
   reset();
   const reply = await handled(
-    { type: "discord-tools:launch", command: "rename", tabId: 8 },
+    { type: "leket:launch", command: "rename", tabId: 8 },
     { id: "test-extension-id" },
   );
   assert.ok(reply && reply.ok === false, `expected a structured refusal, got ${JSON.stringify(reply)}`);
@@ -109,7 +109,7 @@ test("a command the worker does not have is refused, not run as save", async () 
 test("the collector's Save handoff still opens the export tab beside it", async () => {
   reset();
   const reply = await handled(
-    { type: "discord-tools:ready", key: "k" },
+    { type: "leket:ready", key: "k" },
     { tab: { id: 3, index: 2, windowId: 1 } },
   );
   assert.deepEqual(reply, { ok: true });

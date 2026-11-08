@@ -30,40 +30,40 @@ function page({ sendFails = false, orphaned = false } = {}) {
 
 test("the save comes back whole in pieces, never splitting an emoji", async () => {
   const p = page();
-  assert.equal(p.sandbox.document.documentElement.dataset.discordToolsBridge, "1");
+  assert.equal(p.sandbox.document.documentElement.dataset.leketBridge, "1");
   const CHUNK = 8 * 1024 * 1024;
   // the emoji's two halves straddle the first piece boundary
   const json = "a".repeat(CHUNK - 1) + "😀" + "b".repeat(10);
-  await p.post({ type: "discord-tools:export", id: "s1", file: "discord-x-1.json", json, attachments: true });
-  assert.deepEqual(JSON.parse(JSON.stringify(p.acks)), [{ type: "discord-tools:ack", id: "s1", ok: true }]);
+  await p.post({ type: "leket:export", id: "s1", file: "discord-x-1.json", json, attachments: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(p.acks)), [{ type: "leket:ack", id: "s1", ok: true }]);
   const key = p.ready()[0].key;
-  const first = await p.ask({ type: "discord-tools:chunk", key, index: 0 });
+  const first = await p.ask({ type: "leket:chunk", key, index: 0 });
   assert.equal(first.total, 2);
-  const second = await p.ask({ type: "discord-tools:chunk", key, index: 1 });
+  const second = await p.ask({ type: "leket:chunk", key, index: 1 });
   assert.ok(second.chunk.startsWith("😀"));
   assert.equal(first.chunk + second.chunk, json);
-  assert.match((await p.ask({ type: "discord-tools:chunk", key, index: 2 })).error, /no piece 2/);
+  assert.match((await p.ask({ type: "leket:chunk", key, index: 2 })).error, /no piece 2/);
 });
 
 test("a second save leaves the first readable; a released one is gone", async () => {
   const p = page();
-  await p.post({ type: "discord-tools:export", id: "a", file: "discord-a-1.json", json: "{}" });
-  await p.post({ type: "discord-tools:export", id: "b", file: "discord-b-1.json", json: "[]" });
+  await p.post({ type: "leket:export", id: "a", file: "discord-a-1.json", json: "{}" });
+  await p.post({ type: "leket:export", id: "b", file: "discord-b-1.json", json: "[]" });
   const [k1, k2] = p.ready().map((m) => m.key);
-  assert.equal((await p.ask({ type: "discord-tools:chunk", key: k1, index: 0 })).chunk, "{}");
-  await p.ask({ type: "discord-tools:release", key: k1 });
-  assert.match((await p.ask({ type: "discord-tools:chunk", key: k1, index: 0 })).error, /gone/);
-  assert.equal((await p.ask({ type: "discord-tools:chunk", key: k2, index: 0 })).chunk, "[]");
+  assert.equal((await p.ask({ type: "leket:chunk", key: k1, index: 0 })).chunk, "{}");
+  await p.ask({ type: "leket:release", key: k1 });
+  assert.match((await p.ask({ type: "leket:chunk", key: k1, index: 0 })).error, /gone/);
+  assert.equal((await p.ask({ type: "leket:chunk", key: k2, index: 0 })).chunk, "[]");
 });
 
 test("when the extension can't be reached, the collector is told so", async () => {
   const p = page({ sendFails: true });
-  await p.post({ type: "discord-tools:export", id: "z", file: "discord-z-1.json", json: "{}" });
-  assert.deepEqual(JSON.parse(JSON.stringify(p.acks)), [{ type: "discord-tools:ack", id: "z", ok: false }]);
+  await p.post({ type: "leket:export", id: "z", file: "discord-z-1.json", json: "{}" });
+  assert.deepEqual(JSON.parse(JSON.stringify(p.acks)), [{ type: "leket:ack", id: "z", ok: false }]);
 });
 
 test("a bridge left behind by an extension reload stays silent", async () => {
   const p = page({ orphaned: true });
-  await p.post({ type: "discord-tools:export", id: "o", file: "discord-o-1.json", json: "{}" });
+  await p.post({ type: "leket:export", id: "o", file: "discord-o-1.json", json: "{}" });
   assert.deepEqual([p.acks.length, p.ready().length], [0, 0]);
 });
