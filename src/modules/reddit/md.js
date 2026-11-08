@@ -179,28 +179,31 @@ export function safeBody(text) {
   return out.join("\n");
 }
 
-function sumMore(children) {
-  let total = 0;
+function sumMore(children, acc) {
   for (const c of children || []) {
     const kind = c && c.kind;
     const d = (c && c.data) || {};
     if (kind === "more") {
       const n = Number.isFinite(d.count) && d.count > 0 ? d.count : 0;
-      if (n > 0) total += n;
-      else if (t1Parent(d)) total += 1;
+      if (n > 0) acc.count += n;
+      else if (t1Parent(d)) {
+        acc.count += 1;
+        acc.atLeast = true;
+      }
       continue;
     }
     if (kind !== "t1") continue;
     const replies = d.replies;
-    if (replies && typeof replies === "object") {
-      total += sumMore(((replies.data || {}).children) || []);
-    }
+    if (replies && typeof replies === "object") sumMore(((replies.data || {}).children) || [], acc);
   }
-  return total;
+  return acc;
 }
 
+// What the one-page fetch left behind: count sums reddit's own "more" counts, plus 1 for
+// each thread-continues cut (a cut hides at least one reply, of a number reddit doesn't
+// give), and atLeast says a cut was counted, so the count is a floor, not reddit's figure.
 export function notFetched(data) {
-  return sumMore(Array.isArray(data) && data[1] && data[1].data && data[1].data.children);
+  return sumMore(Array.isArray(data) && data[1] && data[1].data && data[1].data.children, { count: 0, atLeast: false });
 }
 
 export function comments(children, depth, permalink, out) {
@@ -273,9 +276,9 @@ export function render(data, saved = {}, folderRel = "") {
     }
   }
   out.push("", p.selftext ? safeBody(p.selftext) : "*(no body text)*", "", "---", "", "## Comments", "");
-  const missing = notFetched(data);
-  if (missing > 0) {
-    out.push(`*(This save holds the comments reddit sent in one page; reddit counts ${missing} more that ${missing === 1 ? "was" : "were"} not fetched — the links below open them on reddit.)*`, "");
+  const { count, atLeast } = notFetched(data);
+  if (count > 0) {
+    out.push(`*(This save holds the comments reddit sent in one page; reddit counts ${atLeast ? "at least " : ""}${count} more that ${count === 1 ? "was" : "were"} not fetched — the links below open them on reddit.)*`, "");
   }
   const before = out.length;
   comments(data[1] && data[1].data && data[1].data.children, 1, p.permalink ?? "", out);
