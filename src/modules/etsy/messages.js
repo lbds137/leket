@@ -256,4 +256,4 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
 // an unparseable export never replaces a same-day good one: it lands beside it
 const conflictActionFor = (sound) => (sound ? "overwrite" : "uniquify");
 
-export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor };
+export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted };

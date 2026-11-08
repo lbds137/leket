@@ -3,7 +3,7 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, collectConversations, serializePayload, outputName, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor } from "./messages.js";
+import { parseIds, collectConversations, serializePayload, outputName, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted } from "./messages.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
@@ -79,7 +79,7 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     const conversations = await collectConversations(ids, {
       onProgress: (i, total, id, seenSize) => {
         progress(i - 1, total);
-        say(`Conversation ${i}/${total} (${id}): ${seenSize} messages — keep this tab open.`);
+        say(`Conversation ${i}/${total} (${id}): ${counted(seenSize, "message")} — keep this tab open.`);
       },
     });
     progress(ids.length, ids.length);
