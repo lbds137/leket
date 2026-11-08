@@ -224,13 +224,13 @@ test("a fetch whose body read rejects is reported as an unreachable reddit", asy
 
 test("preparePostJson returns notFetched for the comment tree", async () => {
   const plain = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch: okFetch().fetch });
-  assert.equal(plain.notFetched, 0);
+  assert.deepEqual(plain.notFetched, { count: 0, atLeast: false });
   const withMore = okFetch(JSON.stringify(postPage({}, [
     { kind: "more", data: { count: 4, parent_id: "t1_abc9" } },
     { kind: "more", data: { count: 0, parent_id: "t1_abc9" } },
   ])));
   const partial = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch: withMore.fetch });
-  assert.equal(partial.notFetched, 5);
+  assert.deepEqual(partial.notFetched, { count: 5, atLeast: true });
 });
 
 test("a page without a post id in its path is refused, in the script's words, and nothing is fetched", async () => {
@@ -265,12 +265,14 @@ test("both files settle: they download in order, saveAs pinned off, and each set
   workerDownloads.calls.length = 0;
 });
 
-test("downloadPrepared appends the notFetched note when notFetched > 0 and keeps the message unchanged for 0 or undefined", async () => {
-  const three = await downloadPrepared(workerDownloads, twoFiles, { notFetched: 3 });
+test("downloadPrepared appends the notFetched note when the count is > 0 and keeps the message unchanged for 0 or undefined", async () => {
+  const three = await downloadPrepared(workerDownloads, twoFiles, { notFetched: { count: 3, atLeast: false } });
   assert.equal(three.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 3 more comments weren't fetched — the .md links to them on reddit.");
-  const one = await downloadPrepared(workerDownloads, twoFiles, { notFetched: 1 });
+  const one = await downloadPrepared(workerDownloads, twoFiles, { notFetched: { count: 1, atLeast: false } });
   assert.equal(one.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 1 more comment wasn't fetched — the .md links to them on reddit.");
-  const zero = await downloadPrepared(workerDownloads, twoFiles, { notFetched: 0 });
+  const floor = await downloadPrepared(workerDownloads, twoFiles, { notFetched: { count: 4, atLeast: true } });
+  assert.equal(floor.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads. At least 4 more comments weren't fetched — the .md links to them on reddit.");
+  const zero = await downloadPrepared(workerDownloads, twoFiles, { notFetched: { count: 0, atLeast: false } });
   assert.equal(zero.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
   const undef = await downloadPrepared(workerDownloads, twoFiles, {});
   assert.equal(undef.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
@@ -341,7 +343,8 @@ test("a json with no word and an md that settles: the message names both fates",
   const realSearch = workerDownloads.search;
   let searches = 0;
   workerDownloads.search = async () => { searches += 1; return [{ state: searches === 1 ? "in_progress" : "complete" }]; };
-  const done = await downloadPrepared(workerDownloads, twoFiles, { timeout: 5 });
+  // a notFetched count rides along, but the note waits for both files: none here
+  const done = await downloadPrepared(workerDownloads, twoFiles, { timeout: 5, notFetched: { count: 3, atLeast: false } });
   workerDownloads.search = realSearch;
   workerDownloads.endState = "complete";
   assert.equal(done.settled, false);
