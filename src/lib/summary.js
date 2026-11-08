@@ -62,7 +62,7 @@ export function summarize({ results, failed, leftBehind = 0, records = [], messa
   // part 1 holds the messages and the readable page, in both kinds of save
   const savedText = savedParts.has(1)
     ? `Saved ${messages} messages${attachments ? ` and ${attachText}` : ""}.`
-    : `The ${messages} messages are in ${results.length > 1 ? "part 1" : "the zip"}, which isn't saved yet${attachments ? `; saved ${attachText}` : ""}.`;
+    : `The ${messages} messages are in ${streamed || results.length > 1 ? "part 1" : "the zip"}, which isn't saved yet${attachments ? `; saved ${attachText}` : ""}.`;
   const staleNote = !staleParts.length ? ""
     : ` discord-attachments.json was written before part ${staleParts.join(", ")} was saved, so it still lists that part's files as not downloaded: they are in the part.`;
   // a streamed save stops at its first failed part; whether anything was left out of
