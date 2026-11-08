@@ -147,7 +147,7 @@ export function renameDoneLine({ ok, failed, uncertain = 0 }, total) {
   if (refused) clauses.push(`${refused} failed`);
   if (uncertain) clauses.push(`${uncertain} may have taken`);
   const note = uncertain
-    ? `no answer, or unverified — check those sessions; ${refused ? "all " : ""}listed below`
+    ? `no answer, or unverified — check those sessions; ${refused ? "both kinds " : ""}listed below`
     : "listed below";
   return { text: `Done: ${ok}/${total} renamed and read back; ${clauses.join(", ")} (${note}).`, cls: "warn" };
 }

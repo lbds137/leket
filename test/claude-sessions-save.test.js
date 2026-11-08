@@ -169,7 +169,8 @@ test("a downloads.download that throws propagates out of the save", async () => 
 
 test("a sync-throwing download revokes the blob URL once, rejection untouched, and nothing narrates", async () => {
   // the throw rejects trackDownload's promise with its timer and listener already
-  // dropped, so onLate never fires: the factory's own revoke is the only one
+  // dropped, so onLate never fires: the factory's own revoke is the only one. (This pins
+  // the factory's side; the timer and listener release is test/download.test.js's pin.)
   const { d, notes, saves } = harness(() => true, 5);
   d.download = () => { throw new Error("refused"); };
   await assert.rejects(saves.savePart(["x\n"], "part01.jsonl"), /refused/);

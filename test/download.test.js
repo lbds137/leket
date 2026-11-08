@@ -75,9 +75,22 @@ test("a download call that throws synchronously rejects with that throw and leav
   const d = fakeDownloads();
   d.download = () => { throw new Error("Invalid filename"); };
   const late = [];
-  // a 60 s timer left live would hold the test process open past its end
-  const p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { timeout: 60000, onLate: (ok) => late.push(ok) });
+  // watch the wait timer's id: a live 60 s timer would only hold the process open, which
+  // no assertion sees, so the clear itself is what this pins
+  const realSet = globalThis.setTimeout, realClear = globalThis.clearTimeout;
+  const made = [], cleared = [];
+  globalThis.setTimeout = (...a) => { const t = realSet(...a); made.push(t); return t; };
+  globalThis.clearTimeout = (t) => { cleared.push(t); return realClear(t); };
+  let p;
+  try {
+    p = trackDownload(d, { url: "blob:x", filename: "a.zip" }, { timeout: 60000, onLate: (ok) => late.push(ok) });
+  } finally {
+    globalThis.setTimeout = realSet;
+    globalThis.clearTimeout = realClear;
+  }
   await assert.rejects(p, /Invalid filename/);
+  assert.equal(made.length, 1);
+  assert.ok(cleared.includes(made[0]), "the wait timer is cleared with the throw");
   assert.equal(d.listening(), 0, "the listener goes with the throw, even with onLate set");
   d.fire(1, "complete");
   assert.deepEqual(late, [], "nothing is watched, so nothing ends late");
