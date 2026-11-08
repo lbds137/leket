@@ -6,7 +6,12 @@
 // worker, offscreen and export-tab code a person's click runs. Not covered: the toolbar
 // button itself, user-gesture checks (the presses are script clicks), and the Discord
 // collector's panel — the smoke posts the collector's hand-off message to the bridge
-// itself, so the Discord flow is covered from the bridge onward.
+// itself, so the Discord flow is covered from the bridge onward. The claude.ai pages
+// (sessions, chat outputs) open from the popup too; the sessions export runs for real
+// against a synthetic API, with two test-side levers set on its page: the 15-minute
+// no-word wait shrunk to 0 ms and the part's download call held until released, so a
+// part goes silent and then lands late on cue. The chat page is driven only as far as
+// its paste parse — its org probe and fetches are not covered.
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
 //
@@ -56,11 +61,30 @@ const discordExport = {
     attachments: [{ filename: "note.txt", url: ATTACHMENT, size: ATTACHMENT_BODY.length }] }],
 };
 const html = (title) => `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
+// claude.ai: a /code page and a chat page for the popup to match, the session listing
+// (one new session, one the pasted known map marks unchanged) and the new one's events
+const CLAUDE_CODE = "https://claude.ai/code";
+const CLAUDE_CHAT = "https://claude.ai/chat/00000000-0000-4000-8000-000000000000";
+const SESSIONS_API = "https://claude.ai/v1/code/sessions";
+const NEW_SESSION = "cse_smokenew";
+const KNOWN_SESSION = "cse_smokeknown";
+const listing = (data) => JSON.stringify({ data, next_cursor: null });
 const WEB = new Map([
   [REDDIT_POST, { type: "text/html", body: html("a reddit post") }],
   [REDDIT_JSON, { type: "application/json", body: redditBody }],
   [DISCORD_DM, { type: "text/html", body: html("a discord dm") }],
   [ATTACHMENT, { type: "text/plain", body: ATTACHMENT_BODY }],
+  [CLAUDE_CODE, { type: "text/html", body: html("a claude code page") }],
+  [CLAUDE_CHAT, { type: "text/html", body: html("a claude chat") }],
+  [`${SESSIONS_API}?statuses=active&limit=50`, { type: "application/json", body: listing([
+    { id: NEW_SESSION, title: "a new session", last_event_at: "2021-01-03T00:00:00Z" },
+    { id: KNOWN_SESSION, title: "an archived session", last_event_at: "2021-01-01T00:00:00Z" },
+  ]) }],
+  [`${SESSIONS_API}?statuses=paused&limit=50`, { type: "application/json", body: listing([]) }],
+  [`${SESSIONS_API}?statuses=archived&limit=50`, { type: "application/json", body: listing([]) }],
+  [`${SESSIONS_API}/${NEW_SESSION}/events?limit=500`, { type: "application/json", body: listing([
+    { event_type: "user", created_at: "2021-01-03T00:00:00Z", sequence_num: 1, payload: { text: "an event" } },
+  ]) }],
 ]);
 
 // ---- a small CDP client over Node's own WebSocket ----
@@ -269,6 +293,18 @@ async function scenarios(cdp, downloads) {
     return popup;
   };
   const landed = () => readdirSync(downloads).filter((f) => !f.endsWith(".crdownload")).sort();
+  // a module page's script ran, its whole import graph with it: its run button has a
+  // click listener. The HTML is static, so any element shows up even when page.js fails
+  // to load — and readyState "complete" was seen before the listener once, so a click
+  // then did nothing
+  const wired = async (sessionId, button, what) => {
+    const ok = await waitFor(async () => {
+      const r = await cdp.send("Runtime.evaluate", { includeCommandLineAPI: true, returnByValue: true,
+        expression: `(() => { const b = document.getElementById(${JSON.stringify(button)}); return !!b && (getEventListeners(b).click || []).length > 0; })()` }, sessionId);
+      return r.result.value === true;
+    }, `${what}: page.js to wire #${button}`).catch(() => false);
+    if (!check(ok, `${what}: the page's script and its imports loaded (#${button} has its click listener)`)) throw new Error(`${what}: page.js never ran`);
+  };
 
   // ---- reddit: popup -> worker -> offscreen document -> worker downloads, twice ----
   console.log("smoke: reddit save");
@@ -337,6 +373,70 @@ async function scenarios(cdp, downloads) {
     check(names.includes("discord-smoke-111.json"), "discord: the zip holds the messages json");
     check(names.some((n) => n.endsWith("note.txt")), `discord: the zip holds the attachment (names: ${names.join(", ")})`);
   }
+
+  // ---- claude sessions: popup -> the module's page -> a real export whose one part gets
+  // no word from Chrome, stops the run, then lands late and rebuilds the resume line.
+  // After this block: the files below would break the reddit block's exact-files check ----
+  console.log("smoke: claude sessions export");
+  await open(CLAUDE_CODE);
+  await clickPopup("Export sessions");
+  const sp = (await target((s) => s.type === "page" && s.url.includes("/src/modules/claude-sessions/page.html#export"), "the sessions page")).sessionId;
+  await wired(sp, "export-run", "sessions");
+  // two test-side levers, set after load (page.js looks both up at call time): the
+  // 15-minute no-word wait becomes 0 ms, and the part's download call answers only on
+  // release — so the part is silent first and lands after, in that order every run
+  const levers = await evalIn(sp, `(() => {
+    const st = window.setTimeout;
+    window.setTimeout = (f, ms, ...a) => st(f, ms === ${15 * 60 * 1000} ? 0 : ms, ...a);
+    const dl = chrome.downloads.download.bind(chrome.downloads);
+    const held = new Promise((r) => { window.smokeRelease = r; });
+    const hold = (req) => { const p = dl(req); return held.then(() => p); };
+    chrome.downloads.download = hold;
+    return chrome.downloads.download === hold; })()`);
+  if (!check(levers, "sessions: the smoke holds the page's download call (chrome.downloads.download is writable)")) throw new Error("no hold on the sessions page's download");
+  // the generator's whole file, script tail included: only paste.js's strip parses it
+  await evalIn(sp, `document.getElementById("known").value = ${JSON.stringify(
+    `window.CLAUDE_EXPORT_KNOWN = ${JSON.stringify({ [KNOWN_SESSION]: "2021-01-02T00:00:00Z" })};\n(() => { console.log("the console script"); })();\n`)};
+    document.getElementById("export-run").click(), true`);
+  const status = `(() => { const p = document.getElementById("export-status"); return { t: p.hidden ? "" : p.textContent, cls: p.className }; })()`;
+  const resume = `document.getElementById("export-resume").textContent`;
+  const silent = await waitFor(() => evalIn(sp, status).then((s) => s.t.includes("got no word from Chrome") && s), "the part to go silent and stop the run", 30000)
+    .catch((e) => ({ t: e.message }));
+  check(/^Part claude-sessions-\S+-part01\.jsonl got no word from Chrome/.test(silent.t), `sessions: the silent part stops the run (it said: ${silent.t})`);
+  check(await evalIn(sp, resume) === "window.CLAUDE_EXPORT_SKIP = []; window.CLAUDE_EXPORT_PART_START = 0;",
+    `sessions: the stop's resume line names nothing saved (${await evalIn(sp, resume)})`);
+  await evalIn(sp, "window.smokeRelease(), true");
+  const late = await waitFor(() => evalIn(sp, status).then((s) => s.t.endsWith("landed — the resume line below is updated.") && s), "the silent part to land late", 30000)
+    .catch((e) => ({ t: e.message, cls: "" }));
+  // every field the stop recorded shows here: message (the text's start), name (this
+  // branch, not the other-part one), cls, and state + ids (the rebuilt line)
+  check(late.t.startsWith(silent.t) && /The silent part \(claude-sessions-\S+-part01\.jsonl\) landed — /.test(late.t),
+    `sessions: the late landing appends to the stop message (it said: ${late.t})`);
+  check(late.cls === "warn", `sessions: the late line keeps the stop's warn class (${late.cls})`);
+  check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${NEW_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 1;`,
+    `sessions: the resume line is rebuilt with the landed part (${await evalIn(sp, resume)})`);
+  check(await evalIn(sp, `document.getElementById("export-failures").children.length`) === 0, "sessions: no session failed (the known one was skipped, not fetched)");
+  const parts = landed().filter((f) => f.startsWith("claude-sessions-"));
+  if (check(parts.length === 1 && /-part01\.jsonl$/.test(parts[0]), `sessions: one part on disk, no done marker (found: ${parts.join(", ") || "none"})`)) {
+    const [titles, ...events] = readFileSync(join(downloads, parts[0]), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    check(Object.keys(titles._titles || {}).length === 2, "sessions: the part opens with both sessions' titles");
+    check(events.length === 1 && events[0]._session === NEW_SESSION, `sessions: the part holds the new session's one event (${events.length})`);
+  }
+
+  // ---- claude chat: popup -> the module's page, which parses a pasted whole file ----
+  console.log("smoke: claude chat outputs");
+  await open(CLAUDE_CHAT);
+  await clickPopup("Save chat outputs");
+  const cp = (await target((s) => s.type === "page" && /\/src\/modules\/claude-chat\/page\.html\?tab=\d+$/.test(s.url), "the chat outputs page (with its tab id)")).sessionId;
+  await wired(cp, "outputs-run", "chat");
+  // an empty list in the generator's whole-file form: past the strip it parses and is
+  // refused as empty; without page.js or its imports the click says nothing at all
+  await evalIn(cp, `document.getElementById("chats").value = ${JSON.stringify(
+    `window.CLAUDE_OUTPUT_CHATS = [];\n(() => { console.log("the console script"); })();\n`)};
+    document.getElementById("outputs-run").click(), true`);
+  const said = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); return !p.hidden && p.textContent; })()`),
+    "the chat page's status line", 15000).catch((e) => e.message);
+  check(said.startsWith("The chat list is empty."), `chat: the page parses the pasted file and refuses the empty list (it said: ${said})`);
 
   if (blocked.length) console.log(`smoke: blocked ${blocked.length} request(s) the synthetic web doesn't serve:\n  ${[...new Set(blocked)].join("\n  ")}`);
   console.log(failures.length ? `smoke: ${failures.length} FAILED` : "smoke: all passed");
