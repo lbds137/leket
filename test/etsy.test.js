@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson, finishMessage, conflictActionFor }
+const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, parsesAsJson, finishMessage, conflictActionFor }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -437,6 +437,28 @@ test("redactionCollisions: a name one edit from Etsy's own words or payload keys
   ]);
 });
 
+test("redactLineFor: on is quiet unless a name collides; a collision and both off states warn, each saying what it costs", () => {
+  assert.deepEqual(redactLineFor("on"), { text: "Redact: on.", cls: "" });
+  assert.deepEqual(redactLineFor("on", []), { text: "Redact: on.", cls: "" });
+  assert.deepEqual(redactLineFor("on", ["etsy", "pages"]), {
+    text: "Redact: on. This name also matches Etsy's own words or the export's field names (etsy, pages) — those read [redacted] in the export, and a redacted field name changes the file's shape.",
+    cls: "warn",
+  });
+  assert.deepEqual(redactLineFor("off (etsyRedact config incomplete)"), {
+    text: "Redact: off — config invalid (needs lowercase name and short sharing the first letter, and firstSounds starting with it); the export is unredacted.",
+    cls: "warn",
+  });
+  assert.deepEqual(redactLineFor("off (no etsyRedact config)"), {
+    text: "Redact: off — no etsyRedact config; the export is unredacted.",
+    cls: "warn",
+  });
+  // wired to redactStateFor's own outputs: a renamed state string can't fall through to
+  // the wrong off line
+  assert.equal(redactLineFor(redactStateFor(undefined)).text, "Redact: off — no etsyRedact config; the export is unredacted.");
+  assert.match(redactLineFor(redactStateFor({ name: "X" })).text, /^Redact: off — config invalid/);
+  assert.equal(redactLineFor(redactStateFor({ ...VALID })).text, "Redact: on.");
+});
+
 test("finishMessage: ok class only when saved, no errors, redact on, and JSON sound; warn otherwise", () => {
   const cleanConvo = { id: "111", messages: [msg(1), msg(2)] };
   const errConvo = { id: "222", messages: [msg(3)], error: "HTTP 500 at offset 0" };
@@ -478,7 +500,6 @@ test("finishMessage: ok class only when saved, no errors, redact on, and JSON so
       cls: "warn",
     },
   );
-  assert.ok(lateUnsound.text.includes("is being saved") && !lateUnsound.text.includes("was saved"));
 
   // interrupted/refused (false) and no-word (null) saves always warn
   assert.deepEqual(

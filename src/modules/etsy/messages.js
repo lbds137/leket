@@ -117,6 +117,27 @@ const PROBES = [
 ];
 const redactionCollisions = (redact) => PROBES.filter((s) => redact(s) !== s);
 
+// the redact state's own line on the page, pure so its wording is pinned: a collision
+// rides the "on" line as a warning (narrated, never a failure of the run), and neither
+// off state is silent — an unguarded export must never pass for a guarded one
+const redactLineFor = (redactState, hits = []) => {
+  if (redactState === "on") {
+    return hits.length
+      ? {
+        text: `Redact: on. This name also matches Etsy's own words or the export's field names (${hits.join(", ")}) — those read [redacted] in the export, and a redacted field name changes the file's shape.`,
+        cls: "warn",
+      }
+      : { text: "Redact: on.", cls: "" };
+  }
+  if (redactState === "off (etsyRedact config incomplete)") {
+    return {
+      text: "Redact: off — config invalid (needs lowercase name and short sharing the first letter, and firstSounds starting with it); the export is unredacted.",
+      cls: "warn",
+    };
+  }
+  return { text: "Redact: off — no etsyRedact config; the export is unredacted.", cls: "warn" };
+};
+
 const serializePayload = (conversations, opts = {}) => {
   const { extractedAt = new Date().toISOString(), redact = (t) => t } = opts;
   // the payload always names its redact state, and the decision is value-based, not
@@ -192,4 +213,4 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
 // an unparseable export never replaces a same-day good one: it lands beside it
 const conflictActionFor = (sound) => (sound ? "overwrite" : "uniquify");
 
-export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson, finishMessage, conflictActionFor };
+export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, parsesAsJson, finishMessage, conflictActionFor };

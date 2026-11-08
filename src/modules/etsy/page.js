@@ -3,7 +3,7 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, parsesAsJson, finishMessage, conflictActionFor } from "./messages.js";
+import { parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, parsesAsJson, finishMessage, conflictActionFor } from "./messages.js";
 import { makeRedact } from "./redact.js";
 import { trackDownload } from "../../lib/download.js";
 
@@ -71,23 +71,9 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     // export must never pass for a guarded one)
     const stored = (await chrome.storage.local.get("etsyRedact")).etsyRedact;
     const redactState = redactStateFor(stored);
-    let redact;
-    if (redactState === "on") {
-      redact = makeRedact(stored);
-      const hits = redactionCollisions(redact);
-      // the collision cost rides the redact line (warn there), never erasing anything —
-      // narrated, never a failure of the run
-      sayRedact(
-        "Redact: on." + (hits.length
-          ? ` This name also matches words Etsy or the export's own field names use (${hits.join(", ")}) — those read [redacted] in the export, and a redacted field name changes the file's shape.`
-          : ""),
-        hits.length ? "warn" : "",
-      );
-    } else if (redactState === "off (etsyRedact config incomplete)") {
-      sayRedact("Redact: off — config invalid (needs lowercase name and short sharing the first letter, and firstSounds starting with it); the export is unredacted.", "warn");
-    } else {
-      sayRedact("Redact: off — no etsyRedact config; the export is unredacted.", "warn");
-    }
+    const redact = redactState === "on" ? makeRedact(stored) : undefined;
+    const redactNote = redactLineFor(redactState, redact ? redactionCollisions(redact) : []);
+    sayRedact(redactNote.text, redactNote.cls);
 
     progress(0, ids.length);
     const conversations = await collectConversations(ids, {
