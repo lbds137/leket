@@ -50,7 +50,11 @@ If you only want the messages, untick **save attachments too** before clicking S
 
 ## For developers
 
-`npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies. Layout:
+`npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies.
+
+`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons: a reddit save (twice: the second must overwrite, not add a renamed copy) and a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does): it finds a Playwright Chromium in `~/.cache/ms-playwright` (`npx playwright install chromium`), or set `LEKET_CHROME` to one; without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. The unit tests stub `chrome.*`, so run the smoke too after any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
+
+Layout:
 
 - `src/popup/popup.html`, `src/popup/popup.js`: the toolbar popup. It detects what the active tab supports and renders that module's card.
 - `src/modules/registry.js`: the supported sites, matched by URL.
