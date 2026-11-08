@@ -173,6 +173,7 @@ export async function exportSessions(sessions, opts = {}) {
     const lines = [];
     let cursor = null;
     const seenCursors = new Set();
+    let page = 0;
     try {
       do {
         // A cursor that already ran must not run again: throw rather than loop forever.
@@ -185,9 +186,19 @@ export async function exportSessions(sessions, opts = {}) {
           + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
         // a fresh signal per page, as in listing/rename/delete: a hung page fails this
         // session (the catch below) instead of holding the run, and its button, forever
-        const r = await doFetch(url, { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
-        if (!r.ok) throw new Error(`events HTTP ${r.status}`);
-        const j = await r.json();
+        page++;
+        let r, j;
+        try {
+          r = await doFetch(url, { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
+          if (!r.ok) throw new Error(`events HTTP ${r.status}`);
+          // the signal covers the body read too, so a stalled body times out the same way
+          j = await r.json();
+        } catch (err) {
+          // name the page and the limit, like etsy's "timed out after N s at offset";
+          // the engine's own wording ("aborted due to timeout") says neither
+          if (err?.name === "TimeoutError") throw new Error(`events page ${page} timed out after ${timeoutMs / 1000} s`);
+          throw err;
+        }
         for (const e of j.data || []) {
           lines.push(JSON.stringify({ ...e.payload, _session: s.id, _title: s.title, _event_type: e.event_type, _created_at: e.created_at, _seq: e.sequence_num }) + "\n");
         }
