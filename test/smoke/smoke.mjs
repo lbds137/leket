@@ -9,8 +9,9 @@
 // itself, so the Discord flow is covered from the bridge onward. The claude.ai pages
 // (sessions, chat outputs) open from the popup too; the sessions export runs for real
 // against a synthetic API, with two test-side levers set on its page: the 15-minute
-// no-word wait shrunk to 0 ms and the part's download call held until released, so a
-// part goes silent and then lands late on cue. The chat page is driven only as far as
+// no-word wait shrunk to 0 ms and the download call's answer held until released, so
+// the page hears nothing first and the part's late end after, on cue (the file itself
+// is on disk at once; what's covered is the stop and the late-end narration). The chat page is driven only as far as
 // its paste parse — its org probe and fetches are not covered.
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
@@ -27,6 +28,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { postPage } from "../fixtures/reddit.js";
+import { NO_WORD_MS } from "../../src/lib/download.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -68,6 +70,7 @@ const CLAUDE_CHAT = "https://claude.ai/chat/00000000-0000-4000-8000-000000000000
 const SESSIONS_API = "https://claude.ai/v1/code/sessions";
 const NEW_SESSION = "cse_smokenew";
 const KNOWN_SESSION = "cse_smokeknown";
+const EARLIER_SESSION = "cse_smokeearlier"; // in the pasted resume line only: never listed
 const listing = (data) => JSON.stringify({ data, next_cursor: null });
 const WEB = new Map([
   [REDDIT_POST, { type: "text/html", body: html("a reddit post") }],
@@ -295,14 +298,15 @@ async function scenarios(cdp, downloads) {
   const landed = () => readdirSync(downloads).filter((f) => !f.endsWith(".crdownload")).sort();
   // a module page's script ran, its whole import graph with it: its run button has a
   // click listener. The HTML is static, so any element shows up even when page.js fails
-  // to load — and readyState "complete" was seen before the listener once, so a click
-  // then did nothing
+  // to load. A readyState "complete" wait once let a click land with no listener yet —
+  // unexplained (a module script normally holds up load; the first evaluate may have
+  // reached a document mid-navigation), and this poll doesn't depend on the cause
   const wired = async (sessionId, button, what) => {
     const ok = await waitFor(async () => {
       const r = await cdp.send("Runtime.evaluate", { includeCommandLineAPI: true, returnByValue: true,
         expression: `(() => { const b = document.getElementById(${JSON.stringify(button)}); return !!b && (getEventListeners(b).click || []).length > 0; })()` }, sessionId);
       return r.result.value === true;
-    }, `${what}: page.js to wire #${button}`).catch(() => false);
+    }, `${what}: page.js to wire #${button}`).catch((e) => { if (e && e.fatal) throw e; return false; });
     if (!check(ok, `${what}: the page's script and its imports loaded (#${button} has its click listener)`)) throw new Error(`${what}: page.js never ran`);
   };
 
@@ -335,8 +339,8 @@ async function scenarios(cdp, downloads) {
   // cancelled, so the part's link must take a click to save it (the export tab's listener) ----
   console.log("smoke: discord save");
   await extEval(`(() => {
-    let armed = true;
-    chrome.downloads.onCreated.addListener((d) => { if (armed) { armed = false; chrome.downloads.cancel(d.id); } });
+    self.smokeCancelArmed = true;
+    chrome.downloads.onCreated.addListener((d) => { if (self.smokeCancelArmed) { self.smokeCancelArmed = false; chrome.downloads.cancel(d.id); } });
     return true; })()`);
   const dm = await open(DISCORD_DM);
   const launcher = await clickPopup("Save this conversation");
@@ -373,6 +377,9 @@ async function scenarios(cdp, downloads) {
     check(names.includes("discord-smoke-111.json"), "discord: the zip holds the messages json");
     check(names.some((n) => n.endsWith("note.txt")), `discord: the zip holds the attachment (names: ${names.join(", ")})`);
   }
+  // disarmed whatever happened above: a discord block that failed before its first
+  // download must not leave the cancel waiting for a later scenario's
+  await extEval("self.smokeCancelArmed = false, true");
 
   // ---- claude sessions: popup -> the module's page -> a real export whose one part gets
   // no word from Chrome, stops the run, then lands late and rebuilds the resume line.
@@ -383,41 +390,45 @@ async function scenarios(cdp, downloads) {
   const sp = (await target((s) => s.type === "page" && s.url.includes("/src/modules/claude-sessions/page.html#export"), "the sessions page")).sessionId;
   await wired(sp, "export-run", "sessions");
   // two test-side levers, set after load (page.js looks both up at call time): the
-  // 15-minute no-word wait becomes 0 ms, and the part's download call answers only on
-  // release — so the part is silent first and lands after, in that order every run
+  // 15-minute no-word wait (NO_WORD_MS) becomes 0 ms, and the download call's answer is
+  // held until released — Chrome saves the file at once, but the page hears of it only
+  // after release, so it is silent first and its late end narrated after, every run
   const levers = await evalIn(sp, `(() => {
     const st = window.setTimeout;
-    window.setTimeout = (f, ms, ...a) => st(f, ms === ${15 * 60 * 1000} ? 0 : ms, ...a);
+    window.setTimeout = (f, ms, ...a) => st(f, ms === ${NO_WORD_MS} ? 0 : ms, ...a);
     const dl = chrome.downloads.download.bind(chrome.downloads);
     const held = new Promise((r) => { window.smokeRelease = r; });
     const hold = (req) => { const p = dl(req); return held.then(() => p); };
     chrome.downloads.download = hold;
     return chrome.downloads.download === hold; })()`);
   if (!check(levers, "sessions: the smoke holds the page's download call (chrome.downloads.download is writable)")) throw new Error("no hold on the sessions page's download");
-  // the generator's whole file, script tail included: only paste.js's strip parses it
+  // the generator's whole file, script tail included: only paste.js's strip parses it.
+  // And a resume line from an earlier run, so the stop's recorded state (its pasted skip
+  // and part numbering) shows in both resume lines below, apart from the landed ids
   await evalIn(sp, `document.getElementById("known").value = ${JSON.stringify(
     `window.CLAUDE_EXPORT_KNOWN = ${JSON.stringify({ [KNOWN_SESSION]: "2021-01-02T00:00:00Z" })};\n(() => { console.log("the console script"); })();\n`)};
+    document.getElementById("resume").value = ${JSON.stringify(`window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 2;`)};
     document.getElementById("export-run").click(), true`);
   const status = `(() => { const p = document.getElementById("export-status"); return { t: p.hidden ? "" : p.textContent, cls: p.className }; })()`;
   const resume = `document.getElementById("export-resume").textContent`;
   const silent = await waitFor(() => evalIn(sp, status).then((s) => s.t.includes("got no word from Chrome") && s), "the part to go silent and stop the run", 30000)
     .catch((e) => ({ t: e.message }));
-  check(/^Part claude-sessions-\S+-part01\.jsonl got no word from Chrome/.test(silent.t), `sessions: the silent part stops the run (it said: ${silent.t})`);
-  check(await evalIn(sp, resume) === "window.CLAUDE_EXPORT_SKIP = []; window.CLAUDE_EXPORT_PART_START = 0;",
-    `sessions: the stop's resume line names nothing saved (${await evalIn(sp, resume)})`);
+  check(/^Part claude-sessions-\S+-part03\.jsonl got no word from Chrome/.test(silent.t), `sessions: the silent part stops the run (it said: ${silent.t})`);
+  check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 2;`,
+    `sessions: the stop's resume line names only what the earlier run saved (${await evalIn(sp, resume)})`);
   await evalIn(sp, "window.smokeRelease(), true");
   const late = await waitFor(() => evalIn(sp, status).then((s) => s.t.endsWith("landed — the resume line below is updated.") && s), "the silent part to land late", 30000)
     .catch((e) => ({ t: e.message, cls: "" }));
   // every field the stop recorded shows here: message (the text's start), name (this
   // branch, not the other-part one), cls, and state + ids (the rebuilt line)
-  check(late.t.startsWith(silent.t) && /The silent part \(claude-sessions-\S+-part01\.jsonl\) landed — /.test(late.t),
+  check(late.t.startsWith(silent.t) && /The silent part \(claude-sessions-\S+-part03\.jsonl\) landed — /.test(late.t),
     `sessions: the late landing appends to the stop message (it said: ${late.t})`);
   check(late.cls === "warn", `sessions: the late line keeps the stop's warn class (${late.cls})`);
-  check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${NEW_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 1;`,
+  check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}","${NEW_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 3;`,
     `sessions: the resume line is rebuilt with the landed part (${await evalIn(sp, resume)})`);
   check(await evalIn(sp, `document.getElementById("export-failures").children.length`) === 0, "sessions: no session failed (the known one was skipped, not fetched)");
   const parts = landed().filter((f) => f.startsWith("claude-sessions-"));
-  if (check(parts.length === 1 && /-part01\.jsonl$/.test(parts[0]), `sessions: one part on disk, no done marker (found: ${parts.join(", ") || "none"})`)) {
+  if (check(parts.length === 1 && /-part03\.jsonl$/.test(parts[0]), `sessions: one part on disk, no done marker (found: ${parts.join(", ") || "none"})`)) {
     const [titles, ...events] = readFileSync(join(downloads, parts[0]), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     check(Object.keys(titles._titles || {}).length === 2, "sessions: the part opens with both sessions' titles");
     check(events.length === 1 && events[0]._session === NEW_SESSION, `sessions: the part holds the new session's one event (${events.length})`);
