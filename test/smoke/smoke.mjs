@@ -357,7 +357,8 @@ async function scenarios(cdp, downloads) {
 
   // one module's scenario: a throw inside it (a page that never wired, a target that never
   // showed) fails that scenario and the run moves on to the next one; its cleanup, and the
-  // closing of any popup it left open, run either way. A dead browser (fatal) ends the run
+  // closing of every page it opened (tabs, module pages, popups — all but the helper), run
+  // either way, and a failed cleanup fails the scenario. A dead browser (fatal) ends the run
   const scenario = async (name, body, cleanup) => {
     try {
       await body();
@@ -365,9 +366,10 @@ async function scenarios(cdp, downloads) {
       if (e && e.fatal) throw e;
       check(false, `${name}: the scenario stopped: ${(e && e.message) || e}`);
     } finally {
-      if (cleanup) await cleanup().catch(soft((e) => console.log(`     ${name}: its cleanup failed: ${e.message}`)));
-      for (const t of (await cdp.send("Target.getTargets")).targetInfos) {
-        if (t.url.endsWith("/src/popup/popup.html")) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+      if (cleanup) await cleanup().catch(soft((e) => check(false, `${name}: its cleanup failed: ${e.message}`)));
+      const { targetInfos } = await cdp.send("Target.getTargets").catch(soft(() => ({ targetInfos: [] })));
+      for (const t of targetInfos) {
+        if (t.type === "page" && t.targetId !== helperId) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
       }
     }
   };
@@ -444,9 +446,10 @@ async function scenarios(cdp, downloads) {
       check(names.includes("discord-smoke-111.json"), "discord: the zip holds the messages json");
       check(names.some((n) => n.endsWith("note.txt")), `discord: the zip holds the attachment (names: ${names.join(", ")})`);
     }
-  // disarmed whatever happened above: a discord block that failed before its first
-  // download must not leave the cancel waiting for a later scenario's
-  }, () => extEval("self.smokeCancelArmed = false, true"));
+  },
+  // the cleanup: disarmed whatever happened above — a discord block that failed before
+  // its first download must not leave the cancel waiting for a later scenario's
+  () => extEval("self.smokeCancelArmed = false, true"));
 
   // ---- claude sessions: popup -> the module's page -> a real export whose one part gets
   // no word from Chrome, stops the run, then lands late and rebuilds the resume line ----
@@ -554,15 +557,12 @@ async function scenarios(cdp, downloads) {
   // message-list endpoint under a stored redact config whose name collides with Etsy's own
   // words, and saves over one file four times: redact on twice, then off from an emptied
   // box, then with a second id that fails ----
-  const etsyTargets = []; // for the cleanup: the tabs this scenario opened
   await scenario("etsy", async () => {
     console.log("smoke: etsy save");
     await extEval(`chrome.storage.local.set({ etsyRedact: ${JSON.stringify(ETSY_REDACT)} }).then(() => true)`);
-    const etsyTab = await open(ETSY_CONVO);
-    etsyTargets.push(etsyTab);
+    await open(ETSY_CONVO);
     await clickPopup("Save conversations");
     const etsyPageTarget = await target((s) => s.type === "page" && /\/src\/modules\/etsy\/page\.html\?tab=\d+$/.test(s.url), "the Etsy page (with its tab id)");
-    etsyTargets.push(etsyPageTarget);
     const ep = etsyPageTarget.sessionId;
     await wired(ep, "etsy-run", "etsy");
     const prefilled = await waitFor(() => evalIn(ep, `document.getElementById("ids").value`), "the ids box to prefill from the tab")
@@ -581,7 +581,7 @@ async function scenarios(cdp, downloads) {
         ${ids === null ? "" : `document.getElementById("ids").value = ${JSON.stringify(ids)};`}
         document.getElementById("etsy-run").click(); return true; })()`);
       const end = await waitFor(() => evalIn(ep, etsyState).then((s) => (s.t.startsWith("Saved") || s.t.startsWith("The download") || (s.cls === "warn" && !s.t.startsWith("Conversation"))) && s),
-        `etsy save ${round}'s end line`, 30000).catch(soft((e) => ({ t: e.message, fails: [] })));
+        `etsy save ${round}'s end line`, 20000).catch(soft((e) => ({ t: e.message, fails: [] })));
       const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-", state: "complete" }).then((d) => d.length)`)
         .then((n) => n >= round && n), `etsy round ${round}'s finished download`).catch(soft((e) => e.message));
       check(done === round, `etsy save ${round}: Chrome finished ${round} Etsy download(s) so far (${done})`);
@@ -652,11 +652,9 @@ async function scenarios(cdp, downloads) {
       if (saved) check(saved.conversations?.[1]?.id === ETSY_GONE && saved.conversations[1].error === "HTTP 500 at offset 0",
         `etsy save 4: the file carries its error (${saved.conversations?.[1]?.error})`);
     }
-  // nothing of this scenario reaches a later one: the stored config, its tabs
-  }, async () => {
-    await extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`);
-    for (const t of etsyTargets) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
-  });
+  },
+  // the cleanup: the stored config never reaches a later scenario (scenario() closes the tabs)
+  () => extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`));
 
   if (blocked.length) console.log(`smoke: blocked ${blocked.length} request(s) the synthetic web doesn't serve:\n  ${[...new Set(blocked)].join("\n  ")}`);
   console.log(failures.length ? `smoke: ${failures.length} FAILED` : "smoke: all passed");
