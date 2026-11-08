@@ -67,7 +67,11 @@ const collectConversations = async (ids, {
         await sleep(pauseMs);
       }
     } catch (e) {
-      convo.error = String(e.message || e);
+      if (e && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        convo.error = `timed out after ${timeoutMs / 1000} s at offset ${offset}`;
+      } else {
+        convo.error = String((e && e.message) || e);
+      }
     }
     convo.messages = [...seen.values()].sort(
       (a, b) => (a.create_date || 0) - (b.create_date || 0) || (a.message_order || 0) - (b.message_order || 0),
@@ -156,8 +160,7 @@ const outputName = (date = new Date()) => `etsy-conversations-${date.toISOString
 // unguarded export or a corrupt one never looks clean. When seq and runSeq are
 // given (the late-finish path), a stale run's end returns null so a later run
 // keeps the status line.
-const UNSOUND = " The redacted file does NOT parse as JSON — do not share it, and report it."
-  + " It was saved beside any earlier export of the day, not over it.";
+const UNSOUND = " The redacted file does NOT parse as JSON — do not share it, and report it.";
 const finishMessage = ({ saved, conversations = [], filename, redactState, sound = true, seq, runSeq }) => {
   if (seq !== undefined && runSeq !== undefined && seq !== runSeq) return null;
   const failed = conversations.filter((c) => c.error).length;
@@ -167,7 +170,7 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
       text: `Saved ${conversations.length} conversations, ${total} messages`
         + (failed ? `, ${failed} with errors (listed in the file)` : "")
         + `. Redact: ${redactState}.`
-        + (sound ? "" : UNSOUND),
+        + (sound ? "" : UNSOUND + " It was saved beside any earlier export of the day, not over it."),
       cls: failed || redactState !== "on" || !sound ? "warn" : "ok",
     };
   }
@@ -181,7 +184,7 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
   // said (a newer run owns the line): the do-not-share warning rides this line too
   return {
     text: `No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends. Redact: ${redactState}.`
-      + (sound ? "" : UNSOUND),
+      + (sound ? "" : UNSOUND + " It is being saved beside any earlier export of the day, not over it."),
     cls: "warn",
   };
 };

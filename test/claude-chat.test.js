@@ -186,6 +186,7 @@ test("a BOM'd .json output lands as text a reader can JSON.parse", async () => {
   };
   const done = await collectChats([[CHAT, "n", null]], { fetch, orgPath: "https://claude.ai/api/organizations/x/" });
   assert.deepEqual(JSON.parse(done.results[0].files[0].text), { slug: "x" });
+  assert.ok(!("base64" in done.results[0].files[0]));
 });
 
 test("a docx output rides as base64, byte-exact; a text label over invalid UTF-8 falls back to base64", async () => {
