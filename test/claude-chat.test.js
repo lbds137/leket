@@ -458,3 +458,11 @@ test("outputsName slices the UTC date, not the local one", () => {
   assert.equal(outputsName(new Date("2026-11-04T22:50:00-05:00")), "claude-chat-outputs-2026-11-05.json");
   assert.equal(outputsName(new Date("2026-11-04T12:00:00Z")), "claude-chat-outputs-2026-11-04.json");
 });
+
+test("page.js saves with conflictAction overwrite: a same-day re-save replaces the day's file", async () => {
+  // the page is DOM wiring, so its request is pinned at the source, as etsy.test.js does;
+  // the smoke's second chat run proves the overwrite in a real Chrome
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/modules/claude-chat/page.js", import.meta.url), "utf8");
+  assert.match(src, /trackDownload\(chrome\.downloads, \{ url: blobUrl, filename, conflictAction: "overwrite" \}/);
+});
