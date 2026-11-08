@@ -555,7 +555,13 @@ test("ordered list start numbers, backslash escapes, backtick-bounded URLs, sing
   assert.ok(notesHtml.includes("&lt;script&gt;2&lt;/script&gt; forwarded") && !notesHtml.includes("<script>2</script>"));
 });
 
-test("attachments are fetched two at a time by default, each worker resting between files", async () => {
+test("attachments are fetched two at a time by default, each worker resting between files", async (t) => {
+  // A fake clock, advanced a millisecond at a time: the two workers run in lockstep (their
+  // rests end on the same tick), so each claims its next file before either finishes one.
+  // On a real clock a slipped timer can leave one worker finishing f5 while f6 is still
+  // unclaimed: it starts a legitimate fifth rest, the other worker takes f6, and it finds
+  // nothing left to fetch, so an exact count would be flaky.
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const six = exp();
   six.messages = Array.from({ length: 6 }, (_, k) => ({
     id: String(k + 1), datetime: `2021-01-01T10:0${k}:00.000Z`,
@@ -571,13 +577,22 @@ test("attachments are fetched two at a time by default, each worker resting betw
     return new Response("data", { status: 200 });
   };
   const rests = [];
-  const r = await build(six, { file: "d.json", fetchFn, wait: 0, gap: () => { rests.push(1); return 40; } });
+  let settled = false;
+  const run = build(six, { file: "d.json", fetchFn, wait: 0, gap: () => { rests.push(1); return 40; } })
+    .finally(() => { settled = true; });
+  // a real setImmediate lets the pending promise work run before each tick
+  for (let ms = 0; !settled && ms < 1000; ms++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(1);
+  }
+  assert.ok(settled, "the build did not settle within 1000 fake ms");
+  const r = await run;
   assert.equal(r.failed.length, 0);
   assert.equal(most, 2);
   // a rest before every file but each worker's first: 6 files, 2 workers
   assert.equal(rests.length, 4);
-  // with the rests, the six requests span at least two rests per worker
-  assert.ok(starts.at(-1) - starts[0] >= 2 * 40 - 5, `requests spread over ${starts.at(-1) - starts[0]} ms`);
+  // the pairs start one fetch (5 ms) plus one rest (40 ms) apart
+  assert.deepEqual(starts.map((s) => s - starts[0]), [0, 0, 45, 45, 90, 90]);
 });
 
 test("the default rest between files is 0.5-1 s", () => {
