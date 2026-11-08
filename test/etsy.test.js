@@ -457,6 +457,18 @@ test("redactLineFor: on is quiet unless a name collides; a collision and both of
   assert.equal(redactLineFor(redactStateFor(undefined)).text, "Redact: off — no etsyRedact config; the export is unredacted.");
   assert.match(redactLineFor(redactStateFor({ name: "X" })).text, /^Redact: off — config invalid/);
   assert.equal(redactLineFor(redactStateFor({ ...VALID })).text, "Redact: on.");
+  // a state added later without its own line still names itself, and still warns
+  assert.deepEqual(redactLineFor("off (some new reason)"), {
+    text: "Redact: off (some new reason); the export is unredacted.",
+    cls: "warn",
+  });
+  // the page's own chain: a colliding config's hits reach the warning
+  const betsy = { name: "betsy", short: "bpt", firstSounds: "bpt" };
+  assert.equal(redactStateFor(betsy), "on");
+  assert.deepEqual(redactLineFor("on", redactionCollisions(makeRedact(betsy))), {
+    text: "Redact: on. This name also matches Etsy's own words or the export's field names (etsy, www.etsy.com, https://www.etsy.com/messages/123456) — those read [redacted] in the export, and a redacted field name changes the file's shape.",
+    cls: "warn",
+  });
 });
 
 test("finishMessage: ok class only when saved, no errors, redact on, and JSON sound; warn otherwise", () => {

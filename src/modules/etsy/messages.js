@@ -135,7 +135,11 @@ const redactLineFor = (redactState, hits = []) => {
       cls: "warn",
     };
   }
-  return { text: "Redact: off — no etsyRedact config; the export is unredacted.", cls: "warn" };
+  if (redactState === "off (no etsyRedact config)") {
+    return { text: "Redact: off — no etsyRedact config; the export is unredacted.", cls: "warn" };
+  }
+  // a state this helper doesn't know yet still says its own reason, never another's
+  return { text: `Redact: ${redactState}; the export is unredacted.`, cls: "warn" };
 };
 
 const serializePayload = (conversations, opts = {}) => {
