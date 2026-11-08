@@ -152,3 +152,24 @@ block sits where the marker is.
    than the Discord module's jittered rests, kept as-is.
 3. The paste-in scripts are run by hand; an installed extension is the same model
    (the tab's own session, `credentials` included, no copied tokens).
+
+## Where the port departs from the script
+
+The script above stays as received. These are the port's departures; under the
+header's rule each one goes to Jackalope as a diff. Entries without a version
+predate this list.
+
+- **Per-request timeout** (`AbortSignal.timeout`, 60 s). A stalled request or body
+  read ends its conversation as "timed out after N s at offset X", not as a sign-out.
+- **The payload names its redact state** (`redact: "on"` or the reason it's off).
+  `serializePayload` refuses a state that contradicts the guard it was handed
+  (0.3.16).
+- **The redacted output must parse** before success is claimed. An unsound file
+  lands beside the day's earlier export, not over it.
+- **A collision warning** when the configured name also matches Etsy's own words or
+  the export's field names.
+- **Capped walks are marked** (0.3.16). A conversation the 400-page cap stopped gets
+  `truncated: true`; the key is absent otherwise, so an uncapped file keeps the
+  script's shape. It warns and is listed.
+- **Empty answers warn** (0.3.16). An id that returns no messages and no error says
+  "wrong id?" instead of ending green.
