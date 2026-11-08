@@ -9,7 +9,7 @@ export const SAVE_PAGE_SILENT = "The extension's save page didn't answer — try
 
 export const commands = {
   json: async (tab) => {
-    const r = await chrome.runtime.sendMessage({ type: "discord-tools:reddit-save", tabUrl: tab.url });
+    const r = await chrome.runtime.sendMessage({ type: "leket:reddit-save", tabUrl: tab.url });
     if (!r || !r.ok) throw new Error((r && r.error) || SAVE_PAGE_SILENT);
     return r.message;
   },

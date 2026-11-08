@@ -16,11 +16,11 @@ const key = params.get("key");
 const ask = (msg) => chrome.tabs.sendMessage(tabId, { ...msg, key });
 
 async function readSave() {
-  const first = await ask({ type: "discord-tools:chunk", index: 0 });
+  const first = await ask({ type: "leket:chunk", index: 0 });
   if (!first || first.error) throw new Error((first && first.error) || "The Discord tab didn't answer: is it still open?");
   const pieces = [first.chunk];
   for (let i = 1; i < first.total; i++) {
-    const r = await ask({ type: "discord-tools:chunk", index: i });
+    const r = await ask({ type: "leket:chunk", index: i });
     if (!r || r.error) throw new Error((r && r.error) || "The Discord tab stopped answering partway.");
     pieces.push(r.chunk);
   }
@@ -50,8 +50,8 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
     // the collector's own names are "discord-<name>-<channel id>.json"; anything else posted
     // to the bridge (a path, a name the zip uses itself) is not used as a file name
     const file = /^discord-[\p{L}\p{N}._-]+-\d+\.json$/u.test(save.file) ? save.file : "discord-export.json";
-    document.title = `Discord tools: ${exp.channel || "saving"}`;
-    $("title").textContent = [exp.channel, exp.guild_name].filter(Boolean).join(" · ") || "Discord tools";
+    document.title = `Leket: ${exp.channel || "saving"}`;
+    $("title").textContent = [exp.channel, exp.guild_name].filter(Boolean).join(" · ") || "Leket";
     const records = attachments ? attachmentList(exp) : [];
     const sized = records.reduce((s, r) => s + (r.size != null ? r.size : 0), 0);
     const unsized = records.length - records.filter((r) => r.size != null).length;
@@ -191,7 +191,7 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       // stopped save (reloading this tab is how to get those)
       if (!released && release) {
         released = true;
-        ask({ type: "discord-tools:release" }).catch(() => {});
+        ask({ type: "leket:release" }).catch(() => {});
       }
       $("detail").textContent = detail;
       lostBox.replaceChildren();

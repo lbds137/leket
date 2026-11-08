@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Discord tools",
-  "version": "0.3.16",
+  "name": "Leket",
+  "version": "0.3.17",
   "minimum_chrome_version": "109",
-  "description": "Save a Discord DM, channel or thread, with its attachments, as one zip you can open offline.",
+  "description": "Save Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "action": {
-    "default_title": "Discord tools",
+    "default_title": "Leket",
     "default_popup": "src/popup/popup.html",
     "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
   },

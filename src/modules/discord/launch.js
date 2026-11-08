@@ -5,7 +5,7 @@
 
 export const commands = {
   save: async (tab) => {
-    const r = await chrome.runtime.sendMessage({ type: "discord-tools:launch", command: "save", tabId: tab.id });
+    const r = await chrome.runtime.sendMessage({ type: "leket:launch", command: "save", tabId: tab.id });
     if (!r || !r.ok) throw new Error((r && r.error) || "The extension's worker didn't answer — reload the page and try again.");
   },
 };

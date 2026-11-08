@@ -351,9 +351,9 @@ async function scenarios(cdp, downloads) {
     return warn && `warned: ${warn}`;
   }, "the popup to close (launched) or warn", 30000).catch((e) => e.message);
   check(launched === "closed", `discord: the popup launches the save (${launched})`);
-  await waitFor(() => evalIn(dm.sessionId, `document.documentElement.dataset.discordToolsBridge === "1"`), "the bridge on the Discord tab");
+  await waitFor(() => evalIn(dm.sessionId, `document.documentElement.dataset.leketBridge === "1"`), "the bridge on the Discord tab");
   // what the collector posts when its Save is pressed (its panel needs Discord's own app)
-  await evalIn(dm.sessionId, `window.postMessage({ type: "discord-tools:export", id: 1, file: "discord-smoke-111.json",
+  await evalIn(dm.sessionId, `window.postMessage({ type: "leket:export", id: 1, file: "discord-smoke-111.json",
     attachments: true, json: ${JSON.stringify(JSON.stringify(discordExport))} }, location.origin), true`);
   const tab = await target((s) => s.type === "page" && s.url.includes("/src/modules/discord/export.html"), "the export tab");
   const link = `document.querySelector("#downloads a")`;

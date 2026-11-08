@@ -297,7 +297,7 @@ const document = {
     return e;
   },
   createTextNode: (text) => ({ textContent: text }),
-  documentElement: { dataset: process.env.BRIDGE === "1" ? { discordToolsBridge: "1" } : {} },
+  documentElement: { dataset: process.env.BRIDGE === "1" ? { leketBridge: "1" } : {} },
 };
 let posted = null;
 const listeners = [];
@@ -306,10 +306,10 @@ const sandbox = {
   location: { pathname: `/channels/${IS_DM ? "@me" : GUILD}/${CHANNEL}`, origin: "https://discord.com" },
   // the bridge's side: it answers a handoff unless BRIDGE_ACK=0 (an extension reloaded since)
   postMessage: (data, origin) => {
-    if (data.type !== "discord-tools:export") return;
+    if (data.type !== "leket:export") return;
     posted = { data, origin };
     if (process.env.BRIDGE_ACK !== "0") {
-      setTimeout(() => listeners.forEach((f) => f({ source: vm.runInContext("window", sandbox), data: { type: "discord-tools:ack", id: data.id, ok: true } })), 10);
+      setTimeout(() => listeners.forEach((f) => f({ source: vm.runInContext("window", sandbox), data: { type: "leket:ack", id: data.id, ok: true } })), 10);
     }
   },
   addEventListener: (type, f) => { if (type === "message") listeners.push(f); },

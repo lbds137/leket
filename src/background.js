@@ -25,7 +25,7 @@ const launch = async (tabId, command) => {
     // the tab may have navigated since the popup matched it
     const tab = await chrome.tabs.get(tabId);
     if (match(tab.url || "")?.id !== "discord") {
-      await flag(tabId, "?", "Discord tools: open a DM or a channel on discord.com first, then click again");
+      await flag(tabId, "?", "Leket: open a DM or a channel on discord.com first, then click again");
       return { ok: false, error: "This tab is no longer a Discord conversation — open a DM or a channel and click again." };
     }
     // the bridge first: the collector looks for its mark when Save is pressed
@@ -33,10 +33,10 @@ const launch = async (tabId, command) => {
     // the page's own world: Discord's message objects live on its React elements, which
     // a content script's isolated world can't see
     await chrome.scripting.executeScript({ target: { tabId }, files: ["src/modules/discord/collector.js"], world: "MAIN" });
-    await flag(tabId, "", "Discord tools: save this conversation");
+    await flag(tabId, "", "Leket: save this conversation");
     return { ok: true };
   } catch (e) {
-    await flag(tabId, "!", `Discord tools couldn't start on this tab: ${(e && e.message) || e}. Reload the tab and try again.`);
+    await flag(tabId, "!", `Leket couldn't start on this tab: ${(e && e.message) || e}. Reload the tab and try again.`);
     return { ok: false, error: (e && e.message) || String(e) };
   }
 };
@@ -85,7 +85,7 @@ const redditSave = async (tabUrl) => {
   // a broadcast: every extension page gets it, and today only the offscreen document
   // answers a reddit-save-run. No other page may grow a listener that replies to it —
   // the worker would read that reply as the save's result.
-  const prep = await chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-run", tabUrl });
+  const prep = await chrome.runtime.sendMessage({ type: "leket:reddit-save-run", tabUrl });
   if (!prep || !prep.ok) {
     return { ok: false, error: (prep && prep.error) || SAVE_PAGE_SILENT };
   }
@@ -94,7 +94,7 @@ const redditSave = async (tabUrl) => {
     { url: prep.mdUrl, name: prep.mdName },
   ], {
     notFetched: prep.notFetched,
-    onSettled: (file) => chrome.runtime.sendMessage({ type: "discord-tools:reddit-save-revoke", url: file.url }).catch(() => {}),
+    onSettled: (file) => chrome.runtime.sendMessage({ type: "leket:reddit-save-revoke", url: file.url }).catch(() => {}),
   });
   return { ok: true, message: done.message };
 };
@@ -103,17 +103,17 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   // only this extension's own extension pages may launch: sender.id also passes for our
   // own content scripts, so !sender.tab is the line. Websites cannot message the
   // extension at all — no externally_connectable, and no onMessageExternal listener.
-  if (msg && msg.type === "discord-tools:launch" && typeof msg.tabId === "number"
+  if (msg && msg.type === "leket:launch" && typeof msg.tabId === "number"
       && !sender.tab && sender.id === chrome.runtime.id) {
     launch(msg.tabId, msg.command).then(reply);
     return true; // the answer comes after the injection
   }
-  if (msg && msg.type === "discord-tools:reddit-save" && typeof msg.tabUrl === "string"
+  if (msg && msg.type === "leket:reddit-save" && typeof msg.tabUrl === "string"
       && !sender.tab && sender.id === chrome.runtime.id) {
     redditSave(msg.tabUrl).then(reply, (e) => reply({ ok: false, error: (e && e.message) || String(e) }));
     return true; // the answer comes after the save
   }
-  if (!msg || msg.type !== "discord-tools:ready" || !sender.tab) return;
+  if (!msg || msg.type !== "leket:ready" || !sender.tab) return;
   const q = new URLSearchParams({ tab: String(sender.tab.id), key: msg.key });
   chrome.tabs.create({ url: chrome.runtime.getURL(`src/modules/discord/export.html?${q}`), index: sender.tab.index + 1, windowId: sender.tab.windowId })
     .then(() => reply({ ok: true }), () => reply({ ok: false }));

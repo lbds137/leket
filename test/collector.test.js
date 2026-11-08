@@ -174,7 +174,7 @@ test("a forward keeps what was forwarded; a reply is not a forward", () => {
 test("with the bridge's mark but no answer, Save downloads the JSON and says why", () => {
   const page = runPage("dm", [], { BRIDGE: "1", BRIDGE_ACK: "0" });
   assert.equal(page.downloaded, true);
-  assert.equal(page.posted.type, "discord-tools:export");
+  assert.equal(page.posted.type, "leket:export");
   assert.equal(page.export.messages.length, 7);
   assert.match(page.status, /^The extension didn't answer .* messages saved to Downloads\/discord-someone-600\.json/);
 });
@@ -182,7 +182,7 @@ test("with the bridge's mark but no answer, Save downloads the JSON and says why
 test("with the bridge's mark, Save posts the export instead of downloading it", () => {
   const page = runPage("dm", [], { BRIDGE: "1" });
   assert.equal(page.downloaded, false);
-  assert.equal(page.posted.type, "discord-tools:export");
+  assert.equal(page.posted.type, "leket:export");
   assert.equal(page.posted.origin, "https://discord.com");
   assert.equal(page.posted.attachments, true);
   assert.equal(page.file, "discord-someone-600.json");

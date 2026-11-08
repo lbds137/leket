@@ -1,4 +1,4 @@
-// Discord tools collector. The extension injects it into the page's own world when its
+// Leket collector. The extension injects it into the page's own world when its
 // toolbar button is clicked on a DM (discord.com/channels/@me/<channel id>), a server
 // channel or a thread (discord.com/channels/<server id>/<channel id>). Pasted into
 // DevTools (F12 > Console) instead, it works alone and Save downloads the JSON only.
@@ -28,7 +28,7 @@
   const [, GUILD, CHANNEL] = location.pathname.match(/^\/channels\/(@me|\d+)\/(\d+)/) || [];
   if (!CHANNEL) return alert("Open a DM or a server channel first (the address should be discord.com/channels/…/<number>).");
   // a second click on the toolbar button while the panel is open leaves the one there
-  if (document.getElementById("discord-tools-panel")) return;
+  if (document.getElementById("leket-panel")) return;
   const IS_DM = GUILD === "@me";
   // The tab title is "(3) Discord | @name" while there are unread messages; it names the
   // downloaded file. An unread mark before it ("• Discord | …") would otherwise keep
@@ -137,7 +137,7 @@
       const reqs = [];
       const chunks = window.webpackChunkdiscord_app;
       STORE_DEBUG.chunk_global = !!chunks;
-      chunks.push([[Symbol("discord-tools")], {}, (r) => { if (r && !reqs.includes(r)) reqs.push(r); }]);
+      chunks.push([[Symbol("leket")], {}, (r) => { if (r && !reqs.includes(r)) reqs.push(r); }]);
       chunks.pop();
       STORE_DEBUG.runtime_count = reqs.length;
       STORE_DEBUG.runtimes = reqs.map((r) => {
@@ -206,7 +206,7 @@
       }
     } catch (e) {
       STORE_DEBUG.error = String((e && e.message) || e).slice(0, 120);
-      console.warn("Discord tools: member stores not reachable", e);
+      console.warn("Leket: member stores not reachable", e);
     }
     for (const k of Object.keys(found)) {
       if (!found[k] && byShape[k]) {
@@ -561,12 +561,12 @@
   };
 
   const panel = document.createElement("div");
-  panel.id = "discord-tools-panel";
+  panel.id = "leket-panel";
   panel.style.cssText =
     "position:fixed;top:8px;right:8px;z-index:99999;background:#111;color:#eee;max-width:420px;" +
     "font:13px sans-serif;padding:8px 10px;border-radius:6px;border:1px solid #555";
   const heading = document.createElement("div");
-  heading.textContent = `Discord tools: ${NAME}`;
+  heading.textContent = `Leket: ${NAME}`;
   heading.style.cssText = "font-weight:bold;margin-bottom:4px";
   panel.appendChild(heading);
   const status = document.createElement("div");
@@ -754,7 +754,7 @@
 
   // true once the bridge says the export tab is opening; false after 5 s without a word
   const handOver = (json) => new Promise((resolve) => {
-    if (document.documentElement.dataset.discordToolsBridge !== "1") return resolve(false);
+    if (document.documentElement.dataset.leketBridge !== "1") return resolve(false);
     const id = `${Date.now()}-${Math.random()}`;
     const done = (ok) => {
       clearTimeout(timeout);
@@ -763,11 +763,11 @@
     };
     const onAck = (e) => {
       const d = e.data;
-      if (e.source === window && d && d.type === "discord-tools:ack" && d.id === id) done(!!d.ok);
+      if (e.source === window && d && d.type === "leket:ack" && d.id === id) done(!!d.ok);
     };
     const timeout = setTimeout(() => done(false), 5000);
     window.addEventListener("message", onAck);
-    window.postMessage({ type: "discord-tools:export", id, file: OUT, json, attachments: withFilesBox.checked }, location.origin);
+    window.postMessage({ type: "leket:export", id, file: OUT, json, attachments: withFilesBox.checked }, location.origin);
   });
 
   let saving = false;
@@ -836,7 +836,7 @@
         start_at: startDay,
         messages_after_start: afterStart,
         method:
-          `Saved by the Discord tools collector on the open ${IS_DM ? "DM" : "server channel"}. ` +
+          `Saved by the Leket collector on the open ${IS_DM ? "DM" : "server channel"}. ` +
           "Text, author, attachments, embeds (their text fields), reply, forward and edit state come from the React message object; " +
           "datetime comes from the snowflake id. Rows marked from_dom used rendered text only. " +
           (IS_DM ? "A DM has no server nicknames or roles. "
@@ -875,7 +875,7 @@
       document.body.appendChild(a);
       a.click();
       a.remove();
-      where = (document.documentElement.dataset.discordToolsBridge === "1"
+      where = (document.documentElement.dataset.leketBridge === "1"
         ? "The extension didn't answer (reload this tab and click its button again for attachments); messages saved" : "Saved") +
         ` to Downloads/${OUT}`;
     }

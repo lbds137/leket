@@ -48,16 +48,16 @@ globalThis.chrome = {
       offscreenHas && contextTypes.includes("OFFSCREEN_DOCUMENT")
         && documentUrls.includes(OFFSCREEN_URL) ? [{ documentUrl: OFFSCREEN_URL }] : [],
     sendMessage: async (msg) => {
-      if (msg && msg.type === "discord-tools:reddit-save-run") {
+      if (msg && msg.type === "leket:reddit-save-run") {
         relayedRuns.push(msg);
         if (relayThrows) throw relayThrows;
         return relayReply;
       }
-      if (msg && msg.type === "discord-tools:reddit-save-revoke") {
+      if (msg && msg.type === "leket:reddit-save-revoke") {
         revokesSent.push(msg);
         return { ok: true };
       }
-      if (workerListening && msg && msg.type === "discord-tools:reddit-save") return handled(msg);
+      if (workerListening && msg && msg.type === "leket:reddit-save") return handled(msg);
       return undefined;
     },
   },
@@ -411,7 +411,7 @@ test("a relayed error is the popup's error text, bare", async () => {
 test("a relay that rejects (no receiving end yet) comes back as a structured refusal", async () => {
   reset();
   relayThrows = new Error("Could not establish connection. Receiving end does not exist.");
-  const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok === false, `expected a structured refusal, got ${JSON.stringify(reply)}`);
   assert.match(reply.error, /Receiving end does not exist/);
 });
@@ -419,7 +419,7 @@ test("a relay that rejects (no receiving end yet) comes back as a structured ref
 test("a silent save page gets the try-again advice, as a structured refusal", async () => {
   reset();
   relayReply = undefined;
-  const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok === false, `expected a structured refusal, got ${JSON.stringify(reply)}`);
   assert.match(reply.error, /didn't answer/);
 });
@@ -429,7 +429,7 @@ test("a silent save page gets the try-again advice, as a structured refusal", as
 test("the worker opens the offscreen document on the first save and relays", async () => {
   reset();
   relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
-  const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a save, got ${JSON.stringify(reply)}`);
   assert.equal(offscreenCreates.length, 1, "the document was created");
   assert.match(offscreenCreates[0].url, /offscreen\.html$/);
@@ -441,7 +441,7 @@ test("an existing offscreen document is reused, not re-created", async () => {
   reset();
   offscreenHas = true;
   relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
-  const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
   assert.ok(reply && reply.ok, `expected a save, got ${JSON.stringify(reply)}`);
   assert.equal(offscreenCreates.length, 0, "no second document");
 });
@@ -453,7 +453,7 @@ test("below Chrome 116 (no getContexts) the worker's clients say whether the doc
   // the worker's clients list the document by its URL once it is open
   globalThis.self = { clients: { matchAll: async () => (offscreenHas ? [{ url: OFFSCREEN_URL }] : [{ url: "chrome-extension://test-extension-id/other.html" }]) } };
   try {
-    const save = () => handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+    const save = () => handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
     reset();
     relayReply = { ok: true, url: "blob:x", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
     assert.ok((await save()).ok);
@@ -480,13 +480,13 @@ test("two saves racing still create only one offscreen document, and the second 
   };
   const realSend = chrome.runtime.sendMessage;
   chrome.runtime.sendMessage = async (msg) => {
-    if (msg && msg.type === "discord-tools:reddit-save-run" && !docReady) {
+    if (msg && msg.type === "leket:reddit-save-run" && !docReady) {
       throw new Error("Could not establish connection. Receiving end does not exist.");
     }
     return realSend(msg);
   };
-  const first = handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
-  const second = handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/y/comments/def456/t/" });
+  const first = handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  const second = handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/y/comments/def456/t/" });
   await new Promise((r) => setTimeout(r, 5));
   release();
   docReady = true;
@@ -499,7 +499,7 @@ test("two saves racing still create only one offscreen document, and the second 
 
 test("a tab url the registry would not match is refused, and nothing is opened or relayed", async () => {
   reset();
-  const reply = await handled({ type: "discord-tools:reddit-save", tabUrl: "https://www.reddit.com/r/AskReddit/" });
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/AskReddit/" });
   assert.ok(reply && reply.ok === false, `expected a structured refusal, got ${JSON.stringify(reply)}`);
   assert.match(reply.error, /no longer a reddit post page/);
   assert.equal(offscreenCreates.length, 0);
