@@ -38,11 +38,24 @@ export function parseChats(text) {
   return list;
 }
 
-// the script's own split: a text-ish content type, or a text extension, lands in the
-// entry as text; anything else (a png, a pdf) rides as base64
+// the script's own split: a text content type, or a text extension, lands in the entry
+// as text; anything else (a png, a pdf, a docx) rides as base64. The type match is
+// anchored to the whole media type: a bare `xml` would also match the Office types
+// (…wordprocessingml.document, …spreadsheetml.sheet), whose zip bytes a text decode corrupts.
 export function isText(path, type) {
-  return /^text\/|json|xml|yaml|javascript/.test(type || "") ||
-    /\.(json|md|txt|csv|tsv|yaml|yml|html|xml|js|py|sh)$/i.test(path);
+  return /^(text\/|application\/(json|jsonl|json5|x-jsonlines|xml|yaml|x-yaml|javascript|x-javascript|ecmascript|x-ndjson)\s*(;|$)|[\w.-]+\/[\w.-]+\+(json|xml)\s*(;|$))/i.test(type || "") ||
+    /\.(json|jsonl|json5|md|txt|csv|tsv|yaml|yml|html|xml|js|py|sh)$/i.test(path);
+}
+
+// a text label (or a text extension, which wins over the type) is a claim, not a
+// guarantee: bytes that are not valid UTF-8 return null and go to base64. ignoreBOM
+// keeps a leading BOM, so the text is byte-exact.
+export async function asText(blob) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await blob.arrayBuffer());
+  } catch {
+    return null;
+  }
 }
 
 // the script's chunked base64: String.fromCharCode takes a bounded argument list, so
@@ -75,8 +88,8 @@ export function readOrgPath() {
 // the tab's origin goes back in front before any fetch.
 export const absolutizeOrgPath = (tabUrl, orgPath) => new URL(tabUrl).origin + orgPath;
 
-// The run: per chat, list the sandbox, download each outputs/ file, text inline and
-// the rest base64. A chat's failure is recorded on its entry (partial files kept) and
+// The run: per chat, list the sandbox, download each outputs/ file, valid UTF-8 text
+// inline and the rest (binary, or a text label over bytes that aren't UTF-8) base64. A chat's failure is recorded on its entry (partial files kept) and
 // the walk moves on; onProgress(done, total, fileCount) fires after each chat.
 export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onProgress } = {}) {
   const get = async (url) => {
@@ -98,7 +111,8 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
         if (!meta.path.startsWith("/mnt/user-data/outputs/")) continue;
         const blob = await (await get(base + "download-file?path=" + encodeURIComponent(meta.path))).blob();
         const file = { path: meta.path, size: meta.size, created_at: meta.created_at, content_type: meta.content_type };
-        if (isText(meta.path, meta.content_type)) file.text = await blob.text();
+        const text = isText(meta.path, meta.content_type) ? await asText(blob) : null;
+        if (text !== null) file.text = text;
         else file.base64 = await toBase64(blob);
         if (blob.size !== meta.size) file.size_mismatch = blob.size;
         entry.files.push(file);

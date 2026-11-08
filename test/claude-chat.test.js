@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 // a red line under every test, like claude-sessions.test.js: an un-injected fetch is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { parseChats, isText, toBase64, readOrgPath, absolutizeOrgPath, collectChats, outputsName }
+const { parseChats, isText, asText, toBase64, readOrgPath, absolutizeOrgPath, collectChats, outputsName }
   = await import("../src/modules/claude-chat/outputs.js");
 
 const CHAT = "1234e567-89ab-4cde-8f01-234556789abc";
@@ -134,6 +134,67 @@ test("isText misses on binary types and binary extensions", () => {
     assert.equal(isText(path, type), false, `${path} (${type}) is not text`);
   }
   assert.equal(isText("/x/photo.png", undefined), false, "no type at all, binary extension");
+});
+
+// the dev-docs script's 26-case check, mirrored: the Office types carry "xml" inside
+// their names and must never take the text path
+test("isText is anchored to the media type: Office files are binary, +json/+xml and parameters are text", () => {
+  for (const [path, type, want] of [
+    ["/o/a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", false],
+    ["/o/a.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", false],
+    ["/o/a.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", false],
+    ["/o/a.odt", "application/vnd.oasis.opendocument.text", false],
+    ["/o/a.png", "image/png", false],
+    ["/o/a.svg", "image/svg+xml", true],
+    ["/o/a.json", "application/json", true],
+    ["/o/a.txt", "text/plain", true],
+    ["/o/a.xml", "application/xml", true],
+    ["/o/a.yaml", "application/x-yaml", true],
+    ["/o/a.js", "text/javascript", true],
+    ["/o/a.js", "application/javascript", true],
+    ["/o/a.ld", "application/ld+json", true],
+    ["/o/a.md", "application/octet-stream", true],
+    ["/o/a.bin", "", false],
+    ["/o/a", "TEXT/PLAIN", true],
+    ["/o/a", "application/x-javascript", true],
+    ["/o/a", "application/x-ndjson", true],
+    ["/o/a", "application/json ; charset=utf-8", true],
+    ["/o/a", "application/vnd.ms-excel", false],
+    ["/o/a", "application/xml-dtd", false],
+    ["/o/a", "application/jsonl", true],
+    ["/o/a", "application/json5", true],
+    ["/o/a", "application/x-jsonlines", true],
+    ["/o/a.jsonl", "application/octet-stream", true],
+    ["/o/a", "application/jsonx", false],
+  ]) {
+    assert.equal(isText(path, type), want, `${path} (${type || "no type"})`);
+  }
+});
+
+test("asText is byte-exact UTF-8 or null: a BOM survives, invalid bytes refuse", async () => {
+  assert.equal(await asText(new Blob(["héllo"])), "héllo");
+  assert.equal(await asText(new Blob([new Uint8Array([0xef, 0xbb, 0xbf, 0x61])])), String.fromCodePoint(0xfeff) + "a");
+  assert.equal(await asText(new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe])])), null);
+});
+
+test("a docx output rides as base64, byte-exact; a text label over invalid UTF-8 falls back to base64", async () => {
+  const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe, 0x80, 0x00]);
+  const latin1 = new Uint8Array([0x63, 0x61, 0x66, 0xe9]); // "café" in Latin-1: not UTF-8
+  const files = [
+    { path: "/mnt/user-data/outputs/r.docx", size: zip.length, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", body: zip },
+    { path: "/mnt/user-data/outputs/t.csv", size: latin1.length, content_type: "text/csv", body: latin1 },
+  ];
+  const fetch = async (url) => {
+    if (url.includes("list-files")) return { ok: true, json: async () => ({ files_metadata: files }) };
+    const f = files.find((x) => url.endsWith(encodeURIComponent(x.path)));
+    return { ok: true, blob: async () => new Blob([f.body]) };
+  };
+  const done = await collectChats([[CHAT, "n", null]], { fetch, orgPath: "https://claude.ai/api/organizations/x/" });
+  const [docx, csv] = done.results[0].files;
+  assert.equal(docx.text, undefined);
+  assert.deepEqual([...Buffer.from(docx.base64, "base64")], [...zip]);
+  assert.equal(csv.text, undefined);
+  assert.deepEqual([...Buffer.from(csv.base64, "base64")], [...latin1]);
 });
 
 // --- toBase64: the script's chunked base64, exact
