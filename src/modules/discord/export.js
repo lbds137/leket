@@ -157,7 +157,8 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
       // piling failed 2 GB parts up on a full disk (the manifest lists them unsaved)
       return result.ok;
     } : undefined;
-    const { parts, failed, leftBehind, records: built } = await build(exp, {
+    // the build's own records (each small-save file noting its part), not this tab's list
+    const { parts, failed, leftBehind, records: builtRecords } = await build(exp, {
       file, attachments, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       onProgress: ({ phase, done, failed: bad }) => {
         if (phase === "fetch") { fetchDone = done; fetchFailed = bad || 0; }
@@ -183,7 +184,7 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
     // whenever a click or a late finish saves a part (perhaps before the build was over)
     render = (first = false) => {
       const { lost, release, close, detail, status, warn } = summarize({
-        results, failed, leftBehind, records: built, messages: (exp.messages || []).length,
+        results, failed, leftBehind, records: builtRecords, messages: (exp.messages || []).length,
         attachments: records.length, streamed: stream, first });
       // the Discord tab holds the save so that reloading this tab can rebuild it, so it
       // lets go only once every part is down and nothing was left out of every part by a
