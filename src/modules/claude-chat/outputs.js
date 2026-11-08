@@ -48,11 +48,11 @@ export function isText(path, type) {
 }
 
 // a text label (or a text extension, which wins over the type) is a claim, not a
-// guarantee: bytes that are not valid UTF-8 return null and go to base64. ignoreBOM
-// keeps a leading BOM, so the text is byte-exact.
+// guarantee: bytes that are not valid UTF-8 return null and go to base64. A leading
+// BOM is stripped, as blob.text() did: readers JSON-parse a .json output's text.
 export async function asText(blob) {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await blob.arrayBuffer());
+    return new TextDecoder("utf-8", { fatal: true }).decode(await blob.arrayBuffer());
   } catch {
     return null;
   }
@@ -89,8 +89,9 @@ export function readOrgPath() {
 export const absolutizeOrgPath = (tabUrl, orgPath) => new URL(tabUrl).origin + orgPath;
 
 // The run: per chat, list the sandbox, download each outputs/ file, valid UTF-8 text
-// inline and the rest (binary, or a text label over bytes that aren't UTF-8) base64. A chat's failure is recorded on its entry (partial files kept) and
-// the walk moves on; onProgress(done, total, fileCount) fires after each chat.
+// inline and the rest (binary, or a text label over bytes that aren't UTF-8) base64.
+// A chat's failure is recorded on its entry (partial files kept) and the walk moves
+// on; onProgress(done, total, fileCount) fires after each chat.
 export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onProgress } = {}) {
   const get = async (url) => {
     const r = await doFetch(url, { credentials: "include" });

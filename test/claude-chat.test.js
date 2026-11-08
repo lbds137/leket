@@ -171,10 +171,21 @@ test("isText is anchored to the media type: Office files are binary, +json/+xml 
   }
 });
 
-test("asText is byte-exact UTF-8 or null: a BOM survives, invalid bytes refuse", async () => {
+test("asText is UTF-8 or null: a leading BOM is stripped, invalid bytes refuse", async () => {
   assert.equal(await asText(new Blob(["héllo"])), "héllo");
-  assert.equal(await asText(new Blob([new Uint8Array([0xef, 0xbb, 0xbf, 0x61])])), String.fromCodePoint(0xfeff) + "a");
+  assert.equal(await asText(new Blob([new Uint8Array([0xef, 0xbb, 0xbf, 0x61])])), "a");
   assert.equal(await asText(new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe])])), null);
+});
+
+test("a BOM'd .json output lands as text a reader can JSON.parse", async () => {
+  const body = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"slug":"x"}')]);
+  const files = [{ path: "/mnt/user-data/outputs/card.json", size: body.length, content_type: "application/json", body }];
+  const fetch = async (url) => {
+    if (url.includes("list-files")) return { ok: true, json: async () => ({ files_metadata: files }) };
+    return { ok: true, blob: async () => new Blob([files[0].body]) };
+  };
+  const done = await collectChats([[CHAT, "n", null]], { fetch, orgPath: "https://claude.ai/api/organizations/x/" });
+  assert.deepEqual(JSON.parse(done.results[0].files[0].text), { slug: "x" });
 });
 
 test("a docx output rides as base64, byte-exact; a text label over invalid UTF-8 falls back to base64", async () => {
