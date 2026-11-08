@@ -200,3 +200,27 @@ test("a mid-run late part that didn't finish says the warning line", () => {
 // A stale run's late end never reaches this module: save.js's stillCurrent guard drops
 // it page-side before note fires, so narration.js takes no sequence number — it cannot
 // be asked about a run that lost the line.
+
+// --- the rename and delete Done lines: a may-have-taken result is never "failed"
+
+test("renameDoneLine: all read back is ok; uncertain results are counted apart from failures", async () => {
+  const { renameDoneLine } = await import("../src/modules/claude-sessions/narration.js");
+  assert.deepEqual(renameDoneLine({ ok: 3, failed: [], uncertain: 0 }, 3),
+    { text: "Done: 3/3 renamed, every one read back.", cls: "ok" });
+  assert.deepEqual(renameDoneLine({ ok: 1, failed: ["x", "y", "z"], uncertain: 2 }, 4), {
+    text: "Done: 1/4 renamed and read back; 1 failed, 2 may have taken (no answer, or unverified — check those sessions) (listed below).",
+    cls: "warn",
+  });
+  assert.equal(renameDoneLine({ ok: 2, failed: ["x"], uncertain: 0 }, 3).text,
+    "Done: 2/3 renamed and read back; 1 failed (listed below).");
+});
+
+test("deleteDoneLine: unanswered deletes are counted apart from failures", async () => {
+  const { deleteDoneLine } = await import("../src/modules/claude-sessions/narration.js");
+  assert.deepEqual(deleteDoneLine({ deleted: 3, failed: [], unanswered: 0 }),
+    { text: "Done: 3 deleted (the first read back as gone; the rest on the server's OK), 0 failed.", cls: "ok" });
+  assert.deepEqual(deleteDoneLine({ deleted: 2, failed: ["b", "c"], unanswered: 1 }), {
+    text: "Done: 2 deleted (the first read back as gone; the rest on the server's OK), 1 failed, 1 got no answer (may have been deleted — check the session list).",
+    cls: "warn",
+  });
+});

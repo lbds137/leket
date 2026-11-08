@@ -10,7 +10,7 @@ import { parseRenames, orderRenames, renameAll, currentTitles } from "./rename.j
 import { checkPrefix, findHits, confirmHits, deleteAll } from "./delete.js";
 import { parseKnown, parseResume, exportSessions, runKey } from "./export.js";
 import { createSaves, partStop } from "./save.js";
-import { resumeLine, finalLine, lateNote } from "./narration.js";
+import { resumeLine, finalLine, lateNote, renameDoneLine, deleteDoneLine } from "./narration.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -193,14 +193,12 @@ $("rename-run").addEventListener("click", () => busy($("rename-run"), async () =
       onProgress: (d, t) => { renamePanel.progress(d, t); renamePanel.say(`Renamed ${d} of ${t}…`); },
     });
     renamePanel.failures(done.failed);
-    renamePanel.say(
-      done.stopped
-        ? done.error
-        : done.failed.length
-          ? `Done: ${done.ok}/${ordered.length} renamed and read back; ${done.failed.length} failed (listed below).`
-          : `Done: ${done.ok}/${ordered.length} renamed, every one read back.`,
-      done.stopped || done.failed.length ? "warn" : "ok",
-    );
+    if (done.stopped) {
+      renamePanel.say(done.error, "warn");
+    } else {
+      const line = renameDoneLine(done, ordered.length);
+      renamePanel.say(line.text, line.cls);
+    }
   } catch (err) {
     renamePanel.say((err && err.message) || String(err), "warn");
   }
@@ -250,12 +248,12 @@ $("delete-run").addEventListener("click", () => busy([$("dry-run"), $("delete-ru
     });
     deletePanel.failures(done.failed);
     if (!done.stopped) $("delete-confirm").value = ""; // a completed run resets the confirm
-    deletePanel.say(
-      done.stopped
-        ? done.error
-        : `Done: ${done.deleted} deleted (the first read back as gone; the rest on the server's OK), ${done.failed.length} failed.`,
-      done.stopped || done.failed.length ? "warn" : "ok",
-    );
+    if (done.stopped) {
+      deletePanel.say(done.error, "warn");
+    } else {
+      const line = deleteDoneLine(done);
+      deletePanel.say(line.text, line.cls);
+    }
   } catch (err) {
     deletePanel.say((err && err.message) || String(err), "warn");
   }
