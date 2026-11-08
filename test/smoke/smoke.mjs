@@ -13,7 +13,8 @@
 // the page hears nothing first and the part's late end after, on cue (the file itself
 // is on disk at once; what's covered is the stop and the late-end narration). The chat
 // page runs for real too: its org probe reads the chat tab's resource timeline, then it
-// lists and downloads a synthetic chat's outputs and names a second chat that fails.
+// lists and downloads a synthetic chat's outputs and names a second chat that fails,
+// then runs again and must replace that day's file, not add a renamed copy.
 // The Etsy page, prefilled from the tab, pages a synthetic message-list endpoint and
 // saves four times over one file: redact on with a colliding name, then again, then
 // with no config from an emptied box (the tab's conversation), then with a second id
@@ -26,7 +27,8 @@
 //
 // The browser: a Chromium build that still honors --load-extension (branded Google
 // Chrome dropped it). Without LEKET_CHROME it takes the newest Playwright Chromium in
-// ~/.cache/ms-playwright; none found exits 2 and says so, never a skipped pass.
+// ~/.cache/ms-playwright (Linux only); none found exits 2 and says so, never a skipped
+// pass. CI runs it on every pull request (.github/workflows/ci.yml).
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -584,6 +586,19 @@ async function scenarios(cdp, downloads) {
         "chat: the file holds the one output, as text, at its size (the upload was not fetched)");
       check(gone?.chat === CHAT_GONE && gone.error === "404 list-files?prefix=" && gone.files.length === 0, `chat: the gone chat's entry carries its error (${gone?.error})`);
     }
+
+    // a same-day re-save replaces the day's file: no "(1)" copy beside it
+    await evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); p.textContent = ""; p.className = "";
+      document.getElementById("outputs-run").click(); return true; })()`);
+    const again = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); const t = p.hidden ? "" : p.textContent;
+      return (t.startsWith("Done:") || (p.className === "warn" && t !== "")) && t; })()`), "the chat page's second end line", 15000).catch(soft((e) => e.message));
+    const twice = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-", state: "complete" }).then((d) => d.length)`)
+      .then((n) => n >= 2 && n), "the second chat save to finish").catch(soft((e) => e.message));
+    check(twice === 2 && again.startsWith("Done: 2 chats, 1 files saved to"), `chat: a second run saves again (${twice} finished; it said: ${again})`);
+    const files = landed().filter((f) => f.startsWith("claude-chat-outputs-"));
+    // one file, or two when a UTC midnight fell between the runs — never a "(1)" copy
+    check(files.length >= 1 && files.every((f) => /^claude-chat-outputs-\d{4}-\d{2}-\d{2}\.json$/.test(f)) && (files.length === 1 || files[1] > files[0]),
+      `chat: the second run replaced the day's file, no renamed copy (found: ${files.join(", ")})`);
   });
 
   // ---- etsy: popup -> the module's page, prefilled from the tab, which pages the synthetic

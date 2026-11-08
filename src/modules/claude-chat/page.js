@@ -101,7 +101,9 @@ $("outputs-run").addEventListener("click", (e) => busy(e.target, async () => {
         say("No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends.", "warn");
       }
     };
-    const saved = await trackDownload(chrome.downloads, { url: blobUrl, filename }, {
+    // a same-day re-save replaces the day's file, like every other module's save: with
+    // Chrome's default (uniquify) it would land as "<name> (1).json" beside the stale one
+    const saved = await trackDownload(chrome.downloads, { url: blobUrl, filename, conflictAction: "overwrite" }, {
       // a save with no word in 15 minutes may still be reading the blob URL: free it
       // only once the download truly ends; its end is said only if this run is still
       // the latest — a no-word save outlives its click, and a second run owns the line
