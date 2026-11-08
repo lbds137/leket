@@ -7,6 +7,7 @@
 // treats each session's lines as whole, so a truncation would corrupt the archive), and
 // the marker call sits after the final flush in this function's own control flow.
 import { API_ORIGIN } from "./listing.js";
+import { assignedJson } from "../../lib/paste.js";
 
 // the run's key, YYYY-MM-DDTHHMM in UTC: two runs on one day never share file names, so
 // bin/claude-sessions-weekly splits each run on its own instead of merging them. A
@@ -19,25 +20,23 @@ export const runKey = (date = new Date()) => date.toISOString().slice(0, 16).rep
 const partName = (run, n) => `claude-sessions-${run}-part${String(n).padStart(2, "0")}.jsonl`;
 const markerName = (run) => `claude-sessions-${run}-done.json`;
 
-// The incremental payload in either shape Deck's generator emits: the bare
-// {archived id: its last event time} object, or the whole `window.CLAUDE_EXPORT_KNOWN
-// = {...};` line — stripped like rename.js's parseRenames strips window.CLAUDE_RENAMES.
-// Junk gets an error that says what to paste; a JSON array, string, number or null
-// container is junk too (the run iterates Object.keys of a map, not an array).
+// The incremental payload in any shape Deck's generator gives her: the whole generated
+// file (claude-sessions-split --incremental-js writes the `window.CLAUDE_EXPORT_KNOWN =
+// {...};` line, then the console export script), just that line, or the bare
+// {archived id: its last event time} object — assignedJson strips the first two. Junk
+// gets an error that says what to paste; a JSON array, string, number or null container
+// is junk too (the run iterates Object.keys of a map, not an array).
 export function parseKnown(text) {
-  let t = String(text ?? "").trim();
-  if (!t) return {};
-  const m = /^window\.CLAUDE_EXPORT_KNOWN\s*=\s*([\s\S]*)$/.exec(t);
-  if (m) t = m[1].trim();
-  t = t.replace(/;\s*$/, "");
+  if (!String(text ?? "").trim()) return {};
+  const t = assignedJson(text, "CLAUDE_EXPORT_KNOWN");
   let known;
   try {
     known = JSON.parse(t);
   } catch {
-    throw new Error("Couldn't parse the known map. Paste either the bare {archived id: its last event time} JSON object, or the whole window.CLAUDE_EXPORT_KNOWN = {...}; line.");
+    throw new Error("Couldn't parse the known map. Paste the generated file as-is, the whole window.CLAUDE_EXPORT_KNOWN = {...}; line, or the bare {archived id: its last event time} JSON object.");
   }
   if (!known || typeof known !== "object" || Array.isArray(known)) {
-    throw new Error("The known map isn't an object — paste the generated file as-is: the bare {archived id: its last event time} JSON object, or the whole window.CLAUDE_EXPORT_KNOWN = {...}; line.");
+    throw new Error("The known map isn't an object. Paste the generated file as-is, the whole window.CLAUDE_EXPORT_KNOWN = {...}; line, or the bare {archived id: its last event time} JSON object.");
   }
   return known;
 }
@@ -89,6 +88,8 @@ export function parseResume(text) {
 // - threshold: the flush check's count, strict > (the script's 150 MB, per the design
 //   doc's "the scripts are the spec"). The count is UTF-16 code units (the script's
 //   `line.length`), not bytes — a non-ASCII part can land slightly above 150 MB on disk;
+// - timeoutMs: each events page's own timeout (a fresh AbortSignal per fetch); a page
+//   that times out fails its session like any other thrown fetch;
 // - onFlush(lines, name, state): a part save — may throw, and the throw STOPS the run: later
 //   sessions are not fetched, the final flush and the marker never run (a hole in the
 //   part numbering would make weekly split see a hole as a complete run). state is the
@@ -99,7 +100,7 @@ export function parseResume(text) {
 // - onProgress(done, total, events, failedCount): done counts skipped sessions too.
 export async function exportSessions(sessions, opts = {}) {
   const { fetch: doFetch = fetch, known = {}, skip = [], partStart = 0,
-    run = runKey(), threshold = 150 * 1048576, onFlush, onMarker, onProgress } = opts;
+    run = runKey(), threshold = 150 * 1048576, timeoutMs = 60_000, onFlush, onMarker, onProgress } = opts;
 
   // Incremental pre-pass (the script's lines 50–59): a known session is skipped unless
   // the list shows newer activity; one missing from the archive (new, or failed last
@@ -182,7 +183,9 @@ export async function exportSessions(sessions, opts = {}) {
         if (cursor != null) seenCursors.add(cursor);
         const url = `${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(s.id)}/events?limit=500`
           + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
-        const r = await doFetch(url, { credentials: "include", headers });
+        // a fresh signal per page, as in listing/rename/delete: a hung page fails this
+        // session (the catch below) instead of holding the run, and its button, forever
+        const r = await doFetch(url, { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) throw new Error(`events HTTP ${r.status}`);
         const j = await r.json();
         for (const e of j.data || []) {

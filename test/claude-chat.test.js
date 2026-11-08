@@ -52,6 +52,15 @@ test("parseChats takes the whole pasted window.CLAUDE_OUTPUT_CHATS line", () => 
   assert.deepEqual(parseChats(line.slice(0, -1)), [[CHAT, "chat one", "deck"]]);
 });
 
+test("parseChats takes the whole generated file pasted as-is: the line, then the script", () => {
+  // the shape dev-docs/browser/claude-chat-outputs.js's header names: the list line,
+  // then the script, whose own `;` line ends and OUTPUT_CHATS mention must not leak in
+  const script = "(async () => {\n  const chats = window.CLAUDE_OUTPUT_CHATS || [];\n  console.log(chats.length);\n})();\n";
+  const file = `window.CLAUDE_OUTPUT_CHATS = [["${CHAT}","chat one","deck"]];\n${script}`;
+  assert.deepEqual(parseChats(file), [[CHAT, "chat one", "deck"]]);
+  assert.deepEqual(parseChats(file.replace(/\n/g, "\r\n")), [[CHAT, "chat one", "deck"]]);
+});
+
 test("parseChats refuses junk with a message that says what to paste", () => {
   for (const junk of ["not json at all", '{"a":1}']) {
     assert.throws(() => parseChats(junk), /window\.CLAUDE_OUTPUT_CHATS|bare JSON array/, junk);

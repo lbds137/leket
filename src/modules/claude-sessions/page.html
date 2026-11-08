@@ -29,7 +29,7 @@ ul{padding-left:20px}
 <section id="export">
 <h2>Export sessions</h2>
 <p class="advice">Lists active + paused + archived sessions, fetches each one's events, and saves the run's part files (~150 MB each) and the done marker to Downloads. bin/claude-sessions-weekly splits them into the archive once the done marker lands.</p>
-<p class="advice">Paste the incremental payload Deck's generator emits (claude-sessions-split --incremental-js): the bare {archived id: its last event time} object, or the whole window.CLAUDE_EXPORT_KNOWN = {...}; line. Empty box = every session, full export.</p>
+<p class="advice">Paste the incremental payload Deck's generator emits (claude-sessions-split --incremental-js): the whole generated file as-is, just its window.CLAUDE_EXPORT_KNOWN = {...}; line, or the bare {archived id: its last event time} object. Empty box = every session, full export.</p>
 <textarea id="known" rows="6" placeholder='window.CLAUDE_EXPORT_KNOWN = {"cse_…": "2026-11-01T00:00:00Z"};'></textarea>
 <p class="advice">After a failed run, paste the console's resume line (window.CLAUDE_EXPORT_SKIP = [...]; window.CLAUDE_EXPORT_PART_START = N;) or the bare skip-id array. Parts then number after N.</p>
 <textarea id="resume" rows="6" placeholder='window.CLAUDE_EXPORT_SKIP = ["cse_…"]; window.CLAUDE_EXPORT_PART_START = 3;'></textarea>
@@ -42,7 +42,7 @@ ul{padding-left:20px}
 
 <section id="rename">
 <h2>Rename sessions</h2>
-<p class="advice">Paste the generated rename list — the bare JSON array of [id, title] pairs, or the whole window.CLAUDE_RENAMES = [...]; line. The first rename must be a real change, and every rename is read back.</p>
+<p class="advice">Paste the generated rename list: the whole generated file as-is, just its window.CLAUDE_RENAMES = [...]; line, or the bare JSON array of [id, title] pairs. The first rename must be a real change, and every rename is read back.</p>
 <textarea id="renames" rows="8" placeholder='[["cse_…", "New title"], …]'></textarea>
 <button id="rename-run">Rename sessions</button>
 <p id="rename-status" hidden></p>

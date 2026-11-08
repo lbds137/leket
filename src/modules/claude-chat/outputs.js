@@ -8,25 +8,24 @@
 // One entry's whole fetch chain sits in one try/catch, exactly as the script runs it:
 // a failure sets entry.error and keeps whatever files already arrived, so partial
 // files and the error coexist in the same entry.
+import { assignedJson } from "../../lib/paste.js";
 
-// The paste payload in either shape Deck's generator emits: the bare JSON array of
-// [chat, name, source] triples, or the whole `window.CLAUDE_OUTPUT_CHATS = [...];`
-// line. Junk gets an error that says what to paste — the page has no console to
-// decode a raw SyntaxError in.
+// The paste payload in any shape Deck's generator gives her: the whole generated file
+// (the `window.CLAUDE_OUTPUT_CHATS = [...];` line, then the console outputs script),
+// just that line, or the bare JSON array of [chat, name, source] triples — assignedJson
+// strips the first two. Junk gets an error that says what to paste — the page has no
+// console to decode a raw SyntaxError in.
 export function parseChats(text) {
-  let t = String(text ?? "").trim();
-  const m = /^window\.CLAUDE_OUTPUT_CHATS\s*=\s*([\s\S]*)$/.exec(t);
-  if (m) t = m[1].trim();
-  t = t.replace(/;\s*$/, "");
+  const t = assignedJson(text, "CLAUDE_OUTPUT_CHATS");
   let list;
   try {
     list = JSON.parse(t);
   } catch {
-    throw new Error("Couldn't parse the chat list. Paste either the bare JSON array of [chat, name, source] triples or the whole window.CLAUDE_OUTPUT_CHATS = [...]; line.");
+    throw new Error("Couldn't parse the chat list. Paste the generated file as-is, the whole window.CLAUDE_OUTPUT_CHATS = [...]; line, or the bare JSON array of [chat, name, source] triples.");
   }
   const ok = Array.isArray(list)
     && list.every((e) => Array.isArray(e) && e.length === 3 && typeof e[0] === "string");
-  if (!ok) throw new Error("The chat list isn't [[chat, name, source], ...] triples — paste the generated file as-is (the bare JSON array, or the whole window.CLAUDE_OUTPUT_CHATS = [...]; line).");
+  if (!ok) throw new Error("The chat list isn't [[chat, name, source], ...] triples. Paste the generated file as-is, the whole window.CLAUDE_OUTPUT_CHATS = [...]; line, or the bare JSON array.");
   // a chat id goes straight into the conversation URL, so anything that isn't a chat
   // uuid — a path traversal, a stray paste, an injection — is refused here, before
   // any fetch

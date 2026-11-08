@@ -5,28 +5,28 @@
 // would read back "correctly" even if the PUT did nothing, so the first rename is the
 // proof the PUT works. A failure at index 0 stops the whole list — nothing else changed.
 import { API_ORIGIN } from "./listing.js";
+import { assignedJson } from "../../lib/paste.js";
 
 // ids may start with cse_ or session_ (the same session: the list API says cse_, the
 // rename URL session_) — or nothing at all
 export const sid = (id) => "session_" + String(id).replace(/^(cse_|session_)/, "");
 
-// The paste payload in either shape Deck's generators emit: the bare JSON array of
-// [id, title] pairs, or the whole `window.CLAUDE_RENAMES = [...];` line. Junk gets an
-// error that says what to paste — the page has no console to decode a raw SyntaxError in.
+// The paste payload in any shape Deck's generators give her: the whole generated file
+// (the `window.CLAUDE_RENAMES = [...];` line, then the console rename script), just that
+// line, or the bare JSON array of [id, title] pairs — assignedJson strips the first two.
+// Junk gets an error that says what to paste — the page has no console to decode a raw
+// SyntaxError in.
 export function parseRenames(text) {
-  let t = String(text ?? "").trim();
-  const m = /^window\.CLAUDE_RENAMES\s*=\s*([\s\S]*)$/.exec(t);
-  if (m) t = m[1].trim();
-  t = t.replace(/;\s*$/, "");
+  const t = assignedJson(text, "CLAUDE_RENAMES");
   let list;
   try {
     list = JSON.parse(t);
   } catch {
-    throw new Error("Couldn't parse the rename list. Paste either the bare JSON array of [id, title] pairs or the whole window.CLAUDE_RENAMES = [...]; line.");
+    throw new Error("Couldn't parse the rename list. Paste the generated file as-is, the whole window.CLAUDE_RENAMES = [...]; line, or the bare JSON array of [id, title] pairs.");
   }
   const ok = Array.isArray(list)
     && list.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string");
-  if (!ok) throw new Error("The rename list isn't [[id, title], ...] pairs — paste the generated file as-is (the bare JSON array, or the whole window.CLAUDE_RENAMES = [...]; line).");
+  if (!ok) throw new Error("The rename list isn't [[id, title], ...] pairs. Paste the generated file as-is, the whole window.CLAUDE_RENAMES = [...]; line, or the bare JSON array.");
   // an id goes straight into the session URL, so anything that isn't a session id — a
   // path traversal, a stray paste, an injection — is refused here, before any fetch
   const bad = list.find((e) => !/^(?:cse_|session_)?[A-Za-z0-9_-]+$/.test(e[0]));

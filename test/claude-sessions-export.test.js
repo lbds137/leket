@@ -54,6 +54,7 @@ const collect = async (sessions, opts = {}) => {
     partStart: opts.partStart ?? 0,
     run: opts.run || "2026-11-05T1412",
     threshold: opts.threshold,
+    timeoutMs: opts.timeoutMs,
     onFlush: opts.onFlush || (async (lines, name) => parts.push({ lines, name })),
     onMarker: opts.onMarker || (async (payload, name) => markers.push({ payload, name })),
     onProgress: (d, t, e, f) => progress.push([d, t, e, f]),
@@ -86,6 +87,32 @@ test("parseKnown round-trips the whole window.CLAUDE_EXPORT_KNOWN line", () => {
   assert.deepEqual(parseKnown(line), known);
   // the trailing semicolon is optional
   assert.deepEqual(parseKnown(line.slice(0, -1)), known);
+});
+
+// the shape claude-sessions-split --incremental-js writes: the known line, then the
+// export script verbatim — a script whose own text has `;` line ends, braces and even
+// another CLAUDE_EXPORT_KNOWN mention, none of which may leak into the parse
+const SCRIPT_TAIL = [
+  "(async () => {",
+  "  const known = window.CLAUDE_EXPORT_KNOWN || {};",
+  '  const skip = new Set(); // {"not": "json"};',
+  "  console.log(Object.keys(known).length);",
+  "})();",
+  "",
+].join("\n");
+
+test("parseKnown takes the whole generated file pasted as-is: the line, then the script", () => {
+  const known = { abc: "2026-01-01T00:00:00Z", def: "2026-02-02T12:30:00Z" };
+  const file = `window.CLAUDE_EXPORT_KNOWN = ${JSON.stringify(known)};\n${SCRIPT_TAIL}`;
+  assert.deepEqual(parseKnown(file), known);
+  // a Windows clipboard's CRLF, and stray spaces before the line end, cut the same way
+  assert.deepEqual(parseKnown(file.replace(/\n/g, "\r\n")), known);
+  assert.deepEqual(parseKnown(file.replace(";\n", "; \t\n")), known);
+});
+
+test("parseKnown keeps refusing a generated file whose known line is junk", () => {
+  assert.throws(() => parseKnown(`window.CLAUDE_EXPORT_KNOWN = [1, 2];\n${SCRIPT_TAIL}`), /CLAUDE_EXPORT_KNOWN/);
+  assert.throws(() => parseKnown(`window.CLAUDE_EXPORT_KNOWN = {broken;\n${SCRIPT_TAIL}`), /CLAUDE_EXPORT_KNOWN/);
 });
 
 test("parseKnown takes blank as an empty map", () => {
@@ -264,6 +291,33 @@ test("Invariant 2: a session whose events page 2 throws lands in failed with zer
   assert.equal(allLines.some((l) => l.includes('"_session":"A"')), false, "no line from the failed session");
   assert.equal(allLines.some((l) => /"_session":"B"/.test(l)), true, "the later session's lines are present");
   assert.equal(result.events, 1, "only the completed session's events count");
+});
+
+test("a hung events page ends as a timeout: the session fails, the run goes on to the marker", async () => {
+  const b = oneEventSession("B", "tB", 200);
+  const hung = (u, opts) => new Promise((_, reject) => {
+    opts.signal.addEventListener("abort", () => reject(opts.signal.reason));
+  });
+  const routes = routesOneEvent([b]);
+  const fetch = (u, opts) => (u.includes("/sessions/A/") ? hung(u, opts) : standIn(routes)(u, opts));
+  const { parts, markers, result } = await collect(sessionsOf(listed("A", "tA"), b), { fetch, timeoutMs: 1 });
+  assert.equal(result.failed.length, 1);
+  // the reason's wording is the engine's (node: "aborted due to timeout", Chrome: "signal timed out")
+  assert.match(result.failed[0], /^A: .*(timeout|timed out)/i);
+  assert.equal(parts.flatMap((p) => p.lines).some((l) => /"_session":"B"/.test(l)), true, "the next session still lands");
+  assert.equal(markers.length, 1, "the run reaches its marker");
+});
+
+test("every events page carries its own fresh timeout signal", async () => {
+  const fetch = standIn({
+    "https://claude.ai/v1/code/sessions/A/events?limit=500": () => ({ data: [ev({ p: 1 })], next_cursor: "c1" }),
+    "https://claude.ai/v1/code/sessions/A/events?limit=500&cursor=c1": () => ({ data: [ev({ p: 2 })], next_cursor: null }),
+  });
+  await collect(sessionsOf(listed("A", "tA")), { fetch });
+  const signals = fetch.calls.map((c) => c.opts.signal);
+  assert.equal(signals.length, 2);
+  assert.ok(signals.every((s) => s instanceof AbortSignal && !s.aborted));
+  assert.notEqual(signals[0], signals[1], "a shared signal would time the whole walk, not each page");
 });
 
 // --- Invariant 2b: a repeated cursor throws, failing the session

@@ -153,6 +153,15 @@ test("parseRenames takes the whole pasted window.CLAUDE_RENAMES line", () => {
   assert.deepEqual(parseRenames(line.slice(0, -1)), [["cse_abc", "New title"], ["session_def", "Other"]]);
 });
 
+test("parseRenames takes the whole generated file pasted as-is: the line, then the script", () => {
+  // the shape dev-docs/browser/claude-sessions-rename.js's header names: the list line,
+  // then the script, whose own `;` line ends and RENAMES mention must not leak in
+  const script = "(async () => {\n  const list = window.CLAUDE_RENAMES || [];\n  console.log(list.length);\n})();\n";
+  const file = `window.CLAUDE_RENAMES = [["cse_abc","New title"],["session_def","Other"]];\n${script}`;
+  assert.deepEqual(parseRenames(file), [["cse_abc", "New title"], ["session_def", "Other"]]);
+  assert.deepEqual(parseRenames(file.replace(/\n/g, "\r\n")), [["cse_abc", "New title"], ["session_def", "Other"]]);
+});
+
 test("parseRenames refuses junk with a message that says what to paste", () => {
   for (const junk of ["not json at all", '{"a":1}', "[]", '[["one-element"]]', '[["id", 42]]']) {
     assert.throws(() => parseRenames(junk), /window\.CLAUDE_RENAMES|bare JSON array|\[id, title\]/, junk);
