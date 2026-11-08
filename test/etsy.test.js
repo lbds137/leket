@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor }
+const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -605,6 +605,11 @@ test("page.js wires the pure decisions: finishMessage and conflictActionFor are 
   assert.match(src, /= redactSetup\(stored\);/);
   assert.match(src, /failures\(failureLines\(conversations\)\)/);
   assert.doesNotMatch(src, /redactionCollisions|redactLineFor|makeRedact/);
+  // the progress line counts through the same plural as the finish line
+  assert.match(src, /\$\{counted\(seenSize, "message"\)\} — keep this tab open/);
+  assert.equal(counted(1, "message"), "1 message");
+  assert.equal(counted(0, "message"), "0 messages");
+  assert.equal(counted(2, "conversation"), "2 conversations");
   // the redact line is cleared when a run starts and when a run throws
   // (comment lines are stripped first, so a commented-out hide doesn't count; each hide
   // is pinned to its place: right after the failures reset, and first in the catch)
