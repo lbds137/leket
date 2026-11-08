@@ -90,11 +90,14 @@ export function parseResume(text) {
 //   `line.length`), not bytes — a non-ASCII part can land slightly above 150 MB on disk;
 // - timeoutMs: each events page's own timeout (a fresh AbortSignal per fetch); a page
 //   that times out fails its session like any other thrown fetch;
-// - onFlush(lines, name, state): a part save — may throw, and the throw STOPS the run: later
-//   sessions are not fetched, the final flush and the marker never run (a hole in the
-//   part numbering would make weekly split see a hole as a complete run). state is the
+// - onFlush(lines, name, state, ids): a part save — may throw, and the throw STOPS the run:
+//   later sessions are not fetched, the final flush and the marker never run (a hole in
+//   the part numbering would make weekly split see a hole as a complete run). state is the
 //   save record as of before this part — { savedIds, partStart } — so the page can build
-//   its resume line from what actually saved; a part counts only once its save resolves;
+//   its resume line from what actually saved; a part counts only once its save resolves.
+//   ids are this part's own session ids in flush order (a session whose fetch failed is
+//   never among them): a stopped part's late landing rebuilds the resume line from them,
+//   so the page need not keep the part's lines alive to re-scan them;
 // - onMarker(payload, name): the done marker — called last, after the final flush,
 //   even when every session failed or was skipped;
 // - onProgress(done, total, events, failedCount): done counts skipped sessions too.
@@ -141,9 +144,10 @@ export async function exportSessions(sessions, opts = {}) {
     if (!buffer.length) return;
     const lines = buffer;
     const ids = bufferIds;
-    // the strings drop before the save settles: the page's Blob is built from `lines` at
-    // the top of onFlush, so they become collectable the moment the Blob exists instead
-    // of after the download lands
+    // the buffer lets go of the strings here; the page's Blob is built from `lines` at the
+    // top of onFlush and the page keeps no reference past it (a stop keeps `ids`, not
+    // `lines`), so they become collectable once the save settles and this frame and
+    // onFlush's unwind — not held on by a stopped run's state until the next click
     buffer = [];
     bufferIds = [];
     partBytes = 0;
@@ -154,7 +158,7 @@ export async function exportSessions(sessions, opts = {}) {
     // sequential). The run's return.savedIds stays run-scoped below: it means what THIS
     // run landed.
     const state = { savedIds: [...skip, ...savedIds], partStart: partStart + savedParts };
-    await onFlush(lines, partName(run, ++partNo), state);
+    await onFlush(lines, partName(run, ++partNo), state, [...ids]);
     savedIds.push(...ids);
     savedParts++;
   };

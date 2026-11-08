@@ -321,7 +321,7 @@ test("a later rename with no answer or an unverified check says it may have take
   assert.equal(done.ok, 1);
   assert.deepEqual(done.failed, [
     "cse_b: no answer (network down) — it may have taken; check that session",
-    'cse_c: accepted, but its check failed (read back "old c") — it may have taken; check that session',
+    'cse_c: accepted, but its check failed (read back "old c") — it may have taken (the server can also normalise a title); check that session',
     "cse_d: rename 500: nope",
   ]);
   assert.equal(done.uncertain, 2);
@@ -723,6 +723,7 @@ test("onProgress for a single hit is just [1] — the verified first delete is t
 test("an empty hit list deletes nothing", async () => {
   const { calls, fetch } = apiFetch([]);
   const done = await deleteAll([], { fetch });
-  assert.deepEqual([done.deleted, done.failed, done.stopped], [0, [], false]);
+  // the same shape as a run that deleted: unanswered is there, not left to a default
+  assert.deepEqual(done, { deleted: 0, failed: [], unanswered: 0, stopped: false });
   assert.equal(calls.length, 0);
 });

@@ -81,7 +81,7 @@ export async function deleteAll(hits, { fetch: doFetch = fetch, timeoutMs = 60_0
     }
     if (!r.ok) throw new Error(`delete ${r.status}: ${(await r.text()).slice(0, 200)}`);
   };
-  if (!hits.length) return { deleted: 0, failed: [], stopped: false };
+  if (!hits.length) return { deleted: 0, failed: [], unanswered: 0, stopped: false };
   let precheck;
   try {
     precheck = (await get(hits[0])).status;

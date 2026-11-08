@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { createSaves, partStop } = await import("../src/modules/claude-sessions/save.js");
+const { createSaves, savePartOrStop } = await import("../src/modules/claude-sessions/save.js");
 
 // node's URL has no object-URL half: a registry stand-in goes on the global once, so the
 // tests can watch the factory's create/revoke discipline (revoke is page-global —
@@ -159,34 +159,70 @@ test("saveAs false and conflictAction overwrite ride on both download requests",
 });
 
 test("a downloads.download that throws propagates out of the save", async () => {
-  // the sync throw escapes trackDownload before it settles, so the factory's wait timer
-  // stays live — a 5 ms one here, not the harness's 60 s, keeps the process exiting
-  const { d, saves } = harness(() => true, 5);
+  // the harness's 60 s timer would hold the process open if the throw left it live
+  // (lib/download.js clears it on this path; test/download.test.js pins that)
+  const { d, saves } = harness();
   d.download = () => { throw new Error("refused"); };
   await assert.rejects(saves.savePart(["x\n"], "part01.jsonl"), /refused/);
   await assert.rejects(saves.saveMarker({ parts: 1 }, "done.json"), /refused/);
 });
 
-test("a sync-throwing download revokes the blob URL, rejection untouched", async () => {
-  // the executor throw escapes trackDownload before its promise settles — the save must
-  // still free the URL here (the wait timer stays live, and its done(null) fires onLate,
-  // whose revoke is harmless on an already-revoked URL)
-  const { d, saves } = harness(() => true, 5);
+test("a sync-throwing download revokes the blob URL once, rejection untouched, and nothing narrates", async () => {
+  // the throw rejects trackDownload's promise with its timer and listener already
+  // dropped, so onLate never fires: the factory's own revoke is the only one
+  const { d, notes, saves } = harness(() => true, 5);
   d.download = () => { throw new Error("refused"); };
   await assert.rejects(saves.savePart(["x\n"], "part01.jsonl"), /refused/);
-  assert.deepEqual(urls.revoked, [urls.created[0].url], "the throw revokes despite the rejection");
+  await new Promise((r) => setTimeout(r, 20)); // past the 5 ms timeout
+  assert.deepEqual(urls.revoked, [urls.created[0].url], "one revoke, from the throw path");
+  assert.deepEqual(notes, [], "no late end is narrated for a save that never started");
 });
 
-// --- the part-stop rule (a silent part save stops the run, owner-approved)
+// --- savePartOrStop: the page's onFlush glue (a silent part save stops the run,
+// owner-approved)
 
-test("partStop returns for a saved part", () => {
-  assert.doesNotThrow(() => partStop({ saved: true }, { refusedMessage: "r", silentMessage: "s" }));
+// a savePart stand-in answering with a fixed result, or throwing
+const answering = (out) => async () => out;
+const recordStops = () => {
+  const stops = [];
+  return { stops, onStop: (kind, err) => { stops.push([kind, err]); return `stop:${kind}`; } };
+};
+
+test("savePartOrStop returns a saved part's size and never calls onStop", async () => {
+  const { stops, onStop } = recordStops();
+  assert.equal(await savePartOrStop(answering({ saved: true, size: 42 }), ["x\n"], "p01.jsonl", onStop), 42);
+  assert.deepEqual(stops, []);
 });
 
-test("partStop throws refusedMessage for a refused part", () => {
-  assert.throws(() => partStop({ saved: false }, { refusedMessage: "refused!", silentMessage: "silent!" }), /refused!/);
+test("savePartOrStop stops a refused part with onStop's message", async () => {
+  const { stops, onStop } = recordStops();
+  await assert.rejects(savePartOrStop(answering({ saved: false, size: 1 }), [], "p01.jsonl", onStop),
+    (err) => err.message === "stop:refused");
+  assert.deepEqual(stops, [["refused", undefined]]);
 });
 
-test("partStop throws silentMessage for a silent part", () => {
-  assert.throws(() => partStop({ saved: null }, { refusedMessage: "refused!", silentMessage: "silent!" }), /silent!/);
+test("savePartOrStop stops a silent part with onStop's message", async () => {
+  const { stops, onStop } = recordStops();
+  await assert.rejects(savePartOrStop(answering({ saved: null, size: 1 }), [], "p01.jsonl", onStop),
+    (err) => err.message === "stop:silent");
+  assert.deepEqual(stops, [["silent", undefined]]);
+});
+
+test("savePartOrStop converts a thrown save into a stop that hands onStop the throw", async () => {
+  const { stops, onStop } = recordStops();
+  const boom = new Error("Invalid filename");
+  await assert.rejects(savePartOrStop(async () => { throw boom; }, [], "p01.jsonl", onStop),
+    (err) => err.message === "stop:error");
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0][0], "error");
+  assert.equal(stops[0][1], boom, "onStop sees the original throw, to name it");
+});
+
+test("savePartOrStop passes the part's lines and name to the save and nothing of them to onStop", async () => {
+  const seen = [];
+  const lines = ["a\n", "b\n"];
+  const { stops, onStop } = recordStops();
+  await assert.rejects(savePartOrStop(async (l, n) => { seen.push([l, n]); return { saved: null }; }, lines, "p02.jsonl", onStop));
+  assert.deepEqual(seen, [[lines, "p02.jsonl"]]);
+  assert.equal(stops[0].length, 2, "onStop's arguments are the kind and the throw only");
 });

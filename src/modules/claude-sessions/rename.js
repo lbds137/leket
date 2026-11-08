@@ -125,7 +125,7 @@ export async function renameAll(list, { fetch: doFetch = fetch, timeoutMs = 60_0
       if (i > 0 && (err.accepted || err.unanswered)) {
         uncertain++;
         failed.push(err.accepted
-          ? `${id}: accepted, but its check failed (${err.message}) — it may have taken; check that session`
+          ? `${id}: accepted, but its check failed (${err.message}) — it may have taken (the server can also normalise a title); check that session`
           : `${id}: no answer (${err.message}) — it may have taken; check that session`);
       } else {
         failed.push(`${id}: ${err.message}`);

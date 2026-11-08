@@ -27,11 +27,9 @@ export function createSaves({ downloads, note, stillCurrent }, { timeout } = {})
         },
       });
     } catch (err) {
-      // a synchronous throw from downloads.download escapes before trackDownload's
-      // promise settles — free the URL here and rethrow unchanged. The throw left the
-      // wait timer live, so trackDownload's done(null) still fires at the timeout: its
-      // onLate revoke is harmless on an already-revoked URL, and its note stays the
-      // late end's narrator (lib/download.js's contract, not fought here).
+      // a synchronous throw from downloads.download rejects trackDownload's promise,
+      // which has already dropped its timer and listener: onLate never fires on this
+      // path, so this is the only revoke — free the URL here and rethrow unchanged
       URL.revokeObjectURL(url);
       throw err;
     }
@@ -45,22 +43,22 @@ export function createSaves({ downloads, note, stillCurrent }, { timeout } = {})
   };
 }
 
-// The part-stop rule, pure and exported so the tests pin it without a downloads seam:
-// a saved part returns; a refused or interrupted part throws refusedMessage; a part
-// that got no word in 15 minutes throws silentMessage. The strings stay page-side —
-// the helper only picks and throws. The thrown errors carry `partStop` so the page's
-// onFlush can tell them from a foreign throw (a synchronous download failure among
-// them) and convert only the foreign ones. (The marker never stops the run: its null
-// path stays page-side narration.)
-export function partStop({ saved }, { refusedMessage, silentMessage }) {
-  if (saved === false) {
-    const err = new Error(refusedMessage);
-    err.partStop = true;
-    throw err;
+// The page's onFlush glue as one seam the tests can pin: save the part, and stop the run
+// unless it saved. A saved part returns its blob size (the page's MB math). Anything else
+// calls onStop(kind, err) — kind "error" (the save threw; err is the throw, a synchronous
+// download failure among them), "refused" (Chrome interrupted or refused it) or "silent"
+// (no word in 15 minutes; it may still land) — and throws the message onStop returns,
+// which exportSessions propagates: later sessions are not fetched and no marker is
+// written. onStop is where the page records its stopped state and resume line; it gets
+// no lines, so nothing the page keeps can hold the part alive. (The marker never stops
+// the run: its null path stays page-side narration.)
+export async function savePartOrStop(savePart, lines, name, onStop) {
+  let out;
+  try {
+    out = await savePart(lines, name);
+  } catch (err) {
+    throw new Error(onStop("error", err));
   }
-  if (saved === null) {
-    const err = new Error(silentMessage);
-    err.partStop = true;
-    throw err;
-  }
+  if (out.saved === true) return out.size;
+  throw new Error(onStop(out.saved === false ? "refused" : "silent"));
 }

@@ -8,15 +8,12 @@ import assert from "node:assert/strict";
 const { resumeLine, resumeSessions, finalLine, lateNote } =
   await import("../src/modules/claude-sessions/narration.js");
 
-// A stopped run's record as page.js keeps it: the onFlush args of the part that stopped
-// the run, plus the stop message the run's status line carries (late notes append to it)
+// A stopped run's record as page.js keeps it: the name, flush state and session ids of the
+// part that stopped the run (never its lines), plus the stop message the run's status
+// line carries (late notes append to it)
 const stoppedRun = () => ({
   name: "claude-sessions-R-part02.jsonl",
-  lines: [
-    '{"_titles":{"cse_1":"One"}}\n',
-    '{"x":1,"_session":"cse_2","_title":"Two"}\n',
-    '{"x":2,"_session":"cse_3","_title":"Three"}\n',
-  ],
+  ids: ["cse_2", "cse_3"],
   state: { savedIds: ["cse_1"], partStart: 2 },
   message: "Part claude-sessions-R-part02.jsonl got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste the resume line below into the resume box.",
   cls: "warn",
@@ -30,26 +27,25 @@ test("resumeLine is the console's paste-ready line", () => {
 });
 
 test("resumeSessions seeds the chain, unions the landed part's sessions, and numbers past it", () => {
-  const out = resumeSessions(stoppedRun().state, stoppedRun().lines);
-  // the seeded skip ids stay first; the part's own _session values join in flush order
+  const out = resumeSessions(stoppedRun().state, stoppedRun().ids);
+  // the seeded skip ids stay first; the part's own session ids join in flush order
   assert.deepEqual(out.savedIds, ["cse_1", "cse_2", "cse_3"]);
   // the stopped part landed: numbering continues past it
   assert.equal(out.partStart, 3);
-  // the titles line carries no _session and contributes nothing — only the event lines do
-  assert.equal(stoppedRun().lines[0].includes("_session"), false);
 });
 
-test("resumeSessions dedupes session ids", () => {
-  const lines = [
-    '{"x":1,"_session":"cse_2"}\n',
-    '{"x":2,"_session":"cse_2"}\n',
-    '{"x":3,"_session":"cse_9"}\n',
-  ];
-  const out = resumeSessions({ savedIds: ["cse_2"], partStart: 0 }, lines);
+test("resumeSessions adds each id once: one already in the chain, or repeated, joins no second time", () => {
+  const out = resumeSessions({ savedIds: ["cse_2"], partStart: 0 }, ["cse_2", "cse_9", "cse_9"]);
   assert.deepEqual(out.savedIds, ["cse_2", "cse_9"]);
 });
 
-test("resumeSessions with empty lines keeps the seeded chain and still numbers past the part", () => {
+test("resumeSessions leaves its inputs untouched", () => {
+  const state = { savedIds: ["cse_1"], partStart: 1 };
+  resumeSessions(state, ["cse_2"]);
+  assert.deepEqual(state, { savedIds: ["cse_1"], partStart: 1 });
+});
+
+test("resumeSessions with no ids keeps the seeded chain and still numbers past the part", () => {
   const out = resumeSessions({ savedIds: ["cse_1"], partStart: 5 }, []);
   assert.deepEqual(out.savedIds, ["cse_1"]);
   assert.equal(out.partStart, 6);
@@ -113,8 +109,8 @@ test("a late note for the stopped part that didn't finish appends and the resume
 });
 
 test("a late note for a different part appends only — the resume line is not rebuilt", () => {
-  // an earlier silent part's late end after a later stop: its sessions are not in the
-  // stopped part's lines, so the chain view must not claim them
+  // an earlier silent part's late end after a later stop: its sessions are not among the
+  // stopped part's ids, so the chain view must not claim them
   const ok = lateNote({
     marker: false, ok: true, name: "claude-sessions-R-part01.jsonl", size: 1048576,
     stopped: stoppedRun(), doneLine: null, savedMB: 0, run: "R", failedCount: 0,
@@ -207,20 +203,43 @@ test("renameDoneLine: all read back is ok; uncertain results are counted apart f
   const { renameDoneLine } = await import("../src/modules/claude-sessions/narration.js");
   assert.deepEqual(renameDoneLine({ ok: 3, failed: [], uncertain: 0 }, 3),
     { text: "Done: 3/3 renamed, every one read back.", cls: "ok" });
+  // both kinds: one parenthetical, and it says the list holds all of them
   assert.deepEqual(renameDoneLine({ ok: 1, failed: ["x", "y", "z"], uncertain: 2 }, 4), {
-    text: "Done: 1/4 renamed and read back; 1 failed, 2 may have taken (no answer, or unverified — check those sessions) (listed below).",
+    text: "Done: 1/4 renamed and read back; 1 failed, 2 may have taken (no answer, or unverified — check those sessions; all listed below).",
     cls: "warn",
   });
   assert.equal(renameDoneLine({ ok: 2, failed: ["x"], uncertain: 0 }, 3).text,
     "Done: 2/3 renamed and read back; 1 failed (listed below).");
+  // every failure uncertain: no "0 failed" clause
+  assert.deepEqual(renameDoneLine({ ok: 1, failed: ["x", "y"], uncertain: 2 }, 3), {
+    text: "Done: 1/3 renamed and read back; 2 may have taken (no answer, or unverified — check those sessions; listed below).",
+    cls: "warn",
+  });
 });
 
-test("deleteDoneLine: unanswered deletes are counted apart from failures", async () => {
+test("deleteDoneLine: unanswered deletes are counted apart from failures, and a zero count says nothing", async () => {
   const { deleteDoneLine } = await import("../src/modules/claude-sessions/narration.js");
   assert.deepEqual(deleteDoneLine({ deleted: 3, failed: [], unanswered: 0 }),
-    { text: "Done: 3 deleted (the first read back as gone; the rest on the server's OK), 0 failed.", cls: "ok" });
+    { text: "Done: 3 deleted (the first read back as gone; the rest on the server's OK).", cls: "ok" });
   assert.deepEqual(deleteDoneLine({ deleted: 2, failed: ["b", "c"], unanswered: 1 }), {
     text: "Done: 2 deleted (the first read back as gone; the rest on the server's OK), 1 failed, 1 got no answer (may have been deleted — check the session list).",
     cls: "warn",
   });
+  // every failure unanswered: no "0 failed" clause
+  assert.deepEqual(deleteDoneLine({ deleted: 1, failed: ["b"], unanswered: 1 }), {
+    text: "Done: 1 deleted (the first read back as gone; the rest on the server's OK), 1 got no answer (may have been deleted — check the session list).",
+    cls: "warn",
+  });
+});
+
+test("stopMessage names the part and points at the resume line below, for each way a part stops", async () => {
+  const { stopMessage } = await import("../src/modules/claude-sessions/narration.js");
+  assert.equal(stopMessage("error", "p01.jsonl", new Error("Invalid filename")),
+    "Part p01.jsonl didn't finish — Invalid filename. Nothing more is fetched and no done marker is written. To resume, paste the resume line below into the resume box.");
+  assert.equal(stopMessage("refused", "p01.jsonl"),
+    "Part p01.jsonl didn't finish — Chrome interrupted or refused the save. Nothing more is fetched and no done marker is written. To resume, paste the resume line below into the resume box.");
+  assert.equal(stopMessage("silent", "p01.jsonl"),
+    "Part p01.jsonl got no word from Chrome in 15 minutes — the run stopped, so no done marker sits over an unsettled part. If this part lands late, it will say so here. To resume, paste the resume line below into the resume box.");
+  // a thrown non-Error still names what was thrown
+  assert.match(stopMessage("error", "p01.jsonl", "boom"), /didn't finish — boom\./);
 });
