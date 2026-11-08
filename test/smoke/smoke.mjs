@@ -11,11 +11,13 @@
 // against a synthetic API, with two test-side levers set on its page: the 15-minute
 // no-word wait shrunk to 0 ms and the download call's answer held until released, so
 // the page hears nothing first and the part's late end after, on cue (the file itself
-// is on disk at once; what's covered is the stop and the late-end narration). The chat page is driven only as far as
-// its paste parse — its org probe and fetches are not covered. The Etsy page runs for
-// real: prefilled from the tab, it pages a synthetic message-list endpoint under a stored
-// redact config and saves twice, the second save over the first. Not covered there: an
-// emptied ids box falling back to the tab's conversation (this run never empties the prefilled box).
+// is on disk at once; what's covered is the stop and the late-end narration). The chat
+// page runs for real too: its org probe reads the chat tab's resource timeline, then it
+// lists and downloads a synthetic chat's outputs and names a second chat that fails.
+// The Etsy page, prefilled from the tab, pages a synthetic message-list endpoint and
+// saves four times over one file: redact on with a colliding name, then again, then
+// with no config from an emptied box (the tab's conversation), then with a second id
+// that fails. Each scenario runs on its own: a throw fails it and the next one starts.
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
 //
@@ -76,12 +78,25 @@ const NEW_SESSION = "cse_smokenew";
 const KNOWN_SESSION = "cse_smokeknown";
 const EARLIER_SESSION = "cse_smokeearlier"; // in the pasted resume line only: never listed
 const listing = (data) => JSON.stringify({ data, next_cursor: null });
+// claude chat: the chat page's own script calls an org-scoped API, so the org probe finds
+// the org in the tab's resource timeline; one chat lists an upload and an output (only
+// the output is fetched), the other's listing answers 404
+const ORG = "00000000-0000-4000-8000-0000000000aa";
+const ORG_API = `https://claude.ai/api/organizations/${ORG}/`;
+const CHAT_OK = "00000000-0000-4000-8000-000000000001";
+const CHAT_GONE = "00000000-0000-4000-8000-000000000002";
+const wiggle = (chat) => `${ORG_API}conversations/${chat}/wiggle/`;
+const REPORT_PATH = "/mnt/user-data/outputs/report.md";
+const REPORT = "# a report\n\nan output's text\n";
+const chatPage = `<!doctype html><html><head><title>a claude chat</title></head><body><p>a claude chat</p>`
+  + `<script>fetch(${JSON.stringify(`/api/organizations/${ORG}/ping`)})</script></body></html>`;
 // etsy: a conversation page for the popup to match and prefill from, its message-list
 // pages, and a redact config whose name (the unit tests' synthetic one) also catches
 // "etsy" — so the page's redact line carries the collision warning
 const ETSY_ID = "424242";
 const ETSY_CONVO = `https://www.etsy.com/messages/${ETSY_ID}`;
-const etsyPage = (offset) => `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${ETSY_ID}/message-list?offset=${offset}&fetch_older=true&load_shop_convos=false`;
+const ETSY_GONE = "999999";
+const etsyPage = (offset, id = ETSY_ID) => `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list?offset=${offset}&fetch_older=true&load_shop_convos=false`;
 const ETSY_REDACT = { name: "betsy", short: "bpt", firstSounds: "bpt" };
 const WEB = new Map([
   [REDDIT_POST, { type: "text/html", body: html("a reddit post") }],
@@ -89,7 +104,14 @@ const WEB = new Map([
   [DISCORD_DM, { type: "text/html", body: html("a discord dm") }],
   [ATTACHMENT, { type: "text/plain", body: ATTACHMENT_BODY }],
   [CLAUDE_CODE, { type: "text/html", body: html("a claude code page") }],
-  [CLAUDE_CHAT, { type: "text/html", body: html("a claude chat") }],
+  [CLAUDE_CHAT, { type: "text/html", body: chatPage }],
+  [`${ORG_API}ping`, { type: "application/json", body: "{}" }],
+  [`${wiggle(CHAT_OK)}list-files?prefix=`, { type: "application/json", body: JSON.stringify({ files_metadata: [
+    { path: "/mnt/user-data/uploads/input.txt", size: 5, created_at: "2021-01-04T00:00:00Z", content_type: "text/plain" },
+    { path: REPORT_PATH, size: Buffer.byteLength(REPORT), created_at: "2021-01-04T00:01:00Z", content_type: "text/markdown" },
+  ] }) }],
+  [`${wiggle(CHAT_OK)}download-file?path=${encodeURIComponent(REPORT_PATH)}`, { type: "text/markdown", body: REPORT }],
+  [`${wiggle(CHAT_GONE)}list-files?prefix=`, { type: "application/json", body: "{}", status: 404 }],
   [`${SESSIONS_API}?statuses=active&limit=50`, { type: "application/json", body: listing([
     { id: NEW_SESSION, title: "a new session", last_event_at: "2021-01-03T00:00:00Z" },
     { id: KNOWN_SESSION, title: "an archived session", last_event_at: "2021-01-01T00:00:00Z" },
@@ -106,6 +128,8 @@ const WEB = new Map([
     { conversation_message_id: 2, create_date: 1609495260, message_order: 2, message: "hi Betsy, thanks" },
   ] }) }],
   [etsyPage(2), { type: "application/json", body: JSON.stringify({ messages: [] }) }],
+  // a second conversation whose first page fails: the failure list's one line
+  [etsyPage(0, ETSY_GONE), { type: "application/json", body: "{}", status: 500 }],
 ]);
 
 // ---- a small CDP client over Node's own WebSocket ----
@@ -148,6 +172,9 @@ const check = (ok, what) => {
   if (!ok) failures.push(what);
   return ok;
 };
+// a wait's catch that turns its timeout into an answer for the check after it — but
+// never a dead browser's (fatal) error, which ends the run with its own message
+const soft = (answer) => (e) => { if (e && e.fatal) throw e; return answer(e); };
 async function waitFor(fn, what, ms = 15000) {
   const end = Date.now() + ms;
   let last;
@@ -218,7 +245,7 @@ async function main() {
     browser.on("exit", (code, sig) => console.error(`smoke: the browser exited mid-run (${code ?? sig})`));
     // a whole run takes seconds; a call that never answers fails the run, never hangs it
     let watchdog;
-    const limit = new Promise((_, fail) => { watchdog = setTimeout(() => fail(new Error("the run took over 3 minutes")), 180_000); });
+    const limit = new Promise((_, fail) => { watchdog = setTimeout(() => fail(new Error("the run took over 5 minutes")), 300_000); });
     try { return await Promise.race([scenarios(cdp, downloads), limit]); } finally { clearTimeout(watchdog); }
   } finally {
     stop();
@@ -243,7 +270,7 @@ async function scenarios(cdp, downloads) {
       const { requestId, request } = m.params;
       const page = WEB.get(request.url);
       if (page) {
-        await cdp.send("Fetch.fulfillRequest", { requestId, responseCode: 200,
+        await cdp.send("Fetch.fulfillRequest", { requestId, responseCode: page.status || 200,
           responseHeaders: [{ name: "content-type", value: page.type }, { name: "content-length", value: String(Buffer.byteLength(page.body)) }],
           body: Buffer.from(page.body).toString("base64") }, m.sessionId).catch(() => {});
       } else if (/^(https?|wss?|ftp):/.test(request.url)) {
@@ -324,212 +351,312 @@ async function scenarios(cdp, downloads) {
       const r = await cdp.send("Runtime.evaluate", { includeCommandLineAPI: true, returnByValue: true,
         expression: `(() => { const b = document.getElementById(${JSON.stringify(button)}); return !!b && (getEventListeners(b).click || []).length > 0; })()` }, sessionId);
       return r.result.value === true;
-    }, `${what}: page.js to wire #${button}`).catch((e) => { if (e && e.fatal) throw e; return false; });
+    }, `${what}: page.js to wire #${button}`).catch(soft(() => false));
     if (!check(ok, `${what}: the page's script and its imports loaded (#${button} has its click listener)`)) throw new Error(`${what}: page.js never ran`);
   };
 
-  // ---- reddit: popup -> worker -> offscreen document -> worker downloads, twice ----
-  console.log("smoke: reddit save");
-  await open(REDDIT_POST);
-  for (const round of [1, 2]) {
-    const popup = await clickPopup("Save this post as Markdown");
-    const line = await waitFor(() => evalIn(popup.sessionId,
-      `(() => { const p = document.getElementById("card").lastElementChild; const t = p && !p.hidden ? p.textContent : ""; return t && t !== "Working…" ? { t, warn: p.classList.contains("warn") } : false; })()`),
-    "the popup's result line", 30000);
-    check(!line.warn, `reddit save ${round}: the popup reports success (it said: ${line.t})`);
-    check(line.t.includes("2 more comments weren't fetched"), `reddit save ${round}: the popup notes unfetched comments (it said: ${line.t})`);
-    // Chrome's own count of finished reddit saves: two per round. The files on disk can't
-    // show a second round happened — the first left the very same bytes
-    const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123", state: "complete" }).then((d) => d.length)`)
-      .then((n) => n >= 2 * round && n), `round ${round}'s two finished downloads`).catch((e) => e.message);
-    check(done === 2 * round, `reddit save ${round}: Chrome finished ${2 * round} reddit downloads so far (${done})`);
-    await sleep(500); // a duplicate save would have a moment to land
-    check(JSON.stringify(landed()) === JSON.stringify(["reddit-abc123.json", "reddit-abc123.md"]),
-      `reddit save ${round}: exactly reddit-abc123.json + .md on disk, no renamed copy (found: ${landed().join(", ")})`);
-    if (existsSync(join(downloads, "reddit-abc123.json"))) {
-      check(readFileSync(join(downloads, "reddit-abc123.json"), "utf8") === redditBody, `reddit save ${round}: the json is the post's json, byte for byte`);
+  // one module's scenario: a throw inside it (a page that never wired, a target that never
+  // showed) fails that scenario and the run moves on to the next one; its cleanup, and the
+  // closing of any popup it left open, run either way. A dead browser (fatal) ends the run
+  const scenario = async (name, body, cleanup) => {
+    try {
+      await body();
+    } catch (e) {
+      if (e && e.fatal) throw e;
+      check(false, `${name}: the scenario stopped: ${(e && e.message) || e}`);
+    } finally {
+      if (cleanup) await cleanup().catch(soft((e) => console.log(`     ${name}: its cleanup failed: ${e.message}`)));
+      for (const t of (await cdp.send("Target.getTargets")).targetInfos) {
+        if (t.url.endsWith("/src/popup/popup.html")) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+      }
     }
-    await evalIn(popup.sessionId, "window.close()").catch(() => {});
-    await waitFor(async () => !(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.url.endsWith("/src/popup/popup.html")), "the popup to close");
-  }
+  };
+
+  // ---- reddit: popup -> worker -> offscreen document -> worker downloads, twice ----
+  await scenario("reddit", async () => {
+    console.log("smoke: reddit save");
+    await open(REDDIT_POST);
+    for (const round of [1, 2]) {
+      const popup = await clickPopup("Save this post as Markdown");
+      const line = await waitFor(() => evalIn(popup.sessionId,
+        `(() => { const p = document.getElementById("card").lastElementChild; const t = p && !p.hidden ? p.textContent : ""; return t && t !== "Working…" ? { t, warn: p.classList.contains("warn") } : false; })()`),
+      "the popup's result line", 30000);
+      check(!line.warn, `reddit save ${round}: the popup reports success (it said: ${line.t})`);
+      check(line.t.includes("2 more comments weren't fetched"), `reddit save ${round}: the popup notes unfetched comments (it said: ${line.t})`);
+      // Chrome's own count of finished reddit saves: two per round. The files on disk can't
+      // show a second round happened — the first left the very same bytes
+      const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123", state: "complete" }).then((d) => d.length)`)
+        .then((n) => n >= 2 * round && n), `round ${round}'s two finished downloads`).catch(soft((e) => e.message));
+      check(done === 2 * round, `reddit save ${round}: Chrome finished ${2 * round} reddit downloads so far (${done})`);
+      await sleep(500); // a duplicate save would have a moment to land
+      // its own files only: no scenario's position in the run depends on another's downloads
+      const mine = landed().filter((f) => f.startsWith("reddit-"));
+      check(JSON.stringify(mine) === JSON.stringify(["reddit-abc123.json", "reddit-abc123.md"]),
+        `reddit save ${round}: exactly reddit-abc123.json + .md on disk, no renamed copy (found: ${mine.join(", ")})`);
+      if (existsSync(join(downloads, "reddit-abc123.json"))) {
+        check(readFileSync(join(downloads, "reddit-abc123.json"), "utf8") === redditBody, `reddit save ${round}: the json is the post's json, byte for byte`);
+      }
+      await evalIn(popup.sessionId, "window.close()").catch(() => {});
+      await waitFor(async () => !(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.url.endsWith("/src/popup/popup.html")), "the popup to close");
+    }
+  });
 
   // ---- discord: popup -> worker injects -> bridge -> export tab; the zip's first try is
   // cancelled, so the part's link must take a click to save it (the export tab's listener) ----
-  console.log("smoke: discord save");
-  await extEval(`(() => {
-    self.smokeCancelArmed = true;
-    chrome.downloads.onCreated.addListener((d) => { if (self.smokeCancelArmed) { self.smokeCancelArmed = false; chrome.downloads.cancel(d.id); } });
-    return true; })()`);
-  const dm = await open(DISCORD_DM);
-  const launcher = await clickPopup("Save this conversation");
-  // a launch closes the popup; a refusal keeps it open with a warning that says why
-  const launched = await waitFor(async () => {
-    if (!(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.targetId === launcher.targetId)) return "closed";
-    const warn = await evalIn(launcher.sessionId, `document.querySelector("#card p.warn")?.textContent || ""`).catch(() => "");
-    return warn && `warned: ${warn}`;
-  }, "the popup to close (launched) or warn", 30000).catch((e) => e.message);
-  check(launched === "closed", `discord: the popup launches the save (${launched})`);
-  await waitFor(() => evalIn(dm.sessionId, `document.documentElement.dataset.leketBridge === "1"`), "the bridge on the Discord tab");
-  // what the collector posts when its Save is pressed (its panel needs Discord's own app)
-  await evalIn(dm.sessionId, `window.postMessage({ type: "leket:export", id: 1, file: "discord-smoke-111.json",
-    attachments: true, json: ${JSON.stringify(JSON.stringify(discordExport))} }, location.origin), true`);
-  const tab = await target((s) => s.type === "page" && s.url.includes("/src/modules/discord/export.html"), "the export tab");
-  const link = `document.querySelector("#downloads a")`;
-  const first = await waitFor(() => evalIn(tab.sessionId, `${link}?.textContent.includes("didn't finish") && ${link}.textContent`),
-    "the cancelled part's link to say it didn't finish", 30000);
-  console.log(`     the cancelled first try shows on its link: ${first}`);
-  await evalIn(tab.sessionId, `${link}.click(), true`);
-  // saved: the link says so, or the summary closed the tab — it closes only once every
-  // part's saved() hook ran, which only the page's click listener can bring about here
-  // (a bare a[download] click saves a file but never tells the page)
-  const after = await waitFor(async () => {
-    if (!sessions.get(tab.targetId)) return { saved: true, how: "the export tab closed itself: every part saved" };
-    const t = await evalIn(tab.sessionId, `${link}?.textContent || ""`);
-    return t.endsWith("— saved") && { saved: true, how: t };
-  }, "the clicked part to save", 30000).catch((e) => ({ saved: false, how: e.message }));
-  check(after.saved, `discord: a click on the part's link saves it (${after.how})`);
-  const zips = landed().filter((f) => f.endsWith(".zip"));
-  if (check(zips.length === 1, `discord: one zip on disk (found: ${zips.join(", ") || "none"})`)) {
-    const names = JSON.parse(execFileSync("python3", ["-I", "-c",
-      "import json,sys,zipfile; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))", join(downloads, zips[0])], { encoding: "utf8" }));
-    check(names.includes("discord-smoke-111.json"), "discord: the zip holds the messages json");
-    check(names.some((n) => n.endsWith("note.txt")), `discord: the zip holds the attachment (names: ${names.join(", ")})`);
-  }
+  await scenario("discord", async () => {
+    console.log("smoke: discord save");
+    await extEval(`(() => {
+      self.smokeCancelArmed = true;
+      chrome.downloads.onCreated.addListener((d) => { if (self.smokeCancelArmed) { self.smokeCancelArmed = false; chrome.downloads.cancel(d.id); } });
+      return true; })()`);
+    const dm = await open(DISCORD_DM);
+    const launcher = await clickPopup("Save this conversation");
+    // a launch closes the popup; a refusal keeps it open with a warning that says why
+    const launched = await waitFor(async () => {
+      if (!(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.targetId === launcher.targetId)) return "closed";
+      const warn = await evalIn(launcher.sessionId, `document.querySelector("#card p.warn")?.textContent || ""`).catch(() => "");
+      return warn && `warned: ${warn}`;
+    }, "the popup to close (launched) or warn", 30000).catch(soft((e) => e.message));
+    check(launched === "closed", `discord: the popup launches the save (${launched})`);
+    await waitFor(() => evalIn(dm.sessionId, `document.documentElement.dataset.leketBridge === "1"`), "the bridge on the Discord tab");
+    // what the collector posts when its Save is pressed (its panel needs Discord's own app)
+    await evalIn(dm.sessionId, `window.postMessage({ type: "leket:export", id: 1, file: "discord-smoke-111.json",
+      attachments: true, json: ${JSON.stringify(JSON.stringify(discordExport))} }, location.origin), true`);
+    const tab = await target((s) => s.type === "page" && s.url.includes("/src/modules/discord/export.html"), "the export tab");
+    const link = `document.querySelector("#downloads a")`;
+    const first = await waitFor(() => evalIn(tab.sessionId, `${link}?.textContent.includes("didn't finish") && ${link}.textContent`),
+      "the cancelled part's link to say it didn't finish", 30000);
+    console.log(`     the cancelled first try shows on its link: ${first}`);
+    await evalIn(tab.sessionId, `${link}.click(), true`);
+    // saved: the link says so, or the summary closed the tab — it closes only once every
+    // part's saved() hook ran, which only the page's click listener can bring about here
+    // (a bare a[download] click saves a file but never tells the page)
+    const after = await waitFor(async () => {
+      if (!sessions.get(tab.targetId)) return { saved: true, how: "the export tab closed itself: every part saved" };
+      const t = await evalIn(tab.sessionId, `${link}?.textContent || ""`);
+      return t.endsWith("— saved") && { saved: true, how: t };
+    }, "the clicked part to save", 30000).catch(soft((e) => ({ saved: false, how: e.message })));
+    check(after.saved, `discord: a click on the part's link saves it (${after.how})`);
+    const zips = landed().filter((f) => f.endsWith(".zip"));
+    if (check(zips.length === 1, `discord: one zip on disk (found: ${zips.join(", ") || "none"})`)) {
+      const names = JSON.parse(execFileSync("python3", ["-I", "-c",
+        "import json,sys,zipfile; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))", join(downloads, zips[0])], { encoding: "utf8" }));
+      check(names.includes("discord-smoke-111.json"), "discord: the zip holds the messages json");
+      check(names.some((n) => n.endsWith("note.txt")), `discord: the zip holds the attachment (names: ${names.join(", ")})`);
+    }
   // disarmed whatever happened above: a discord block that failed before its first
   // download must not leave the cancel waiting for a later scenario's
-  await extEval("self.smokeCancelArmed = false, true");
+  }, () => extEval("self.smokeCancelArmed = false, true"));
 
   // ---- claude sessions: popup -> the module's page -> a real export whose one part gets
-  // no word from Chrome, stops the run, then lands late and rebuilds the resume line.
-  // After this block: the files below would break the reddit block's exact-files check ----
-  console.log("smoke: claude sessions export");
-  await open(CLAUDE_CODE);
-  await clickPopup("Export sessions");
-  const sp = (await target((s) => s.type === "page" && s.url.includes("/src/modules/claude-sessions/page.html#export"), "the sessions page")).sessionId;
-  await wired(sp, "export-run", "sessions");
-  // two test-side levers, set after load (page.js looks both up at call time): the
-  // 15-minute no-word wait (NO_WORD_MS) becomes 0 ms, and the download call's answer is
-  // held until released — Chrome saves the file at once, but the page hears of it only
-  // after release, so it is silent first and its late end narrated after, every run
-  const levers = await evalIn(sp, `(() => {
-    const st = window.setTimeout;
-    window.setTimeout = (f, ms, ...a) => st(f, ms === ${NO_WORD_MS} ? 0 : ms, ...a);
-    const dl = chrome.downloads.download.bind(chrome.downloads);
-    const held = new Promise((r) => { window.smokeRelease = r; });
-    const hold = (req) => { const p = dl(req); return held.then(() => p); };
-    chrome.downloads.download = hold;
-    return chrome.downloads.download === hold; })()`);
-  if (!check(levers, "sessions: the smoke holds the page's download call (chrome.downloads.download is writable)")) throw new Error("no hold on the sessions page's download");
-  // the generator's whole file, script tail included: only paste.js's strip parses it.
-  // And a resume line from an earlier run, so the stop's recorded state (its pasted skip
-  // and part numbering) shows in both resume lines below, apart from the landed ids
-  await evalIn(sp, `document.getElementById("known").value = ${JSON.stringify(
-    `window.CLAUDE_EXPORT_KNOWN = ${JSON.stringify({ [KNOWN_SESSION]: "2021-01-02T00:00:00Z" })};\n(() => { console.log("the console script"); })();\n`)};
-    document.getElementById("resume").value = ${JSON.stringify(`window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 2;`)};
-    document.getElementById("export-run").click(), true`);
-  const status = `(() => { const p = document.getElementById("export-status"); return { t: p.hidden ? "" : p.textContent, cls: p.className }; })()`;
-  const resume = `document.getElementById("export-resume").textContent`;
-  const silent = await waitFor(() => evalIn(sp, status).then((s) => s.t.includes("got no word from Chrome") && s), "the part to go silent and stop the run", 30000)
-    .catch((e) => ({ t: e.message }));
-  check(/^Part claude-sessions-\S+-part03\.jsonl got no word from Chrome/.test(silent.t), `sessions: the silent part stops the run (it said: ${silent.t})`);
-  check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 2;`,
-    `sessions: the stop's resume line names only what the earlier run saved (${await evalIn(sp, resume)})`);
-  await evalIn(sp, "window.smokeRelease(), true");
-  const late = await waitFor(() => evalIn(sp, status).then((s) => s.t.endsWith("landed — the resume line below is updated.") && s), "the silent part to land late", 30000)
-    .catch((e) => ({ t: e.message, cls: "" }));
-  // every field the stop recorded shows here: message (the text's start), name (this
-  // branch, not the other-part one), cls, and state + ids (the rebuilt line)
-  check(late.t.startsWith(silent.t) && /The silent part \(claude-sessions-\S+-part03\.jsonl\) landed — /.test(late.t),
-    `sessions: the late landing appends to the stop message (it said: ${late.t})`);
-  check(late.cls === "warn", `sessions: the late line keeps the stop's warn class (${late.cls})`);
-  check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}","${NEW_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 3;`,
-    `sessions: the resume line is rebuilt with the landed part (${await evalIn(sp, resume)})`);
-  check(await evalIn(sp, `document.getElementById("export-failures").children.length`) === 0, "sessions: no session failed (the known one was skipped, not fetched)");
-  const parts = landed().filter((f) => f.startsWith("claude-sessions-"));
-  if (check(parts.length === 1 && /-part03\.jsonl$/.test(parts[0]), `sessions: one part on disk, no done marker (found: ${parts.join(", ") || "none"})`)) {
-    const [titles, ...events] = readFileSync(join(downloads, parts[0]), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    check(Object.keys(titles._titles || {}).length === 2, "sessions: the part opens with both sessions' titles");
-    check(events.length === 1 && events[0]._session === NEW_SESSION, `sessions: the part holds the new session's one event (${events.length})`);
-  }
+  // no word from Chrome, stops the run, then lands late and rebuilds the resume line ----
+  let sessionsPage = null; // for the cleanup: the levers come off the page whatever happened
+  await scenario("sessions", async () => {
+    console.log("smoke: claude sessions export");
+    await open(CLAUDE_CODE);
+    await clickPopup("Export sessions");
+    const sp = (await target((s) => s.type === "page" && s.url.includes("/src/modules/claude-sessions/page.html#export"), "the sessions page")).sessionId;
+    sessionsPage = sp;
+    await wired(sp, "export-run", "sessions");
+    // two test-side levers, set after load (page.js looks both up at call time): the
+    // 15-minute no-word wait (NO_WORD_MS) becomes 0 ms, and the download call's answer is
+    // held until released — Chrome saves the file at once, but the page hears of it only
+    // after release, so it is silent first and its late end narrated after, every run
+    const levers = await evalIn(sp, `(() => {
+      const st = window.setTimeout;
+      window.setTimeout = (f, ms, ...a) => st(f, ms === ${NO_WORD_MS} ? 0 : ms, ...a);
+      const dl = chrome.downloads.download.bind(chrome.downloads);
+      const held = new Promise((r) => { window.smokeRelease = r; });
+      const hold = (req) => { const p = dl(req); return held.then(() => p); };
+      chrome.downloads.download = hold;
+      // the cleanup's undo: the page's own timer and download call back in place
+      window.smokeRestore = () => { window.setTimeout = st; chrome.downloads.download = dl; };
+      return chrome.downloads.download === hold; })()`);
+    if (!check(levers, "sessions: the smoke holds the page's download call (chrome.downloads.download is writable)")) throw new Error("no hold on the sessions page's download");
+    // the generator's whole file, script tail included: only paste.js's strip parses it.
+    // And a resume line from an earlier run, so the stop's recorded state (its pasted skip
+    // and part numbering) shows in both resume lines below, apart from the landed ids
+    await evalIn(sp, `document.getElementById("known").value = ${JSON.stringify(
+      `window.CLAUDE_EXPORT_KNOWN = ${JSON.stringify({ [KNOWN_SESSION]: "2021-01-02T00:00:00Z" })};\n(() => { console.log("the console script"); })();\n`)};
+      document.getElementById("resume").value = ${JSON.stringify(`window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 2;`)};
+      document.getElementById("export-run").click(), true`);
+    const status = `(() => { const p = document.getElementById("export-status"); return { t: p.hidden ? "" : p.textContent, cls: p.className }; })()`;
+    const resume = `document.getElementById("export-resume").textContent`;
+    const silent = await waitFor(() => evalIn(sp, status).then((s) => s.t.includes("got no word from Chrome") && s), "the part to go silent and stop the run", 15000)
+      .catch(soft((e) => ({ t: e.message })));
+    check(/^Part claude-sessions-\S+-part03\.jsonl got no word from Chrome/.test(silent.t), `sessions: the silent part stops the run (it said: ${silent.t})`);
+    check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 2;`,
+      `sessions: the stop's resume line names only what the earlier run saved (${await evalIn(sp, resume)})`);
+    await evalIn(sp, "window.smokeRelease(), true");
+    const late = await waitFor(() => evalIn(sp, status).then((s) => s.t.endsWith("landed — the resume line below is updated.") && s), "the silent part to land late", 15000)
+      .catch(soft((e) => ({ t: e.message, cls: "" })));
+    // every field the stop recorded shows here: message (the text's start), name (this
+    // branch, not the other-part one), cls, and state + ids (the rebuilt line)
+    check(late.t.startsWith(silent.t) && /The silent part \(claude-sessions-\S+-part03\.jsonl\) landed — /.test(late.t),
+      `sessions: the late landing appends to the stop message (it said: ${late.t})`);
+    check(late.cls === "warn", `sessions: the late line keeps the stop's warn class (${late.cls})`);
+    check(await evalIn(sp, resume) === `window.CLAUDE_EXPORT_SKIP = ["${EARLIER_SESSION}","${NEW_SESSION}"]; window.CLAUDE_EXPORT_PART_START = 3;`,
+      `sessions: the resume line is rebuilt with the landed part (${await evalIn(sp, resume)})`);
+    check(await evalIn(sp, `document.getElementById("export-failures").children.length`) === 0, "sessions: no session failed (the known one was skipped, not fetched)");
+    const parts = landed().filter((f) => f.startsWith("claude-sessions-"));
+    if (check(parts.length === 1 && /-part03\.jsonl$/.test(parts[0]), `sessions: one part on disk, no done marker (found: ${parts.join(", ") || "none"})`)) {
+      const [titles, ...events] = readFileSync(join(downloads, parts[0]), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      check(Object.keys(titles._titles || {}).length === 2, "sessions: the part opens with both sessions' titles");
+      check(events.length === 1 && events[0]._session === NEW_SESSION, `sessions: the part holds the new session's one event (${events.length})`);
+    }
+  }, async () => {
+    if (sessionsPage) await evalIn(sessionsPage, "window.smokeRestore?.(), true");
+  });
 
-  // ---- claude chat: popup -> the module's page, which parses a pasted whole file ----
-  console.log("smoke: claude chat outputs");
-  await open(CLAUDE_CHAT);
-  await clickPopup("Save chat outputs");
-  const cp = (await target((s) => s.type === "page" && /\/src\/modules\/claude-chat\/page\.html\?tab=\d+$/.test(s.url), "the chat outputs page (with its tab id)")).sessionId;
-  await wired(cp, "outputs-run", "chat");
-  // an empty list in the generator's whole-file form: past the strip it parses and is
-  // refused as empty; without page.js or its imports the click says nothing at all
-  await evalIn(cp, `document.getElementById("chats").value = ${JSON.stringify(
-    `window.CLAUDE_OUTPUT_CHATS = [];\n(() => { console.log("the console script"); })();\n`)};
-    document.getElementById("outputs-run").click(), true`);
-  const said = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); return !p.hidden && p.textContent; })()`),
-    "the chat page's status line", 15000).catch((e) => e.message);
-  check(said.startsWith("The chat list is empty."), `chat: the page parses the pasted file and refuses the empty list (it said: ${said})`);
+  // ---- claude chat: popup -> the module's page, which parses a pasted whole file, then
+  // runs a real list: org probe on the tab, list, download, one failed chat, the file ----
+  await scenario("chat", async () => {
+    console.log("smoke: claude chat outputs");
+    const chatTab = await open(CLAUDE_CHAT);
+    await clickPopup("Save chat outputs");
+    const cp = (await target((s) => s.type === "page" && /\/src\/modules\/claude-chat\/page\.html\?tab=\d+$/.test(s.url), "the chat outputs page (with its tab id)")).sessionId;
+    await wired(cp, "outputs-run", "chat");
+    // an empty list in the generator's whole-file form: past the strip it parses and is
+    // refused as empty; without page.js or its imports the click says nothing at all
+    await evalIn(cp, `document.getElementById("chats").value = ${JSON.stringify(
+      `window.CLAUDE_OUTPUT_CHATS = [];\n(() => { console.log("the console script"); })();\n`)};
+      document.getElementById("outputs-run").click(), true`);
+    const said = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); return !p.hidden && p.textContent; })()`),
+      "the chat page's status line", 15000).catch(soft((e) => e.message));
+    check(said.startsWith("The chat list is empty."), `chat: the page parses the pasted file and refuses the empty list (it said: ${said})`);
+
+    // the real run: the probe needs the tab's org call in its timeline first
+    const seen = await waitFor(() => evalIn(chatTab.sessionId, `performance.getEntriesByType("resource").some((e) => e.name.includes("/api/organizations/"))`),
+      "the chat tab's org call in its resource timeline").catch(soft(() => false));
+    check(seen === true, "chat: the chat tab's own org call is in its resource timeline");
+    // the empty list's line is blanked with the click, so the wait reads this run's end
+    await evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); p.textContent = ""; p.className = "";
+      document.getElementById("chats").value = ${JSON.stringify(JSON.stringify([[CHAT_OK, "a chat", "smoke"], [CHAT_GONE, "a gone chat", "smoke"]]))};
+      document.getElementById("outputs-run").click(); return true; })()`);
+    const end = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status");
+      const t = p.hidden ? "" : p.textContent;
+      return (t.startsWith("Done:") || p.className === "warn") && { t, cls: p.className,
+        fails: [...document.getElementById("outputs-failures").children].map((li) => li.textContent) }; })()`),
+    "the chat page's end line", 15000).catch(soft((e) => ({ t: e.message, fails: [] })));
+    const name = landed().find((f) => f.startsWith("claude-chat-outputs-"));
+    check(end.t === `Done: 2 chats, 1 files saved to ${name}. 1 chat(s) failed — their entries carry an "error".` && end.cls === "warn",
+      `chat: the run probes the org, saves one output and names the failed chat (it said: ${end.t} [${end.cls}])`);
+    check(JSON.stringify(end.fails) === JSON.stringify([`${CHAT_GONE}: 404 list-files?prefix=`]), `chat: the failure list names the gone chat (${JSON.stringify(end.fails)})`);
+    if (check(/^claude-chat-outputs-\d{4}-\d{2}-\d{2}\.json$/.test(name || ""), `chat: the dated file is on disk (${name})`)) {
+      const [ok, gone] = JSON.parse(readFileSync(join(downloads, name), "utf8"));
+      check(ok?.chat === CHAT_OK && ok.files.length === 1 && ok.files[0].path === REPORT_PATH && ok.files[0].text === REPORT && !ok.files[0].size_mismatch,
+        "chat: the file holds the one output, as text, at its size (the upload was not fetched)");
+      check(gone?.chat === CHAT_GONE && gone.error === "404 list-files?prefix=" && gone.files.length === 0, `chat: the gone chat's entry carries its error (${gone?.error})`);
+    }
+  });
 
   // ---- etsy: popup -> the module's page, prefilled from the tab, which pages the synthetic
   // message-list endpoint under a stored redact config whose name collides with Etsy's own
-  // words, and saves the file twice: the second save overwrites the first ----
-  console.log("smoke: etsy save");
-  await extEval(`chrome.storage.local.set({ etsyRedact: ${JSON.stringify(ETSY_REDACT)} }).then(() => true)`);
-  const etsyTab = await open(ETSY_CONVO);
-  await clickPopup("Save conversations");
-  const etsyPageTarget = await target((s) => s.type === "page" && /\/src\/modules\/etsy\/page\.html\?tab=\d+$/.test(s.url), "the Etsy page (with its tab id)");
-  const ep = etsyPageTarget.sessionId;
-  const etsyFirst = {}; // round 1's file name and extracted_at
-  await wired(ep, "etsy-run", "etsy");
-  const prefilled = await waitFor(() => evalIn(ep, `document.getElementById("ids").value`), "the ids box to prefill from the tab")
-    .catch((e) => e.message);
-  check(prefilled === ETSY_ID, `etsy: the ids box prefills from the tab's address (${prefilled})`);
-  const etsyState = `(() => { const s = document.getElementById("etsy-status"), r = document.getElementById("etsy-redact"), b = document.getElementById("etsy-bar");
-    return { t: s.hidden ? "" : s.textContent, cls: s.className, rt: r.hidden ? "" : r.textContent, rcls: r.className,
-      bar: b.hidden ? null : [b.value, b.max], fails: document.getElementById("etsy-fails").children.length }; })()`;
-  const expectedRedact = redactSetup(ETSY_REDACT).line;
-  for (const round of [1, 2]) {
-    // the lines are blanked with the click: round 1's "Saved" stays up until the run's
-    // first progress line, and round 2 must read its own end, not that one
-    await evalIn(ep, `(() => { for (const id of ["etsy-status", "etsy-redact"]) { const p = document.getElementById(id); p.textContent = ""; p.className = ""; }
-      document.getElementById("etsy-run").click(); return true; })()`);
-    const end = await waitFor(() => evalIn(ep, etsyState).then((s) => (s.t.startsWith("Saved") || s.t.startsWith("The download") || s.cls === "warn") && s),
-      `etsy save ${round}'s end line`, 30000).catch((e) => ({ t: e.message }));
-    check(end.t === "Saved 1 conversation, 2 messages. Redact: on." && end.cls === "ok",
-      `etsy save ${round}: the page reports a clean save (it said: ${end.t} [${end.cls}])`);
-    // the collision warning, spelled out here as well as compared: the page's line is the
-    // pure chain's line, and that line names the colliding words with the warn class
-    check(end.rt === expectedRedact.text && end.rcls === expectedRedact.cls,
-      `etsy save ${round}: the redact line is the config's line (it said: ${end.rt} [${end.rcls}])`);
-    check(end.rt?.includes("(etsy, www.etsy.com, ") && end.rcls === "warn",
-      `etsy save ${round}: the redact line warns of the collision with Etsy's own words`);
-    check(JSON.stringify(end.bar) === "[1,1]" && end.fails === 0, `etsy save ${round}: the bar is full and nothing failed (bar ${JSON.stringify(end.bar)}, ${end.fails} failures)`);
-    const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-", state: "complete" }).then((d) => d.length)`)
-      .then((n) => n >= round && n), `etsy round ${round}'s finished download`).catch((e) => e.message);
-    check(done === round, `etsy save ${round}: Chrome finished ${round} Etsy download(s) so far (${done})`);
-    await sleep(500); // a renamed copy would have a moment to land
-    // the file is named by the UTC date: round 1's name, plus today's when midnight UTC
-    // fell between the rounds (then round 2's file is the new one, beside round 1's)
-    const files = landed().filter((f) => f.startsWith("etsy-"));
-    // (read from disk, not recomputed here, so a midnight between the page's naming and
-    // this check can't redden it): sorted, a later date sorts after round 1's
-    const dated = (f) => /^etsy-conversations-\d{4}-\d{2}-\d{2}\.json$/.test(f || "");
-    const name = files[files.length - 1];
-    const shapeOk = round === 1 ? files.length === 1
-      : files[0] === etsyFirst.name && (files.length === 1 || (files.length === 2 && name > etsyFirst.name));
-    if (check(shapeOk && files.every(dated),
-      `etsy save ${round}: one dated file on disk, no renamed copy (found: ${files.join(", ") || "none"})`)) {
-      const text = readFileSync(join(downloads, name), "utf8");
-      const saved = JSON.parse(text);
-      check(saved.redact === "on" && saved.conversations?.[0]?.messages?.length === 2,
-        `etsy save ${round}: the file says redact on and holds the conversation's 2 messages`);
-      check(!/betsy/i.test(text) && text.includes("[redacted]"), `etsy save ${round}: the configured name is redacted in the file`);
-      // round 2's file is round 2's: the overwrite replaced round 1's content
-      if (round === 1) Object.assign(etsyFirst, { name, at: saved.extracted_at });
-      else check(typeof saved.extracted_at === "string" && saved.extracted_at !== etsyFirst.at,
-        `etsy save 2: the file is the second save's (extracted_at ${etsyFirst.at} -> ${saved.extracted_at})`);
+  // words, and saves over one file four times: redact on twice, then off from an emptied
+  // box, then with a second id that fails ----
+  const etsyTargets = []; // for the cleanup: the tabs this scenario opened
+  await scenario("etsy", async () => {
+    console.log("smoke: etsy save");
+    await extEval(`chrome.storage.local.set({ etsyRedact: ${JSON.stringify(ETSY_REDACT)} }).then(() => true)`);
+    const etsyTab = await open(ETSY_CONVO);
+    etsyTargets.push(etsyTab);
+    await clickPopup("Save conversations");
+    const etsyPageTarget = await target((s) => s.type === "page" && /\/src\/modules\/etsy\/page\.html\?tab=\d+$/.test(s.url), "the Etsy page (with its tab id)");
+    etsyTargets.push(etsyPageTarget);
+    const ep = etsyPageTarget.sessionId;
+    await wired(ep, "etsy-run", "etsy");
+    const prefilled = await waitFor(() => evalIn(ep, `document.getElementById("ids").value`), "the ids box to prefill from the tab")
+      .catch(soft((e) => e.message));
+    check(prefilled === ETSY_ID, `etsy: the ids box prefills from the tab's address (${prefilled})`);
+    const etsyState = `(() => { const s = document.getElementById("etsy-status"), r = document.getElementById("etsy-redact"), b = document.getElementById("etsy-bar");
+      return { t: s.hidden ? "" : s.textContent, cls: s.className, rt: r.hidden ? "" : r.textContent, rcls: r.className,
+        bar: b.hidden ? null : [b.value, b.max], fails: [...document.getElementById("etsy-fails").children].map((li) => li.textContent) }; })()`;
+    // one save: the box set to ids (null leaves it as it is), the lines blanked with the
+    // click — a round's "Saved" stays up until the next run's first progress line, and
+    // each round must read its own end — then its end line, Chrome's finished count and
+    // the file on disk
+    const first = {}; // round 1's file name and extracted_at
+    const save = async (round, ids) => {
+      await evalIn(ep, `(() => { for (const id of ["etsy-status", "etsy-redact"]) { const p = document.getElementById(id); p.textContent = ""; p.className = ""; }
+        ${ids === null ? "" : `document.getElementById("ids").value = ${JSON.stringify(ids)};`}
+        document.getElementById("etsy-run").click(); return true; })()`);
+      const end = await waitFor(() => evalIn(ep, etsyState).then((s) => (s.t.startsWith("Saved") || s.t.startsWith("The download") || (s.cls === "warn" && !s.t.startsWith("Conversation"))) && s),
+        `etsy save ${round}'s end line`, 30000).catch(soft((e) => ({ t: e.message, fails: [] })));
+      const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-", state: "complete" }).then((d) => d.length)`)
+        .then((n) => n >= round && n), `etsy round ${round}'s finished download`).catch(soft((e) => e.message));
+      check(done === round, `etsy save ${round}: Chrome finished ${round} Etsy download(s) so far (${done})`);
+      await sleep(500); // a renamed copy would have a moment to land
+      // one dated file, overwritten each round. Named by the UTC date, so a midnight UTC
+      // between rounds puts the later rounds' file beside round 1's; the name is read
+      // from disk, not recomputed here, so a midnight between the page's naming and this
+      // check can't redden it (sorted, a later date sorts after round 1's)
+      const files = landed().filter((f) => f.startsWith("etsy-"));
+      const name = files[files.length - 1];
+      const shapeOk = round === 1 ? files.length === 1
+        : files[0] === first.name && (files.length === 1 || (files.length === 2 && name > first.name));
+      let saved = null, text = "";
+      if (check(shapeOk && files.every((f) => /^etsy-conversations-\d{4}-\d{2}-\d{2}\.json$/.test(f)),
+        `etsy save ${round}: one dated file on disk, no renamed copy (found: ${files.join(", ") || "none"})`)) {
+        text = readFileSync(join(downloads, name), "utf8");
+        saved = JSON.parse(text);
+        // each round's file is that round's: the overwrite replaced the content, not just ran
+        if (round === 1) Object.assign(first, { name, at: saved.extracted_at });
+        else check(typeof saved.extracted_at === "string" && saved.extracted_at !== first.at,
+          `etsy save ${round}: the file is this save's (extracted_at ${first.at} -> ${saved.extracted_at})`);
+        first.at = saved.extracted_at;
+      }
+      return { end, saved, text };
+    };
+
+    // rounds 1 and 2: redact on, with a name that also catches "etsy"
+    const expectedRedact = redactSetup(ETSY_REDACT).line;
+    for (const round of [1, 2]) {
+      const { end, saved, text } = await save(round, null);
+      check(end.t === "Saved 1 conversation, 2 messages. Redact: on." && end.cls === "ok",
+        `etsy save ${round}: the page reports a clean save (it said: ${end.t} [${end.cls}])`);
+      // the collision warning, spelled out here as well as compared: the page's line is the
+      // pure chain's line (which a change to that chain moves too), and that line names
+      // the colliding words, each on its own, with the warn class
+      check(end.rt === expectedRedact.text && end.rcls === expectedRedact.cls,
+        `etsy save ${round}: the redact line is the config's line (it said: ${end.rt} [${end.rcls}])`);
+      const named = /\(([^)]*)\) — those read \[redacted\]/.exec(end.rt || "")?.[1].split(", ") || [];
+      check(named.includes("etsy") && named.includes("www.etsy.com") && end.rcls === "warn",
+        `etsy save ${round}: the redact line warns of the collision with Etsy's own words (named: ${named.join(", ") || "none"})`);
+      check(JSON.stringify(end.bar) === "[1,1]" && end.fails.length === 0, `etsy save ${round}: the bar is full and nothing failed (bar ${JSON.stringify(end.bar)}, ${end.fails.length} failures)`);
+      if (saved) {
+        check(saved.redact === "on" && saved.conversations?.[0]?.messages?.length === 2,
+          `etsy save ${round}: the file says redact on and holds the conversation's 2 messages`);
+        check(!/betsy/i.test(text) && text.includes("[redacted]"), `etsy save ${round}: the configured name is redacted in the file`);
+      }
     }
-  }
+
+    // round 3: no config, and an emptied box — the click falls back to the tab's
+    // conversation, and the off state is loud on both lines and in the file
+    await extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`);
+    {
+      const { end, saved, text } = await save(3, "");
+      check(end.t === "Saved 1 conversation, 2 messages. Redact: off (no etsyRedact config)." && end.cls === "warn",
+        `etsy save 3: an emptied box saves the tab's conversation, and an unredacted save warns (it said: ${end.t} [${end.cls}])`);
+      check(end.rt === "Redact: off — no etsyRedact config; the export is unredacted." && end.rcls === "warn",
+        `etsy save 3: the redact line says it is off (it said: ${end.rt} [${end.rcls}])`);
+      if (saved) check(saved.redact === "off (no etsyRedact config)" && /betsy/i.test(text), `etsy save 3: the file says redact off and is unredacted (${saved.redact})`);
+    }
+
+    // round 4: a second id whose first page fails — named on the end line, in the
+    // failure list and in the file
+    {
+      const { end, saved } = await save(4, `${ETSY_ID}, ${ETSY_GONE}`);
+      check(end.t === "Saved 2 conversations, 2 messages, 1 with errors (listed in the file). Redact: off (no etsyRedact config)." && end.cls === "warn",
+        `etsy save 4: the failed conversation reaches the end line (it said: ${end.t} [${end.cls}])`);
+      check(JSON.stringify(end.fails) === JSON.stringify([`${ETSY_GONE}: HTTP 500 at offset 0`]), `etsy save 4: the failure list names it (${JSON.stringify(end.fails)})`);
+      if (saved) check(saved.conversations?.[1]?.id === ETSY_GONE && saved.conversations[1].error === "HTTP 500 at offset 0",
+        `etsy save 4: the file carries its error (${saved.conversations?.[1]?.error})`);
+    }
   // nothing of this scenario reaches a later one: the stored config, its tabs
-  await extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`);
-  for (const t of [etsyTab, etsyPageTarget]) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+  }, async () => {
+    await extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`);
+    for (const t of etsyTargets) await cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+  });
 
   if (blocked.length) console.log(`smoke: blocked ${blocked.length} request(s) the synthetic web doesn't serve:\n  ${[...new Set(blocked)].join("\n  ")}`);
   console.log(failures.length ? `smoke: ${failures.length} FAILED` : "smoke: all passed");
