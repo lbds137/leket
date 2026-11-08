@@ -33,7 +33,7 @@ export function parseChats(text) {
   if (bad) {
     throw new Error(`"${bad[0]}" doesn't look like a chat id. Ids are 8-4-4-4-12 hex-and-dash uuids — paste the generated file as-is.`);
   }
-  if (!list.length) throw new Error("The chat list is empty — paste the generated file: the bare JSON array of [chat, name, source] triples.");
+  if (!list.length) throw new Error("The chat list is empty. Paste the generated file as-is, the whole window.CLAUDE_OUTPUT_CHATS = [...]; line, or the bare JSON array of [chat, name, source] triples.");
   return list;
 }
 

@@ -298,12 +298,15 @@ test("a hung events page ends as a timeout: the session fails, the run goes on t
   const hung = (u, opts) => new Promise((_, reject) => {
     opts.signal.addEventListener("abort", () => reject(opts.signal.reason));
   });
-  const routes = routesOneEvent([b]);
-  const fetch = (u, opts) => (u.includes("/sessions/A/") ? hung(u, opts) : standIn(routes)(u, opts));
+  // page 1 answers, page 2 hangs: the message names the page that hung
+  const first = standIn({
+    ...routesOneEvent([b]),
+    "https://claude.ai/v1/code/sessions/A/events?limit=500": () => ({ data: [ev({ p: 1 })], next_cursor: "c1" }),
+  });
+  const fetch = (u, opts) => (u.includes("/sessions/A/") && u.includes("cursor=") ? hung(u, opts) : first(u, opts));
   const { parts, markers, result } = await collect(sessionsOf(listed("A", "tA"), b), { fetch, timeoutMs: 1 });
-  assert.equal(result.failed.length, 1);
-  // the reason's wording is the engine's (node: "aborted due to timeout", Chrome: "signal timed out")
-  assert.match(result.failed[0], /^A: .*(timeout|timed out)/i);
+  assert.deepEqual(result.failed, ["A: events page 2 timed out after 0.001 s"]);
+  assert.equal(parts.flatMap((p) => p.lines).some((l) => l.includes('"_session":"A"')), false, "page 1's lines are discarded with the session");
   assert.equal(parts.flatMap((p) => p.lines).some((l) => /"_session":"B"/.test(l)), true, "the next session still lands");
   assert.equal(markers.length, 1, "the run reaches its marker");
 });
