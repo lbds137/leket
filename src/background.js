@@ -46,19 +46,29 @@ const launch = async (tabId, command) => {
 // lives here, the document's blob URL is same-origin, and download events keep the
 // worker alive for the length of the save. A popup closing mid-save costs only the
 // result line, never the file.
+const OFFSCREEN_PATH = "src/modules/reddit/offscreen.html";
+// Whether the offscreen document is open, the way the offscreen reference page
+// (developer.chrome.com, "Maintain the lifecycle" and "Before Chrome 116") does it:
+// runtime.getContexts from Chrome 116, the worker's clients below that. Not
+// offscreen.hasDocument: the page lists it as Chrome 150+, past the 109 floor.
+const offscreenOpen = async () => {
+  const url = chrome.runtime.getURL(OFFSCREEN_PATH);
+  if (chrome.runtime.getContexts) {
+    return (await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] })).length > 0;
+  }
+  return (await self.clients.matchAll()).some((c) => c.url === url);
+};
 let creatingOffscreen = null;
 const ensureOffscreen = async () => {
-  // an in-flight creation is awaited before anything else: hasDocument can report the
+  // an in-flight creation is awaited before anything else: the check can report the
   // document while its listener is not registered yet, and relaying into that gap is
   // a "receiving end does not exist" refusal
   if (creatingOffscreen) return creatingOffscreen;
-  // hasDocument, not getContexts (Chrome 116+): the floor stays at the offscreen API's
-  // own 109 (developer.chrome.com offscreen reference, Availability)
-  if (await chrome.offscreen.hasDocument()) return;
-  // two saves racing both see hasDocument false: the second waits on this same
+  if (await offscreenOpen()) return;
+  // two saves racing both see no document: the second waits on this same
   // creation instead of making a second document (Chrome allows only one)
   creatingOffscreen ||= chrome.offscreen.createDocument({
-    url: chrome.runtime.getURL("src/modules/reddit/offscreen.html"),
+    url: chrome.runtime.getURL(OFFSCREEN_PATH),
     reasons: ["BLOBS"],
     justification: "Fetch the open reddit post's JSON, render it as Markdown, and download both; the save must outlive the popup.",
   }).finally(() => { creatingOffscreen = null; });

@@ -6,6 +6,12 @@ import { FOLDER, MANIFEST, attachmentList, fetchable } from "./files.js";
 import { render } from "./render.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// a sleep that a stop cuts short
+const rest = (ms, signal) => new Promise((r) => {
+  const done = () => { clearTimeout(t); signal?.removeEventListener("abort", done); r(); };
+  const t = setTimeout(done, ms);
+  signal?.addEventListener("abort", done, { once: true });
+});
 
 // Pacing for the attachment fetches (build's concurrency and gap): two at a time, each
 // worker resting a jittered 0.5-1 s between files, so a large save doesn't pull from the
@@ -16,10 +22,15 @@ export const restBetweenFiles = () => 500 + Math.random() * 500;
 // `idle` ms is dropped and tried again (a stalled connection never ends by itself); an
 // expired or deleted link (403, 404) is not tried again. Discord's CDN answers 503/504 for
 // stretches at a time, so the retries back off: wait, 2×wait, 3×wait…
-export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, idle = 60000 } = {}) {
+// `signal` is the save's stop: it drops the try in flight and cuts a back-off short, and
+// the answer is then { stopped: true } (no error of its own: the stop is the reason).
+export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, idle = 60000, signal } = {}) {
   let last;
   for (let i = 0; i < tries; i++) {
+    if (signal?.aborted) return { stopped: true };
     const stop = new AbortController();
+    const halt = () => stop.abort(signal.reason);
+    signal?.addEventListener("abort", halt, { once: true });
     let timer;
     const quiet = () => {
       clearTimeout(timer);
@@ -50,10 +61,12 @@ export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, 
       if (expected && size !== expected) throw new Error(`got ${size} of ${expected} bytes`);
       return { blob: new Blob(pieces), crc };
     } catch (e) {
+      if (signal?.aborted) return { stopped: true };
       last = (stop.signal.aborted && stop.signal.reason && stop.signal.reason.message) || (e && e.message) || String(e);
-      if (i + 1 < tries) await sleep(wait * (i + 1));
+      if (i + 1 < tries) await rest(wait * (i + 1), signal);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", halt);
     }
   }
   return { error: last };
@@ -99,6 +112,9 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   let sinceSeal = [];
   const sealedSet = new Set();
   let stopped = false;
+  // the stop as a signal, for the fetches: a worker retrying a 503 stops at once
+  // instead of holding the manifest back through its back-off
+  const halt = new AbortController();
   let draining = null;
   // hands every sealed part over, one drain at a time; a caller arriving mid-drain waits
   // for it, which also covers anything sealed since it started. onPart false stops it —
@@ -122,6 +138,7 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
           entry.blob = null;
           if (ok === false) {
             stopped = true;
+            halt.abort();
             sealedParts.length = 0;
             // the failed part's own files are named by part, and the line must stay true
             // after the export tab has closed; failedPart is the same fact for the export
@@ -164,7 +181,7 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
       const i = next++;
       const r = records[i];
       fetchedLast = fetchable(r.url);
-      const res = fetchedLast ? await fetchFile(r.url, { fetchFn, wait, idle }) : { error: "not a Discord attachment link" };
+      const res = fetchedLast ? await fetchFile(r.url, { fetchFn, wait, idle, signal: halt.signal }) : { error: "not a Discord attachment link" };
       if (stopped && !got) {
         // the save stopped while this was being fetched: it never reaches a part
         r.error = res.error || STOP_ERROR;
@@ -233,7 +250,9 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   if (got) {
     for (let i = 0; i < records.length; i++) {
       if (!got[i]) continue;
-      zip.add(`${FOLDER}/${records[i].file}`, got[i].blob, got[i].crc);
+      // which part the file is in: the export tab downloads the parts after the build,
+      // and a file counts as saved only once its part is
+      records[i].part = zip.add(`${FOLDER}/${records[i].file}`, got[i].blob, got[i].crc);
       got[i] = null;
       onProgress({ phase: "zip", done: i + 1, total: records.length });
     }
@@ -245,6 +264,7 @@ export async function build(exp, { file, attachments = true, timeZone = "UTC", p
   if (stream) return { parts: handedOff.map(({ name, index }) => ({ name, index })), records,
     saved: records.length - failed, failed: records.filter((r) => r.error),
     leftBehind: records.filter((r) => r.error === STOP_ERROR).length };
-  const named = parts.map((blob, i) => ({ blob, name: parts.length === 1 ? `${base}.zip` : `${base}-part${i + 1}-of-${parts.length}.zip` }));
+  const named = parts.map((blob, i) => ({ blob, index: i + 1,
+    name: parts.length === 1 ? `${base}.zip` : `${base}-part${i + 1}-of-${parts.length}.zip` }));
   return { parts: named, records, saved: records.length - failed, failed: records.filter((r) => r.error), leftBehind: 0 };
 }

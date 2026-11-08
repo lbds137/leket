@@ -681,6 +681,9 @@
     const s = scroller();
     const before = seen.size;
     if (s) nudge(s);
+    // the step counts as it nudges, not when its wait ends: a Stop in the wait, then
+    // Auto-scroll again, must not push the long rest one step further back each time
+    const n = ++steps;
     const started = Date.now();
     const wait = () => {
       if (!timer) return;
@@ -702,7 +705,7 @@
         stopAuto();
         status.textContent += " — STALLED, not at the start: scroll up by hand, then Auto-scroll again";
       } else {
-        const ms = pause(++steps);
+        const ms = pause(n);
         // render() keeps the note on through any redraw until the rest is over
         nextStepAt = Date.now() + ms;
         if (ms >= LONG_REST[0]) { restUntil = nextStepAt; render(); }

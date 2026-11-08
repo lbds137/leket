@@ -5,7 +5,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const calls = { badges: [], scripts: [], tabsCreated: 0, tabsGets: 0 };
+import { existsSync } from "node:fs";
+
+const calls = { badges: [], scripts: [], tabsCreated: [], tabsGets: 0 };
+// a path the worker hands Chrome must name a real file in the extension
+const shipped = (path) => existsSync(new URL(`../${path}`, import.meta.url));
 let onMessageListener = null;
 let TAB_URL = "https://discord.com/channels/@me/1234567890";
 
@@ -23,7 +27,7 @@ globalThis.chrome = {
   },
   tabs: {
     get: async (id) => { calls.tabsGets += 1; return { id, url: TAB_URL }; },
-    create: async () => { calls.tabsCreated += 1; return { id: 99 }; },
+    create: async (o) => { calls.tabsCreated.push(o); return { id: 99 }; },
   },
   scripting: {
     executeScript: async (o) => calls.scripts.push(o),
@@ -43,7 +47,7 @@ const handled = (msg, sender) =>
 const reset = () => {
   calls.badges.length = 0;
   calls.scripts.length = 0;
-  calls.tabsCreated = 0;
+  calls.tabsCreated.length = 0;
   calls.tabsGets = 0;
   TAB_URL = "https://discord.com/channels/@me/1234567890";
 };
@@ -56,9 +60,10 @@ test("a launch on a conversation tab injects bridge then collector and answers o
   );
   assert.deepEqual(reply, { ok: true });
   assert.equal(calls.scripts.length, 2, "bridge and collector both injected");
-  assert.match(calls.scripts[0].files[0], /bridge\.js$/);
-  assert.equal(calls.scripts[1].world, "MAIN");
-  assert.equal(calls.scripts[1].target.tabId, 5);
+  assert.deepEqual(calls.scripts[0], { target: { tabId: 5 }, files: ["src/modules/discord/bridge.js"] },
+    "the bridge, in the isolated world");
+  assert.deepEqual(calls.scripts[1], { target: { tabId: 5 }, files: ["src/modules/discord/collector.js"], world: "MAIN" });
+  for (const s of calls.scripts) assert.ok(shipped(s.files[0]), `${s.files[0]} is not in the extension`);
   // the toolbar flag lands whatever the popup did: cleared on success (flag() calls
   // setBadgeText then setTitle, so the pair comes in that order)
   assert.deepEqual(calls.badges.slice(-2), [
@@ -108,5 +113,14 @@ test("the collector's Save handoff still opens the export tab beside it", async 
     { tab: { id: 3, index: 2, windowId: 1 } },
   );
   assert.deepEqual(reply, { ok: true });
-  assert.equal(calls.tabsCreated, 1);
+  assert.equal(calls.tabsCreated.length, 1);
+  const { url, index, windowId } = calls.tabsCreated[0];
+  // right of the Discord tab, in its window
+  assert.deepEqual([index, windowId], [3, 1]);
+  const u = new URL(url);
+  assert.equal(`${u.protocol}//${u.host}`, "chrome-extension://test-extension-id");
+  assert.equal(u.pathname, "/src/modules/discord/export.html");
+  assert.ok(shipped(u.pathname.slice(1)), "export.html is in the extension");
+  // the export tab finds the save by the Discord tab's id and the handoff key
+  assert.deepEqual(Object.fromEntries(u.searchParams), { tab: "3", key: "k" });
 });
