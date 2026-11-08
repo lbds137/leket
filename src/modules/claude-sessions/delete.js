@@ -60,7 +60,13 @@ export function confirmHits(stored, prefix, hits, typed) {
 export async function deleteAll(hits, { fetch: doFetch = fetch, timeoutMs = 60_000, onProgress } = {}) {
   const headers = { "anthropic-version": "2023-06-01" };
   const urlOf = (s) => `${API_ORIGIN}/v1/code/sessions/${encodeURIComponent(sid(s.id))}`;
-  const get = (s) => doFetch(urlOf(s), { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
+  // only the status matters: the body is cancelled unread, so the connection is freed
+  // instead of holding a stream nobody drains
+  const get = async (s) => {
+    const r = await doFetch(urlOf(s), { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
+    r.body?.cancel().catch(() => {});
+    return r;
+  };
   // a DELETE that throws or times out got no answer: it may still have reached the
   // server, so it is never reported as a plain failure
   const del = async (s) => {
@@ -107,15 +113,19 @@ export async function deleteAll(hits, { fetch: doFetch = fetch, timeoutMs = 60_0
   }
   const failed = [];
   let deleted = 1;
+  // of failed, the DELETEs with no answer: they may have been deleted, so the page
+  // counts them apart from the refusals
+  let unanswered = 0;
   if (onProgress) onProgress(1, hits.length); // the verified first delete counts too: the bar never jumps 0 → 2
   for (let i = 1; i < hits.length; i++) {
     try {
       await del(hits[i]);
       deleted++;
     } catch (e) {
+      if (e.unanswered) unanswered++;
       failed.push(`${hits[i].title}: ${e.message}`);
     }
     if (onProgress) onProgress(i + 1, hits.length);
   }
-  return { deleted, failed, stopped: false };
+  return { deleted, failed, unanswered, stopped: false };
 }

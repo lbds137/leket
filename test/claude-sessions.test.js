@@ -307,6 +307,26 @@ test("a read-back MISMATCH or throw at index 0 after a 2xx PUT stops with the ac
   assert.equal(checkThrew.ok, 0);
 });
 
+test("a later rename with no answer or an unverified check says it may have taken; a refusal doesn't", async () => {
+  const { fetch } = apiFetch([
+    ["PUT", "/v1/code/sessions/session_a", () => ({})],
+    ["GET", "/v1/code/sessions/session_a", () => ({ json: { response_shape: { title: "New a" } } })],
+    ["PUT", "/v1/code/sessions/session_b", () => { throw new Error("network down"); }],
+    ["PUT", "/v1/code/sessions/session_c", () => ({})],
+    ["GET", "/v1/code/sessions/session_c", () => ({ json: { response_shape: { title: "old c" } } })],
+    ["PUT", "/v1/code/sessions/session_d", () => ({ status: 500, text: "nope" })],
+  ]);
+  const done = await renameAll([["cse_a", "New a"], ["cse_b", "New b"], ["cse_c", "New c"], ["cse_d", "New d"]], { fetch });
+  assert.equal(done.stopped, false);
+  assert.equal(done.ok, 1);
+  assert.deepEqual(done.failed, [
+    "cse_b: no answer (network down) — it may have taken; check that session",
+    'cse_c: accepted, but its check failed (read back "old c") — it may have taken; check that session',
+    "cse_d: rename 500: nope",
+  ]);
+  assert.equal(done.uncertain, 2);
+});
+
 test("currentTitles reads each entry's title live, keyed by the id the list carries", async () => {
   const { calls, fetch } = apiFetch([
     ["GET", "/v1/code/sessions/session_a", () => ({ json: { response_shape: { title: "now a" } } })],
@@ -544,6 +564,34 @@ test("a DELETE with no answer is never a plain failure: it may have been deleted
   assert.equal(later.stopped, false);
   assert.equal(later.deleted, 2);
   assert.deepEqual(later.failed, ["p · b: no answer (network down) — it may have been deleted"]);
+});
+
+test("later DELETEs with no answer are counted apart from the refusals", async () => {
+  let gone = false;
+  const done = await deleteAll([session("cse_a", "p · a"), session("cse_b", "p · b"), session("cse_c", "p · c")], {
+    fetch: apiFetch([
+      ["DELETE", "/v1/code/sessions/session_a", () => { gone = true; return {}; }],
+      ["GET", "/v1/code/sessions/session_a", () => gone ? { status: 404 } : {}],
+      ["DELETE", "/v1/code/sessions/session_b", () => { throw new Error("network down"); }],
+      ["DELETE", "/v1/code/sessions/session_c", () => ({ status: 403, text: "no" })],
+    ]).fetch,
+  });
+  assert.equal(done.failed.length, 2);
+  assert.equal(done.unanswered, 1, "only the thrown DELETE may have happened; the 403 didn't");
+});
+
+test("the precheck and read-back GETs cancel the body they never read", async () => {
+  let gone = false;
+  const cancelled = [];
+  const fetch = async (url, opts = {}) => {
+    const method = opts.method || "GET";
+    if (method === "DELETE") { gone = true; return { ok: true, status: 200 }; }
+    const status = gone ? 404 : 200;
+    return { ok: status < 400, status, body: { cancel: async () => { cancelled.push(status); } } };
+  };
+  const done = await deleteAll([session("cse_a", "p · a")], { fetch });
+  assert.equal(done.deleted, 1);
+  assert.deepEqual(cancelled, [200, 404]);
 });
 
 test("a precheck GET that throws deletes nothing (no DELETE call made)", async () => {

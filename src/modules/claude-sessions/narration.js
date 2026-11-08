@@ -117,3 +117,25 @@ export function lateNote({ marker, ok, name, size, stopped, doneLine, savedMB, r
     resume: null,
   };
 }
+
+// The rename and delete runs' Done lines (an unstopped run; a stopped one prints its own
+// error). A result that may still have taken (no answer, or accepted but unverified) is
+// counted apart from the refusals: calling it "failed" would tell her it didn't happen.
+export function renameDoneLine({ ok, failed, uncertain = 0 }, total) {
+  if (!failed.length) return { text: `Done: ${ok}/${total} renamed, every one read back.`, cls: "ok" };
+  return {
+    text: `Done: ${ok}/${total} renamed and read back; ${failed.length - uncertain} failed`
+      + (uncertain ? `, ${uncertain} may have taken (no answer, or unverified — check those sessions)` : "")
+      + " (listed below).",
+    cls: "warn",
+  };
+}
+
+export function deleteDoneLine({ deleted, failed, unanswered = 0 }) {
+  return {
+    text: `Done: ${deleted} deleted (the first read back as gone; the rest on the server's OK), ${failed.length - unanswered} failed`
+      + (unanswered ? `, ${unanswered} got no answer (may have been deleted — check the session list)` : "")
+      + ".",
+    cls: failed.length ? "warn" : "ok",
+  };
+}

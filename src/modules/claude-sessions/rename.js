@@ -112,12 +112,22 @@ export async function renameAll(list, { fetch: doFetch = fetch, timeoutMs = 60_0
   };
   const failed = [];
   let ok = 0;
+  // later renames that may still have taken (no answer, or accepted but unverified):
+  // their lines say so themselves, and the page counts them apart from the refusals
+  let uncertain = 0;
   for (const [i, [id, title]] of list.entries()) {
     try {
       await rename(id, title);
       ok++;
     } catch (err) {
-      failed.push(`${id}: ${err.message}`);
+      if (i > 0 && (err.accepted || err.unanswered)) {
+        uncertain++;
+        failed.push(err.accepted
+          ? `${id}: accepted, but its check failed (${err.message}) — it may have taken; check that session`
+          : `${id}: no answer (${err.message}) — it may have taken; check that session`);
+      } else {
+        failed.push(`${id}: ${err.message}`);
+      }
       if (i === 0) {
         return { ok, failed, stopped: true,
           error: err.accepted
@@ -129,5 +139,5 @@ export async function renameAll(list, { fetch: doFetch = fetch, timeoutMs = 60_0
     }
     if (onProgress) onProgress(i + 1, list.length);
   }
-  return { ok, failed, stopped: false };
+  return { ok, failed, uncertain, stopped: false };
 }
