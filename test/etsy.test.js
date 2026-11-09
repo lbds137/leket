@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, ignoredTokens, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted }
+const { messagesIn, parseIds, ignoredTokens, ignoredLine, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -87,6 +87,29 @@ test("ignoredTokens names every token that is neither an id nor a conversation l
     ["12a", "x", "https://www.etsy.com/listing/6"]);
   assert.deepEqual(ignoredTokens("1, 2\n3"), []);
   assert.deepEqual(ignoredTokens(""), []);
+});
+
+test("a pasted sentence's wrapping punctuation doesn't hide an id or a link", () => {
+  assert.deepEqual(parseIds("(https://www.etsy.com/messages/123). <https://etsy.com/messages/9> \"77\"; 88."),
+    ["123", "9", "77", "88"]);
+  assert.deepEqual(ignoredTokens("(https://www.etsy.com/messages/123). <https://etsy.com/messages/9> \"77\"; 88."), []);
+});
+
+test("a comma inside a link doesn't split off a stray id", () => {
+  assert.deepEqual(parseIds("https://www.etsy.com/messages/9?x=1,2"), ["9"]);
+  assert.deepEqual(parseIds("1,2, https://www.etsy.com/messages/9?x=1,2,3"), ["1", "2", "9"]);
+});
+
+test("only an etsy.com link (or a bare /messages/ path) counts; the host is case-blind", () => {
+  assert.deepEqual(ignoredTokens("https://example.com/messages/9 https://etsy.com.evil.example/messages/8"),
+    ["https://example.com/messages/9", "https://etsy.com.evil.example/messages/8"]);
+  assert.deepEqual(parseIds("HTTPS://WWW.ETSY.COM/messages/7 https://www.etsy.com/Messages/6"), ["7", "6"]);
+});
+
+test("ignoredLine names up to five tokens, then counts the rest", () => {
+  assert.equal(ignoredLine(["a"]), 'Not a conversation id or link: "a". Give ids (123456789) or etsy.com/messages/<id> links, then save again.');
+  assert.equal(ignoredLine(["a", "b", "c", "d", "e", "f", "g"]),
+    'Not a conversation id or link: "a", "b", "c", "d", "e", and 2 more. Give ids (123456789) or etsy.com/messages/<id> links, then save again.');
 });
 
 test("two consecutive pages adding nothing stop the walk, and pages counts every page", async () => {

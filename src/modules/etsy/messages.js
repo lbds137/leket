@@ -14,11 +14,16 @@ const messagesIn = (node, out = []) => {
 
 // ids from the box, else the open conversation's address (etsy.com/messages/<id>), else
 // nothing — the caller narrates the stop (the console's prompt, then alert)
-// A token is a bare id or a conversation link (etsy.com/messages/<id>, any query or
-// fragment); the first of each id is kept, so a repeat is not exported twice.
-const tokensOf = (text) => (text || "").split(/[\s,]+/).filter(Boolean);
+// A token is a bare id or a conversation link (an etsy.com host, or none, then
+// /messages/<id>, any query or fragment); the first of each id is kept, so a repeat is
+// not exported twice. Tokens split on whitespace; commas split only a token with no "/",
+// so a comma in a link's query can't split off a stray id. A pasted sentence's wrapping
+// punctuation — (link). <link> "77"; — is trimmed first.
+const unwrap = (t) => t.replace(/^[(<"'[]+/, "").replace(/[.,;:)>"'\]]+$/, "");
+const tokensOf = (text) => (text || "").split(/\s+/).map(unwrap)
+  .flatMap((t) => t.includes("/") ? [t] : t.split(",").map(unwrap)).filter(Boolean);
 const idOf = (token) => /^\d+$/.test(token) ? token
-  : (token.match(/(?:^|\/)messages\/(\d+)(?=[/?#]|$)/) || [])[1] || null;
+  : (token.match(/^(?:(?:https?:\/\/)?(?:[\w-]+\.)*etsy\.com)?\/messages\/(\d+)(?:[/?#]|$)/i) || [])[1] || null;
 const parseIds = (text, pathname = "") => {
   const ids = [...new Set(tokensOf(text).map(idOf).filter(Boolean))];
   if (ids.length) return ids;
@@ -28,6 +33,9 @@ const parseIds = (text, pathname = "") => {
 // the tokens parseIds drops: the page refuses to run on them rather than export a
 // partial set under a green line
 const ignoredTokens = (text) => tokensOf(text).filter((t) => !idOf(t));
+const ignoredLine = (ignored) => "Not a conversation id or link: "
+  + ignored.slice(0, 5).map((t) => `"${t}"`).join(", ") + (ignored.length > 5 ? `, and ${ignored.length - 5} more` : "")
+  + ". Give ids (123456789) or etsy.com/messages/<id> links, then save again.";
 
 const collectConversations = async (ids, {
   fetch = (...args) => globalThis.fetch(...args),
@@ -279,4 +287,4 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
 // an unparseable export never replaces a same-day good one: it lands beside it
 const conflictActionFor = (sound) => (sound ? "overwrite" : "uniquify");
 
-export { messagesIn, parseIds, ignoredTokens, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted };
+export { messagesIn, parseIds, ignoredTokens, ignoredLine, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted };
