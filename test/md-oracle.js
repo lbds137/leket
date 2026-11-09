@@ -91,7 +91,7 @@ export function reading(cm, md, depth = 0) {
     if (n.type === "code_block") {
       lit = lit.split("\n").map((l) => (/^[ \t]*(`{3,}|~{3,})/.test(l) ? l.trimStart() : l)).join("\n");
     }
-    out.push([n.type, lit, n.info, n.level, n.listData && JSON.stringify(n.listData), n.destination]);
+    out.push([n.type, lit, n.info, n.level, n.listType, n.listTight, n.listStart, n.listDelimiter, n.destination, n.title]);
   }
   return JSON.stringify(out);
 }
