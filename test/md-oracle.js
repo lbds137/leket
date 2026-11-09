@@ -10,6 +10,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const COMMONMARK = "commonmark@0.31.2";
+// its dependencies, pinned too (it asks for ~ ranges), so a later release of one can't
+// move the oracle
+const DEPS = ["entities@3.0.1", "mdurl@1.0.1", "minimist@1.2.8"];
 
 export function loadCommonmark() {
   const version = COMMONMARK.split("@")[1];
@@ -19,11 +22,11 @@ export function loadCommonmark() {
   if (!installed()) {
     mkdirSync(dir, { recursive: true });
     try {
-      execFileSync("npm", ["install", "--prefix", dir, "--no-save", "--no-audit", "--no-fund", COMMONMARK],
+      execFileSync("npm", ["install", "--prefix", dir, "--no-save", "--no-audit", "--no-fund", COMMONMARK, ...DEPS],
         { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
     } catch (e) {
       throw new Error(`the CommonMark oracle needs ${COMMONMARK} and npm couldn't install it into ${dir} `
-        + `(network down?). Run: npm install --prefix "${dir}" --no-save ${COMMONMARK} — `
+        + `(network down?). Run: npm install --prefix "${dir}" --no-save ${[COMMONMARK, ...DEPS].join(" ")} — `
         + `or set LEKET_ORACLE_CACHE to a directory that has it. npm said: ${e.stderr || e.message}`);
     }
     if (!installed()) throw new Error(`npm reported success but ${pkg} isn't ${COMMONMARK}`);
@@ -49,7 +52,7 @@ export function rawHtml(cm, md) {
 export function linesKept(input, output) {
   const inn = input.split(/\r\n|\r|\n/);
   const out = output.split(/\r\n|\r|\n/);
-  if (out.length !== inn.length && out.length !== inn.length + 1) return false;
+  if (out.length !== inn.length && !(out.length === inn.length + 1 && /^[ >]*(`{3,}|~{3,})$/.test(out[inn.length]))) return false;
   return inn.every((l, k) => {
     const back = out[k].replace(/&lt;/g, "<");
     return back === l || back.replace("\\[", "[") === l;
@@ -75,7 +78,8 @@ const PREFIXES = ["", "", "", "> ", ">", "> > ", "- ", "* ", "1. ", "2. ", "10. 
   "    ", "     ", "\t", " \t", "-\t", "1.\t", "- \t", "> - ", "> 1. ", "> 2. ", "- > ", "1. > ", "  - ", "   > "];
 const CONTENTS = ["```", "````", "~~~", "``` js", "```x`", "<b>", "<div>", "<!-- c", "<x> y", "a <b> c", "`", "``", "a `b",
   "`<b>`", "a ` <b>", "\\`", "\\<b>", "---", "===", "***", "--", "=", "-", "1.", "# h", "#", "text", "x", "", "\t<b>",
-  "    <b>", "- ```", "2. ```", "> ```", "> <b>", "[a]: <b>", "[a]: b", "[a]", "a\r<b>", "\t\t<b>"];
+  "    <b>", "- ```", "2. ```", "> ```", "> <b>", "[a]: <b>", "[a]: b", "[a]", "a\r<b>", "\t\t<b>",
+  "[a](", "![a](", "[a][", "[`]: /u", "[a](`)", "[a](b \"`\")", "](", "`)<b>`", "\"`\")", ")", "\""];
 export function generate(rand) {
   const pick = (xs) => xs[Math.floor(rand() * xs.length)];
   const n = 1 + Math.floor(rand() * 8);
@@ -85,6 +89,8 @@ export function generate(rand) {
     s += pick(PREFIXES);
     if (rand() < 0.25) s += pick(PREFIXES);
     s += pick(CONTENTS);
+    if (rand() < 0.15) s += pick(CONTENTS);
   }
-  return s;
+  // a body may end in a line break, which is where a fence's closer goes
+  return rand() < 0.1 ? s + pick(["\n", "\r", "\r\n"]) : s;
 }

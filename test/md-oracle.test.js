@@ -4,8 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { safeBody, quote } from "../src/modules/reddit/md.js";
+import { safeBody, quote, render } from "../src/modules/reddit/md.js";
 import { loadCommonmark, rawHtml, linesKept, prng, generate } from "./md-oracle.js";
+import { postPage } from "./fixtures/reddit.js";
 
 const cm = loadCommonmark();
 const F = "```";
@@ -47,9 +48,40 @@ test("each leak class a review found leaves no raw HTML", () => {
     "    code\r<b>",
     // a link reference definition can't make a setext heading of the paragraph it opens
     "[a]: b\n===\n    <x>",
+    // a link's destination, title or reference label is read off the text: a backtick there opens no span
+    "[a](`)<x>`",
+    "![a](`)<x>`",
+    "[a](b \"`\") <x> `",
+    "[a](\n`)<x>`",
+    "[a](b\n\"`\")<x>`",
+    "[`]: /u\n\n[a][`]<x>`",
+    // a fence closer after a final lone \r keeps the empty last line
+    "```\r",
+    "~~~\n\r",
   ];
   const fails = cases.map(check).filter(Boolean);
   assert.equal(fails.length, 0, fails.map(show).join("\n"));
+});
+
+test("render: no JSON field written into the file carries raw HTML", () => {
+  const evil = "a\n```\n<x> `<y>` [l](`)<z>`";
+  const comment = { kind: "t1", data: { author: evil, score: evil, created_utc: 1699000000, body: "```\n<ok>" } };
+  const more = { kind: "more", data: { count: 0, parent_id: `t1_${evil}` } };
+  const md = render(postPage({
+    title: evil, subreddit: evil, author: evil, score: evil, num_comments: evil, permalink: `/r/${evil}/`,
+    is_self: false, url: `https://e.com/${evil}`, selftext: "```\n<ok>",
+    is_gallery: true, gallery_data: { items: [{ media_id: "m1", caption: evil }, { media_id: "m2", caption: evil }] },
+    media_metadata: { m1: { status: evil }, m2: { status: "valid", m: "image/png", s: { u: `https://i.redd.it/${evil}.png` } } },
+  }, [comment, more]), { 2: "image-2.png" }, "images");
+  // a link post (no gallery) prints its URL as "Links to:"
+  const link = render(postPage({ is_self: false, url: `https://e.com/${evil}` }));
+  for (const out of [md, link]) {
+    assert.deepEqual(rawHtml(cm, out), [], out);
+    // the fixture's fields did reach the file: the guard isn't passing on an empty render
+    assert.match(out, /&lt;x>/);
+  }
+  assert.match(md, /Image 2 source: .*&lt;x>/);
+  assert.match(link, /Links to: .*&lt;x>/);
 });
 
 test("seeded fuzz: no raw HTML, every line kept", () => {

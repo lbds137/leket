@@ -12,6 +12,8 @@
 //   crash it; ?? guards keep 0 falsy-safe (score: 0 renders "0 points").
 // - "more" nodes: count-0 cuts render a thread-continues link, and every more line
 //   links its own branch (comments()); render() adds the not-fetched note (notFetched()).
+// - every other JSON field written into a line (author, score, URLs, captions) goes
+//   through plain(): one line, every `<` escaped.
 // - bodies and the title go through safeBody/escapeLine: a bare `<` outside code becomes
 //   `&lt;`, unclosed fences are closed. That includes a `<` in an angle-bracket link
 //   destination (`[x](<url>)`), which then shows as text, and a `<https://…>` autolink,
@@ -20,7 +22,8 @@
 // - remote image links are wrapped in `<...>`.
 // - code spans pair within one line: a `<` in a span the renderer carries across a line
 //   break shows as `&lt;`, and after an unclosed backtick every `<` in the rest of the
-//   paragraph is escaped (safeBody). Block boundaries come from a port of CommonMark's
+//   paragraph is escaped (safeBody), as is every `<` after a link's `](` or `][` (a
+//   destination, title or label holds no spans). Block boundaries come from a port of CommonMark's
 //   own block parser (scanBlocks), checked against the real one (test/md-oracle.test.js).
 // - a paragraph opening with `[` that a setext underline (`===`, `---`) turns into a
 //   heading gets `\[` (safeBody; it shows as `[`): a link reference definition there
@@ -121,12 +124,20 @@ function encodeAngle(u) {
 // One line's escape: code spans pair within the line only. `open` says a backtick run
 // found no closer here; in the rendered file it may close on a later line of the same
 // paragraph, so safeBody stops trusting spans on the lines after it.
+// A link's destination, title or reference label is read straight off the text, so a
+// backtick there opens no span: from a `](` or `][` outside a span, every `<` on the
+// line is escaped and `open` is set, which carries that to the rest of the paragraph.
 function escapeSpans(line) {
   const parts = line.split(/(`+)/);
   let out = "";
   let open = false;
   for (let i = 0; i < parts.length; i++) {
     if (i % 2 === 0) {
+      const link = parts[i].search(/\]\(|\]\[/);
+      if (link !== -1) {
+        out += parts[i].slice(0, link).replace(/</g, "&lt;") + parts.slice(i).join("").slice(link).replace(/</g, "&lt;");
+        return { text: out, open: true };
+      }
       out += parts[i].replace(/</g, "&lt;");
     } else {
       let run = parts[i];
@@ -158,6 +169,12 @@ function escapeSpans(line) {
 
 function escapeLine(line) {
   return escapeSpans(line).text;
+}
+
+// A JSON field written into a line (author, score, URL, caption): one line, every `<`
+// escaped. A newline in it could open a block (a fence) that rewires the body after it.
+function plain(v) {
+  return String(v).replace(/\s+/g, " ").replace(/</g, "&lt;");
 }
 
 // safeBody's block pass: commonmark.js 0.31.2's line-by-line block parser (lib/blocks.js),
@@ -499,7 +516,7 @@ function scanBlocks(lines) {
 // closer line. Code spans pair within a line only: a span the renderer carries across a
 // line break shows its `<` as `&lt;`, a cosmetic cost. Once a line leaves a backtick run
 // unclosed, every later `<` in that paragraph is escaped, since the run may close on a
-// later line. One more edit: a paragraph opening with `[` that a setext underline turns
+// later line; the same holds from a link's `](` or `][` on. One more edit: a paragraph opening with `[` that a setext underline turns
 // into a heading gets `\[`, because a link reference definition there decides whether
 // the heading forms at all, and that parse isn't ported; `\[` shows as `[`.
 export function safeBody(text) {
@@ -529,7 +546,9 @@ export function safeBody(text) {
     if (r.open) untrusted = true;
     out += r.text;
   });
-  return closer ? out + "\n" + closer : out;
+  // the closer follows the body's own last line break: "\n" after a final "\r" would fuse
+  // with it into one break and swallow the empty last line
+  return closer ? out + (parts.length > 1 ? parts[parts.length - 2] : "\n") + closer : out;
 }
 
 function moreKind(d) {
@@ -578,7 +597,7 @@ export function comments(children, depth, permalink, out) {
         // the branch is <post permalink><comment id>/, so it needs a permalink to hang off:
         // without one the line links the post, as before
         const branch = parent && permalink.endsWith("/") ? `${parent}/` : "";
-        const url = `https://www.reddit.com${permalink}${branch}`;
+        const url = plain(`https://www.reddit.com${permalink}${branch}`);
         if (m.count) {
           out.push(quote(`*[${m.count} more repl${m.count === 1 ? "y" : "ies"} not loaded: ${url}]*`, depth));
         } else {
@@ -589,7 +608,7 @@ export function comments(children, depth, permalink, out) {
       continue;
     }
     if (kind !== "t1") continue;
-    const head = `**u/${d.author ?? "[deleted]"}** · ${d.score ?? "?"} points · ${when(d.created_utc)}`;
+    const head = `**u/${plain(d.author ?? "[deleted]")}** · ${plain(d.score ?? "?")} points · ${when(d.created_utc)}`;
     out.push(quote(head, depth));
     out.push(quote("", depth));
     out.push(quote(safeBody(d.body), depth));
@@ -616,23 +635,23 @@ export function render(data, saved = {}, folderRel = "", nf = notFetched(data)) 
   const p = postOf(data);
   const link = `https://www.reddit.com${p.permalink ?? ""}`;
   const out = [
-    `# ${p.title == null ? "(untitled)" : escapeLine(String(p.title))}`,
+    `# ${p.title == null ? "(untitled)" : escapeLine(String(p.title).replace(/\s+/g, " "))}`,
     "",
-    `r/${p.subreddit ?? "?"} · u/${p.author ?? "[deleted]"} · ${p.score ?? "?"} points · ${p.num_comments ?? "?"} comments · ${when(p.created_utc)}`,
-    `Source: ${link}`,
+    `r/${plain(p.subreddit ?? "?")} · u/${plain(p.author ?? "[deleted]")} · ${plain(p.score ?? "?")} points · ${plain(p.num_comments ?? "?")} comments · ${when(p.created_utc)}`,
+    `Source: ${plain(link)}`,
   ];
   const imgs = images(p);
   if (!p.is_self && !mediaPost(p).is_gallery && p.url && p.url !== link
       && !imgs.some((im) => im[1] === p.url)) {
-    out.push(`Links to: ${p.url}`);
+    out.push(`Links to: ${plain(p.url)}`);
   }
   for (const [n, u, caption, , skip] of imgs) {
     // Alt text can't hold brackets, backslashes or line breaks without breaking the image line.
-    const alt = caption.replace(/[\[\]\\]/g, " ").split(/\s+/).filter(Boolean).join(" ") || `image ${n}`;
+    const alt = plain(caption.replace(/[\[\]\\]/g, " ").split(/\s+/).filter(Boolean).join(" ") || `image ${n}`);
     if (!u) {
-      out.push("", `*(gallery item ${n}${caption ? ": " + alt : ""} not saved: ${skip})*`);
+      out.push("", `*(gallery item ${n}${caption ? ": " + alt : ""} not saved: ${plain(skip)})*`);
     } else if (saved[n]) {
-      out.push("", `![${alt}](<${folderRel}/${saved[n]}>)`, `Image ${n} source: ${u}`);
+      out.push("", `![${alt}](<${folderRel}/${saved[n]}>)`, `Image ${n} source: ${plain(u)}`);
     } else {
       out.push("", `![${alt}](<${encodeAngle(u)}>)`);
     }
