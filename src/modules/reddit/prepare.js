@@ -72,7 +72,45 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   };
 }
 
+export function isPrivateHost(hostname) {
+  const h = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+  if (h.startsWith("[")) {
+    const first = h.slice(1, -1).split(":")[0];
+    const g = first === "" ? 0 : parseInt(first, 16);
+    return !(g >= 0x2000 && g < 0x4000);
+  }
+  const ipv4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (ipv4) {
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    return a === 0
+      || a === 10
+      || (a === 100 && b >= 64 && b <= 127)
+      || a === 127
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || a >= 224;
+  }
+  return !h.includes(".") || /\.(localhost|local|internal|home\.arpa|lan)$/.test(h);
+}
+
 export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
+  // The post author picks the image URL: a GET to a non-https or private host leaks the
+  // saver's IP and pokes their network even though CORS hides the reply. Known limit: a
+  // public name that resolves by DNS to a private address is not caught (an extension
+  // can't resolve names before fetching).
+  let parsed;
+  try {
+    parsed = new URL(u);
+  } catch {
+    throw new Error("not fetched: not a valid address");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("not fetched: only https images are fetched");
+  }
+  if (isPrivateHost(parsed.hostname)) {
+    throw new Error("not fetched: a local or private-network address");
+  }
   const unreachable = (e) => new Error(`couldn't reach it (${(e && e.message) || e})`);
   let r;
   try {

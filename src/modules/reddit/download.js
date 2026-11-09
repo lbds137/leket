@@ -9,10 +9,10 @@ import { trackDownload } from "../../lib/download.js";
 // post's images are fetched and downloaded one at a time into opts.images.folder between
 // the json and the md (a failed image is noted and skipped without stopping the save),
 // and when at least one image saved, renderMd(saved) re-renders the .md with relative
-// links and replaces files[1] (freeing its unlinked blob). onSettled fires per file or
-// image, with its { url, name }, once its own download is over for good (a download with
-// no word yet may still be reading the blob, so it fires only then — the worker uses it
-// to ask the document to revoke that blob).
+// links and replaces files[1] (freeing its unlinked blob; a renderMd failure keeps the
+// prepared .md). onSettled fires per file or image, with its { url, name }, once its own
+// download is over for good (a download with no word yet may still be reading the blob,
+// so it fires only then — the worker uses it to ask the document to revoke that blob).
 // The message builder's three base shapes cover the [json, md] pair, followed by the
 // images sentence (when images.list is non-empty) and the unfetched-comments note (when
 // notFetched.count > 0 and both main files saved).
@@ -28,6 +28,7 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
   const unsettled = [];
   const savedImages = {};
   const failedImages = [];
+  let renderFailed = false;
   const failMain = (file, rest) => {
     // this save is over for good, and so are the files after it: nothing will ever
     // read their blobs, so they are revoked alongside this one's — a skipped file's
@@ -78,16 +79,19 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
         }
       }
       if (Object.keys(savedImages).length > 0) {
+        // the fallback helps when the save page is alive but the render failed; if the
+        // save page is gone, the prepared .md's blob went with it, so its download is
+        // interrupted and failMain reports it
         let md;
         try {
           md = await images.renderMd(savedImages);
-        } catch (e) {
-          // Chrome never saw this .md: the save stops here, the images already landed
-          if (onSettled) onSettled(file);
-          throw new Error(`Couldn't write ${file.name} with links to the saved images (${(e && e.message) || e}) — click Save again.`);
+        } catch {
+          renderFailed = true;
         }
-        if (onSettled) onSettled(file);
-        file = md;
+        if (!renderFailed) {
+          if (onSettled) onSettled(file);
+          file = md;
+        }
       }
     }
     const saved = await trackDownload(downloads, { url: file.url, filename: file.name, saveAs: false, conflictAction: "overwrite" }, { timeout });
@@ -112,9 +116,12 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
     if (k === m) {
       message += ` The post's ${m === 1 ? "image is" : `${m} images are`} in ${images.folder}.`;
     } else if (k > 0) {
-      message += ` ${k} of ${m} images saved in ${images.folder}; the .md links the rest on reddit (${why}).`;
+      message += ` ${k} of ${m} images saved in ${images.folder}; the .md links the rest where they're hosted (${why}).`;
     } else {
-      message += ` The post's ${m === 1 ? "image wasn't" : "images weren't"} saved; the .md links ${m === 1 ? "it" : "them"} on reddit (${why}).`;
+      message += ` The post's ${m === 1 ? "image wasn't" : "images weren't"} saved; the .md links ${m === 1 ? "it where it's" : "them where they're"} hosted (${why}).`;
+    }
+    if (renderFailed) {
+      message += " The .md couldn't be rewritten to link the saved images, so it links every image where it's hosted.";
     }
   }
   const n = notFetched && Number.isFinite(notFetched.count) ? notFetched.count : 0;

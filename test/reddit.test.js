@@ -111,7 +111,7 @@ const reset = () => {
 };
 
 const { commands } = await import("../src/modules/reddit/json.js");
-const { preparePostJson, fetchImage } = await import("../src/modules/reddit/prepare.js");
+const { preparePostJson, fetchImage, isPrivateHost } = await import("../src/modules/reddit/prepare.js");
 const { downloadPrepared } = await import("../src/modules/reddit/download.js");
 const { render } = await import("../src/modules/reddit/md.js");
 
@@ -443,6 +443,49 @@ test("fetchImage refuses non-image content types, HTTP errors, oversized respons
   );
 });
 
+test("fetchImage refuses non-https, invalid and local/private-network URLs before any fetch", async () => {
+  const calls = [];
+  const fetch = async (url) => { calls.push(url); throw new Error("fetch should not be called"); };
+  for (const [u, expected] of [
+    ["not a url", /^Error: not fetched: not a valid address$/],
+    ["http://i.redd.it/a.png", /^Error: not fetched: only https images are fetched$/],
+    ["https://localhost/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://127.0.0.1/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://2130706433/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://192.168.1.5/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://[::1]/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://[::ffff:127.0.0.1]/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://router/a.png", /^Error: not fetched: a local or private-network address$/],
+    ["https://printer.local/a.png", /^Error: not fetched: a local or private-network address$/],
+  ]) {
+    await assert.rejects(fetchImage({ n: 1, u, ext: ".png" }, { fetch }), expected, u);
+  }
+  assert.equal(calls.length, 0, "fetch spy was never called");
+});
+
+test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
+  for (const [u, expected] of [
+    ["https://i.redd.it/", false],
+    ["https://images.example.org/", false],
+    ["https://8.8.8.8/", false],
+    ["https://172.32.0.1/", false],
+    ["https://100.128.0.1/", false],
+    ["https://[2606:4700::1111]/", false],
+    ["https://0x7f.1/", true],
+    ["https://172.31.255.255/", true],
+    ["https://100.64.0.1/", true],
+    ["https://169.254.1.1/", true],
+    ["https://0.0.0.0/", true],
+    ["https://255.255.255.255/", true],
+    ["https://[fe80::1]/", true],
+    ["https://[fd00::1]/", true],
+    ["https://localhost./", true],
+    ["https://x.localhost/", true],
+  ]) {
+    assert.equal(isPrivateHost(new URL(u).hostname), expected, u);
+  }
+});
+
 // --- downloadPrepared: the worker's half (chrome.downloads lives here), two files
 // --- (json first, md second), downloaded one after the other
 
@@ -641,7 +684,7 @@ test("downloadPrepared with images downloads json -> images -> re-rendered md, f
     },
   });
   assert.equal(partialDone.message,
-    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 1 of 3 images saved in reddit-abc123-images; the .md links the rest on reddit (image 2: the server answered 404; image 3: over 50 MB).");
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 1 of 3 images saved in reddit-abc123-images; the .md links the rest where they're hosted (image 2: the server answered 404; image 3: over 50 MB).");
   workerDownloads.calls.length = 0;
 
   // k === 0 (none saved, plural and singular): downloads original files[1] and never calls renderMd
@@ -657,7 +700,7 @@ test("downloadPrepared with images downloads json -> images -> re-rendered md, f
   assert.equal(renderCalled, false, "renderMd is not called when no image saved");
   assert.deepEqual(workerDownloads.calls.map((c) => c.url), ["blob:json", "blob:md"], "original md is downloaded unchanged");
   assert.equal(zeroPlural.message,
-    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's images weren't saved; the .md links them on reddit (image 1: bad 1; image 2: bad 2).");
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's images weren't saved; the .md links them where they're hosted (image 1: bad 1; image 2: bad 2).");
   workerDownloads.calls.length = 0;
 
   const zeroSingle = await downloadPrepared(workerDownloads, twoFiles, {
@@ -670,11 +713,11 @@ test("downloadPrepared with images downloads json -> images -> re-rendered md, f
   });
   assert.equal(renderCalled, false);
   assert.equal(zeroSingle.message,
-    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's image wasn't saved; the .md links it on reddit (image 1: no answer).");
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's image wasn't saved; the .md links it where it's hosted (image 1: no answer).");
   workerDownloads.calls.length = 0;
 });
 
-test("downloadPrepared with images: a json refusal fetches no image; image download false/null doesn't stop the save; a renderMd throw names the .md", async () => {
+test("downloadPrepared with images: a json refusal fetches no image; image download false/null doesn't stop the save; a renderMd throw falls back to the prepared .md", async () => {
   // json refusal fetches no image
   let fetched = 0;
   const realSearch = workerDownloads.search;
@@ -717,26 +760,67 @@ test("downloadPrepared with images: a json refusal fetches no image; image downl
   workerDownloads.calls.length = 0;
   assert.equal(res.settled, true);
   assert.equal(res.message,
-    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's images weren't saved; the .md links them on reddit (image 1: Chrome didn't complete the save; image 2: no word from Chrome yet).");
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's images weren't saved; the .md links them where they're hosted (image 1: Chrome didn't complete the save; image 2: no word from Chrome yet).");
   assert.deepEqual(settledUrls, ["blob:json", "blob:img1", "blob:md"],
     "interrupted img1 fires onSettled; timed-out img2 does NOT fire onSettled");
 
-  // renderMd throw names the .md and frees files[1]
-  const freedOnThrow = [];
-  await assert.rejects(
-    downloadPrepared(workerDownloads, twoFiles, {
-      onSettled: (f) => freedOnThrow.push(f.url),
+  // renderMd throw falls back to the prepared .md (files[1]), freeing it only after its download
+  const freedOnFallback = [];
+  const callsWhenFreed = [];
+  const fallbackDone = await downloadPrepared(workerDownloads, twoFiles, {
+    onSettled: (f) => {
+      freedOnFallback.push(f.url);
+      callsWhenFreed.push([f.url, workerDownloads.calls.map((c) => c.url)]);
+    },
+    images: {
+      list: [{ n: 1 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async () => ({ ok: true, url: "blob:img1", name: "01.png" }),
+      renderMd: async () => { throw new Error("render threw"); },
+    },
+  });
+  assert.deepEqual(workerDownloads.calls.map((c) => [c.url, c.filename]), [
+    ["blob:json", "reddit-abc123.json"],
+    ["blob:img1", "reddit-abc123-images/01.png"],
+    ["blob:md", "reddit-abc123.md"],
+  ]);
+  assert.deepEqual(freedOnFallback, ["blob:json", "blob:img1", "blob:md"]);
+  assert.deepEqual(callsWhenFreed[2], ["blob:md", ["blob:json", "blob:img1", "blob:md"]],
+    "blob:md is freed only after its own download");
+  assert.equal(fallbackDone.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's image is in reddit-abc123-images. The .md couldn't be rewritten to link the saved images, so it links every image where it's hosted.");
+  workerDownloads.calls.length = 0;
+
+  // renderMd fallback whose .md download is then interrupted while the json had no word
+  let fallbackCall = 0;
+  workerDownloads.search = async () => {
+    fallbackCall += 1;
+    // call 1 = json (in_progress -> null), call 2 = img1 (complete -> true), call 3 = fallback md (interrupted -> false)
+    if (fallbackCall === 1) return [{ state: "in_progress" }];
+    if (fallbackCall === 2) return [{ state: "complete" }];
+    return [{ state: "interrupted" }];
+  };
+  const freedAfterInterrupt = [];
+  let fallbackThrew = null;
+  try {
+    await downloadPrepared(workerDownloads, twoFiles, {
+      timeout: 5,
+      onSettled: (f) => freedAfterInterrupt.push(f.url),
       images: {
         list: [{ n: 1 }],
         folder: "reddit-abc123-images",
         fetchImage: async () => ({ ok: true, url: "blob:img1", name: "01.png" }),
-        renderMd: async () => { throw new Error("offscreen gone"); },
+        renderMd: async () => { throw new Error("render threw"); },
       },
-    }),
-    /^Error: Couldn't write reddit-abc123\.md with links to the saved images \(offscreen gone\) — click Save again\.$/,
-  );
-  assert.deepEqual(freedOnThrow, ["blob:json", "blob:img1", "blob:md"]);
+    });
+  } catch (e) {
+    fallbackThrew = e;
+  }
+  workerDownloads.search = realSearch;
   workerDownloads.calls.length = 0;
+  assert.equal(fallbackThrew && fallbackThrew.message,
+    "Chrome didn't complete the save of reddit-abc123.md; reddit-abc123.json is still saving, unconfirmed — check Chrome's downloads, then click Save again.");
+  assert.deepEqual(freedAfterInterrupt, ["blob:img1", "blob:md"]);
 });
 
 // --- the popup command and the worker relay
@@ -949,7 +1033,7 @@ test("an image whose download Chrome refuses to start is noted and freed, and th
   assert.deepEqual(rendered, [{ 1: "01.png", 3: "03.png" }]);
   assert.ok(freed.includes("blob:img2"), `the refused image's blob is freed (${freed})`);
   assert.equal(freed.filter((u) => u === "blob:img2").length, 1);
-  assert.match(done.message, /2 of 3 images saved in reddit-abc123-images; the \.md links the rest on reddit \(image 2: Chrome refused the download\)\./);
+  assert.match(done.message, /2 of 3 images saved in reddit-abc123-images; the \.md links the rest where they're hosted \(image 2: Chrome refused the download\)\./);
 });
 
 test("an image with no word at the timeout is freed when it ends later", async () => {
@@ -965,7 +1049,7 @@ test("an image with no word at the timeout is freed when it ends later", async (
       renderMd: async () => { throw new Error("not called: nothing saved"); },
     },
   });
-  assert.match(done.message, /The post's image wasn't saved; the \.md links it on reddit \(image 1: no word from Chrome yet\)\./);
+  assert.match(done.message, /The post's image wasn't saved; the \.md links it where it's hosted \(image 1: no word from Chrome yet\)\./);
   assert.ok(!freed.includes("blob:img1"), "a download still going keeps its blob");
   dl.fire(2, "complete");
   assert.deepEqual(freed.filter((u) => u === "blob:img1"), ["blob:img1"], "its late end frees it, once");
