@@ -34,6 +34,13 @@ export function parseRenames(text) {
     throw new Error(`"${bad[0]}" doesn't look like a session id. Ids are letters, digits, "-" and "_", optionally starting with cse_ or session_ — paste the generated file as-is.`);
   }
   if (!list.length) throw new Error("The rename list is empty — paste the generated file: the bare JSON array of [id, title] pairs.");
+  // one session listed twice would be renamed twice, the later title silently winning;
+  // cse_X and session_X are the same session
+  const seen = new Set();
+  for (const [id] of list) {
+    if (seen.has(sid(id))) throw new Error(`"${id}" is listed twice (cse_ and session_ forms are the same session). Each session goes in the list once — regenerate it.`);
+    seen.add(sid(id));
+  }
   return list;
 }
 

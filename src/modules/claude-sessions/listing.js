@@ -23,9 +23,11 @@ export async function listSessions({ fetch: doFetch = fetch, statuses = STATUSES
       const r = await doFetch(url, { credentials: "include", headers, signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) throw new Error(`Listing ${st} sessions failed: HTTP ${r.status}.`);
       const j = await r.json();
-      for (const s of j.data || []) sessions.set(s.id, s);
+      // no data array (an error body, a renamed field) must not read as "no sessions"
+      if (!Array.isArray(j?.data)) throw new Error(`Listing ${st} sessions failed: no data list (the API shape changed).`);
+      for (const s of j.data) sessions.set(s.id, s);
       // the script's rule: an empty page ends the walk whatever cursor came with it
-      cursor = (j.data || []).length ? j.next_cursor : null;
+      cursor = j.data.length ? j.next_cursor : null;
     } while (cursor);
   }
   return sessions;
