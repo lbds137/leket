@@ -14,12 +14,20 @@ const messagesIn = (node, out = []) => {
 
 // ids from the box, else the open conversation's address (etsy.com/messages/<id>), else
 // nothing — the caller narrates the stop (the console's prompt, then alert)
+// A token is a bare id or a conversation link (etsy.com/messages/<id>, any query or
+// fragment); the first of each id is kept, so a repeat is not exported twice.
+const tokensOf = (text) => (text || "").split(/[\s,]+/).filter(Boolean);
+const idOf = (token) => /^\d+$/.test(token) ? token
+  : (token.match(/(?:^|\/)messages\/(\d+)(?=[/?#]|$)/) || [])[1] || null;
 const parseIds = (text, pathname = "") => {
-  const ids = (text || "").split(/[\s,]+/).filter((x) => /^\d+$/.test(x));
+  const ids = [...new Set(tokensOf(text).map(idOf).filter(Boolean))];
   if (ids.length) return ids;
   const m = pathname.match(/\/messages\/(\d+)/);
   return m ? [m[1]] : [];
 };
+// the tokens parseIds drops: the page refuses to run on them rather than export a
+// partial set under a green line
+const ignoredTokens = (text) => tokensOf(text).filter((t) => !idOf(t));
 
 const collectConversations = async (ids, {
   fetch = (...args) => globalThis.fetch(...args),
@@ -271,4 +279,4 @@ const finishMessage = ({ saved, conversations = [], filename, redactState, sound
 // an unparseable export never replaces a same-day good one: it lands beside it
 const conflictActionFor = (sound) => (sound ? "overwrite" : "uniquify");
 
-export { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted };
+export { messagesIn, parseIds, ignoredTokens, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted };

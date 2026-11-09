@@ -764,6 +764,18 @@ async function scenarios(cdp, downloads) {
       return { end, saved, text };
     };
 
+    // a token that is neither an id nor a conversation link stops the run before any
+    // fetch: dropped silently, the real id would save under a green line
+    await evalIn(ep, `(() => { document.getElementById("ids").value = ${JSON.stringify(`${ETSY_ID}, 12a`)};
+      document.getElementById("etsy-run").click(); return true; })()`);
+    const refused = await waitFor(() => evalIn(ep, etsyState).then((s) => s.cls === "warn" && s), "the junk token's refusal", 15000)
+      .catch(soft((e) => ({ t: e.message })));
+    const none = await extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-" }).then((d) => d.length)`);
+    check(refused.t === `Not a conversation id or link: "12a". Give ids (123456789) or etsy.com/messages/<id> links, then save again.` && none === 0,
+      `etsy: a junk token is refused by name and nothing downloads (it said: ${refused.t}; ${none} download(s))`);
+    await evalIn(ep, `(() => { const s = document.getElementById("etsy-status"); s.textContent = ""; s.className = "";
+      document.getElementById("ids").value = ${JSON.stringify(ETSY_ID)}; return true; })()`);
+
     // rounds 1 and 2: redact on, with a name that also catches "etsy"
     const expectedRedact = redactSetup(ETSY_REDACT).line;
     for (const round of [1, 2]) {
