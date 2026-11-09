@@ -50,3 +50,11 @@ test("a header above the assignment doesn't stop the strip", () => {
   assert.equal(assignedJson('{"a":1}\nwindow.X = {"b":2};\n', "X"), '{"b":2}');
   assert.equal(assignedJson('window.X = {"a":1};\nwindow.X = {"b":2};\n', "X"), '{"a":1}');
 });
+
+test("U+2028 and U+2029, raw in a JSON string, neither end the capture nor start a line", () => {
+  for (const sep of [String.fromCharCode(0x2028), String.fromCharCode(0x2029)]) {
+    const json = `{"a":"x;${sep}y","b":"${sep}window.X = 1"}`;
+    assert.deepEqual(JSON.parse(assignedJson(`window.X = ${json};\n${SCRIPT}`, "X")), JSON.parse(json));
+    assert.equal(assignedJson(json, "X"), json, "a bare-JSON paste comes back whole");
+  }
+});
