@@ -56,6 +56,7 @@ test("quoting changes nothing the reader gets, and the oracle sees it when it do
   for (const input of [...moves, ...holds]) assert.equal(check(input), null, input);
   const whole = (s, d) => quote(safeBody(s), d);
   for (const input of moves) assert.ok(check(input, whole)?.moved, input);
+  for (const input of holds) assert.equal(check(input, whole), null, input);
 });
 
 test("the oracle sees a raw tag that safeBody's input would leak", () => {
