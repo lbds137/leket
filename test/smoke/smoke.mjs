@@ -758,8 +758,8 @@ async function scenarios(cdp, downloads) {
       const end = await waitFor(() => evalIn(ep, etsyState).then((s) => s.cls === "warn" && s),
         `etsy save ${round}'s end line`, 20000).catch(soft((e) => ({ t: e.message, fails: [] })));
       check(end.t.startsWith(said), `etsy save ${round}: the refusal reaches the end line (it said: ${end.t})`);
-      check(end.rt === redactSaid && end.fails.length === 0,
-        `etsy save ${round}: the redact line is ${redactSaid ? "the off line" : "hidden"} and nothing is listed as failed (it said: ${end.rt}; ${end.fails.length} failures)`);
+      check(end.rt === redactSaid && (redactSaid === "" || end.rcls === "warn") && end.fails.length === 0,
+        `etsy save ${round}: the redact line is ${redactSaid ? "the off line, warned" : "hidden"} and nothing is listed as failed (it said: ${end.rt} [${end.rcls}]; ${end.fails.length} failures)`);
       const blobs = await evalIn(ep, `Promise.all(window.smokeBlobs.map((u) => fetch(u).then(() => "readable", () => "freed")))`);
       check(JSON.stringify(blobs) === '["freed"]', `etsy save ${round}: the page made one blob and freed its URL (${JSON.stringify(blobs)})`);
     }
