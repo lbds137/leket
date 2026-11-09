@@ -75,6 +75,11 @@ test("render: no JSON field written into the file carries raw HTML", () => {
   }, [comment, more]), { 2: "image-2.png" }, "images");
   // a link post (no gallery) prints its URL as "Links to:"
   const link = render(postPage({ is_self: false, url: `https://e.com/${evil}` }));
+  // an unsaved image's URL sits inside <...>: a line break there would end the image
+  const image = render(postPage({ is_self: false, post_hint: "image", url: `https://e.com/a.png\n${evil}\\`, selftext: "```\n<ok>" }));
+  const lone = render(postPage({ is_self: false, post_hint: "image", url: "https://e.com/a.png\r```\r<x>", selftext: "```\n<ok>" }));
+  for (const out of [image, lone]) assert.deepEqual(rawHtml(cm, out), [], out);
+  assert.match(image, /^!\[image 1\]\(<https:\/\/e\.com\/a\.png%0A[^\n]*%5C>\)$/m);
   for (const out of [md, link]) {
     assert.deepEqual(rawHtml(cm, out), [], out);
     // the fixture's fields did reach the file: the guard isn't passing on an empty render
