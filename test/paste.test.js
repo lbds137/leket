@@ -58,3 +58,9 @@ test("U+2028 and U+2029, raw in a JSON string, neither end the capture nor start
     assert.equal(assignedJson(json, "X"), json, "a bare-JSON paste comes back whole");
   }
 });
+
+test("a lone \\r ends a line for the cut as it does for the line start", () => {
+  const script = SCRIPT.replace(/\n/g, "\r");
+  assert.equal(assignedJson(`window.X = {"a":"1;"};\r${script}`, "X"), '{"a":"1;"}');
+  assert.equal(assignedJson(`// header\rwindow.X = {"a":"1"};\r${script}`, "X"), '{"a":"1"}');
+});
