@@ -489,6 +489,27 @@ test("a nested list's end returns to its parent item's content column", () => {
   assert.equal(safeBody("text\n\n    - <x>"), "text\n\n    - <x>");
 });
 
+test("indents count tabs to the next multiple of 4, and a list gap of 5+ columns is one space", () => {
+  // "  \t" is column 4, two past the item's content column: a paragraph, not code
+  assert.equal(safeBody("- a\n\n  \t<!-- x\n\nrest <y>"), "- a\n\n  \t&lt;!-- x\n\nrest &lt;y>");
+  assert.equal(safeBody("- a\n\n   \t<!-- x"), "- a\n\n   \t&lt;!-- x");
+  // a tab after the marker: content at column 4, so a 4-space line is item text
+  assert.equal(safeBody("-\tfoo\n\n    <!-- x"), "-\tfoo\n\n    &lt;!-- x");
+  // a 6-column gap: content at column 2, so "  bar" stays in the item
+  assert.equal(safeBody("-      foo\n\n  bar\n\n     <!-- x"), "-      foo\n\n  bar\n\n     &lt;!-- x");
+  // real code inside the item still stays raw
+  assert.equal(safeBody("- a\n\n  \t  <x>"), "- a\n\n  \t  <x>");
+});
+
+test("an escaped HTML block start joins the paragraph, so its backticks pair as the output renders them", () => {
+  const t = "`";
+  assert.equal(safeBody(`<div>${t}\nfoo ${t}<x>${t}`), `&lt;div>${t}\nfoo ${t}&lt;x>${t}`);
+  // inside a container too
+  assert.equal(safeBody(`> <div>${t}\n> foo ${t}<x>${t}`), `> &lt;div>${t}\n> foo ${t}&lt;x>${t}`);
+  // inside a span the up-front escape only over-escapes (deliberate): nothing stays raw
+  assert.equal(safeBody(`${t}a\n<div>\nfoo${t}`), `${t}a\n&lt;div>\nfoo${t}`);
+});
+
 test("an empty list item opens its content column; after a paragraph a lone - is a setext underline", () => {
   assert.equal(safeBody("-\n    <!-- x\n\nrest <y>"), "-\n    &lt;!-- x\n\nrest &lt;y>");
   assert.equal(safeBody("- \n    <!-- x"), "- \n    &lt;!-- x");
