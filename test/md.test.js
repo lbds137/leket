@@ -130,6 +130,7 @@ test("notFetched sums nested more counts and count-0 cuts, and render() writes t
   const complete = postPage({}, [comment()]);
   assert.deepEqual(notFetched(complete), { count: 0, atLeast: false });
   assert.ok(!render(complete).includes("not fetched"), render(complete));
+  assert.ok(render(complete, {}, "", { count: 3, atLeast: false }).includes("reddit counts 3 more that were not fetched"));
 });
 
 // --- the "Links to:" line ---
@@ -420,8 +421,9 @@ test("inside a top-level fence, a marker-prefixed fence line is code, not the cl
   // the review's case: a fenced markdown example holding a fenced list item
   assert.equal(safeBody("```md\n- ```\n<x>\n```\nafter <y>"), "```md\n- ```\n<x>\n```\nafter &lt;y>");
   assert.equal(safeBody("```\n> ```\n<x>\n```\n<y>"), "```\n> ```\n<x>\n```\n&lt;y>");
-  // a blockquoted fence isn't closed by a bare closer either
-  assert.ok(safeBody("> ```\n> <x>\n```\n<y>").startsWith("> ```\n> <x>\n```\n<y>"));
+  // a blockquoted fence isn't closed by a bare closer either: the bare ``` ends the quote
+  // and opens a top-level fence, which gets closed at EOF
+  assert.equal(safeBody("> ```\n> <x>\n```\n<y>"), "> ```\n> <x>\n```\n<y>\n```");
 });
 
 test("a 4-space line is indented code only where no paragraph is continuing", () => {
@@ -429,4 +431,32 @@ test("a 4-space line is indented code only where no paragraph is continuing", ()
   assert.equal(safeBody("text\n    <b>"), "text\n    &lt;b>");
   assert.equal(safeBody("text\n\n    <b>\n    <c>"), "text\n\n    <b>\n    <c>");
   assert.equal(safeBody("    <a>\n\n    <b>\nafter <c>"), "    <a>\n\n    <b>\nafter &lt;c>");
+});
+
+test("safeBody matches code spans across line breaks inside a paragraph, and ends them at paragraph boundaries", () => {
+  assert.equal(safeBody("`a <b>\nfoo` and <c>"), "`a <b>\nfoo` and &lt;c>");
+  assert.equal(safeBody("> `a <b>\n> foo` and <c>"), "> `a <b>\n> foo` and &lt;c>");
+  assert.equal(safeBody("`a <b>\n\nfoo`"), "`a &lt;b>\n\nfoo`");
+});
+
+test("safeBody treats backslash-escaped backticks outside a code span as literal, and backslashes inside a span as literal", () => {
+  assert.equal(safeBody("\\`<b>\\`"), "\\`&lt;b>\\`");
+  assert.equal(safeBody("\\\\`<b>` <c>"), "\\\\`<b>` &lt;c>");
+  assert.equal(safeBody("\\``<b>` <c>"), "\\``<b>` &lt;c>");
+  assert.equal(safeBody("`<b>\\`<c>"), "`<b>\\`&lt;c>");
+});
+
+test("safeBody requires list content column + 4 for indented code, and treats a 4-space line after an ATX heading as code", () => {
+  assert.equal(safeBody("- item\n\n    <!-- note\n\nrest"), "- item\n\n    &lt;!-- note\n\nrest");
+  assert.equal(safeBody("10. item\n\n    <x>\n\n        <y>"), "10. item\n\n    &lt;x>\n\n        <y>");
+  assert.equal(safeBody("- item\nlazy\n\n    <x>"), "- item\nlazy\n\n    &lt;x>");
+  assert.equal(safeBody("- item\n\nafter\n\n    <x>"), "- item\n\nafter\n\n    <x>");
+  assert.equal(safeBody("# Heading <T>\n    <x>"), "# Heading &lt;T>\n    <x>");
+});
+
+test("a fence ends without a synthetic closer when its list item or blockquote ends", () => {
+  assert.equal(safeBody("- ```\n  <x>\n<y>"), "- ```\n  <x>\n&lt;y>");
+  assert.equal(safeBody("- ```\n  <x>\n\n  <y>"), "- ```\n  <x>\n\n  <y>\n  ```");
+  assert.equal(safeBody("> ```\n> <x>\n\n<y>"), "> ```\n> <x>\n\n&lt;y>");
+  assert.equal(safeBody("> > ```\n> > <x>\n> <y>"), "> > ```\n> > <x>\n> &lt;y>");
 });

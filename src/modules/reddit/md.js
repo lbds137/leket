@@ -14,7 +14,9 @@
 //   links its own branch (comments()); render() adds the not-fetched note (notFetched()).
 // - bodies and the title go through safeBody/escapeLine: a bare `<` outside code becomes
 //   `&lt;`, unclosed fences are closed. That includes a `<` in an angle-bracket link
-//   destination (`[x](<url>)`), which then shows as text: rare in reddit, accepted.
+//   destination (`[x](<url>)`), which then shows as text, and a `<https://…>` autolink,
+//   which turns into plain text (the URL still reads; it just isn't a link): rare in
+//   reddit, accepted.
 // - remote image links are wrapped in `<...>`.
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
@@ -98,7 +100,13 @@ function escapeLine(line) {
     if (i % 2 === 0) {
       out += parts[i].replace(/</g, "&lt;");
     } else {
-      const run = parts[i];
+      let run = parts[i];
+      const bs = parts[i - 1].match(/\\+$/);
+      if (bs && bs[0].length % 2 === 1) {
+        out += "`";
+        run = run.slice(1);
+        if (!run) continue;
+      }
       let close = -1;
       for (let j = i + 2; j < parts.length; j += 2) {
         if (parts[j].length === run.length) {
@@ -107,7 +115,8 @@ function escapeLine(line) {
         }
       }
       if (close !== -1) {
-        for (let k = i; k <= close; k++) out += parts[k];
+        out += run;
+        for (let k = i + 1; k <= close; k++) out += parts[k];
         i = close;
       } else {
         out += run;
@@ -123,11 +132,15 @@ function escapeLine(line) {
 // A closer may sit as deep as its opener's content ("10. ```" closes at 4 spaces) plus
 // the usual 3, so FENCE_CLOSE takes any indent and safeBody checks the width.
 const MARKERS = String.raw`(?: {0,3}(?:>[ ]?|[-*+][ ]+|\d{1,9}[.)][ ]+))*`;
+const PREFIX = new RegExp(`^${MARKERS}`);
 const FENCE_OPEN = new RegExp(`^(${MARKERS}[ ]{0,3})` + "(`{3,}|~{3,})(.*)$");
 const FENCE_CLOSE = new RegExp(`^(${MARKERS}[ ]*)` + "(`{3,}|~{3,})\\s*$");
+const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)]) +/;
+const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 
 // the container markers a prefix carries, spaces dropped: "> " → ">", "- " → "-", "  " → ""
 const markersOf = (prefix) => prefix.replace(/\s/g, "");
+const quotesOf = (line) => (line.match(PREFIX)[0].match(/>/g) || []).length;
 
 export function safeBody(text) {
   const lines = String(text ?? "").split("\n");
@@ -135,48 +148,95 @@ export function safeBody(text) {
   let fenceChar = "";
   let fenceLen = 0;
   let fencePrefix = "";
-  // a 4-space (or tab) line is indented code only where a paragraph can't be continuing:
-  // at the start, after a blank line, or after another indented-code line. Elsewhere it
-  // is a list or paragraph continuation, rendered inline, so its < is escaped as usual.
-  let paragraphOpen = false;
+  // a 4-space (or tab) line is indented code only where a paragraph can't be continuing
+  // (at the start, after a blank line, after an ATX heading, or after another
+  // indented-code line) and its indent reaches the active list item's content column + 4.
+  // Consecutive paragraph lines are buffered and escaped together so multi-line code
+  // spans match across line breaks.
+  let para = [];
   let inIndentedCode = false;
+  let listCol = 0;
+  const flushPara = () => {
+    if (para.length) {
+      out.push(...escapeLine(para.join("\n")).split("\n"));
+      para = [];
+    }
+  };
   for (const line of lines) {
+    const blank = /^\s*$/.test(line);
+    const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, "    ").length;
     if (fenceLen) {
-      // a closer belongs to the opener's own container: inside a top-level fence, "- ```"
-      // or "> ```" is code, not a closer (and a blockquoted fence needs its ">")
-      const m = line.match(FENCE_CLOSE);
-      if (m && m[2][0] === fenceChar && m[2].length >= fenceLen
-          && markersOf(m[1]) === markersOf(fencePrefix) && m[1].length <= fencePrefix.length + 3) {
-        fenceChar = "";
-        fenceLen = 0;
+      // a fence ends when its container ends (fewer > markers for a quote, or a
+      // non-blank line indented less than a list item's content column), with no closer
+      // appended; the ending line then goes through normal processing
+      const fenceQuotes = (fencePrefix.match(/>/g) || []).length;
+      const ended = fenceQuotes
+        ? quotesOf(line) < fenceQuotes
+        : !blank && indent < fencePrefix.length;
+      if (!ended) {
+        // a closer belongs to the opener's own container: inside a top-level fence, "- ```"
+        // or "> ```" is code, not a closer (and a blockquoted fence needs its ">")
+        const m = line.match(FENCE_CLOSE);
+        if (m && m[2][0] === fenceChar && m[2].length >= fenceLen
+            && markersOf(m[1]) === markersOf(fencePrefix) && m[1].length <= fencePrefix.length + 3) {
+          fenceChar = "";
+          fenceLen = 0;
+          fencePrefix = "";
+        }
+        out.push(line);
+        continue;
       }
-      out.push(line);
-      continue;
+      fenceChar = "";
+      fenceLen = 0;
+      fencePrefix = "";
+    }
+    if (!blank && !para.length && indent < listCol) listCol = 0;
+    const list = line.match(LIST_ITEM);
+    if (list) {
+      flushPara();
+      listCol = list[0].length;
     }
     const open = line.match(FENCE_OPEN);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
+      flushPara();
+      if (!list && indent < listCol) listCol = 0;
       fenceChar = open[2][0];
       fenceLen = open[2].length;
       // the closer, if one must be added, stays inside the same blockquote (a bare one
       // would open a new top-level fence there); list markers become their width in spaces
       fencePrefix = open[1].replace(/[^>]/g, " ");
-      paragraphOpen = false;
       inIndentedCode = false;
       out.push(line);
       continue;
     }
-    const blank = /^\s*$/.test(line);
-    if (/^(?: {4,}|\t)/.test(line) && !blank && (inIndentedCode || !paragraphOpen)) {
+    if (blank) {
+      flushPara();
+      out.push(line);
+      continue;
+    }
+    if (indent >= listCol + 4 && (inIndentedCode || !para.length)) {
       inIndentedCode = true;
       out.push(line);
       continue;
     }
-    if (!blank) inIndentedCode = false;
-    paragraphOpen = !blank;
-    out.push(escapeLine(line));
+    inIndentedCode = false;
+    if (ATX_HEADING.test(line)) {
+      flushPara();
+      if (indent < listCol) listCol = 0;
+      out.push(escapeLine(line));
+      continue;
+    }
+    para.push(line);
   }
+  flushPara();
   if (fenceLen) out.push(fencePrefix + fenceChar.repeat(fenceLen));
   return out.join("\n");
+}
+
+function moreKind(d) {
+  if (Number.isFinite(d.count) && d.count > 0) return { count: d.count };
+  const parent = t1Parent(d);
+  return parent ? { cut: parent } : null;
 }
 
 function sumMore(children, acc) {
@@ -184,9 +244,9 @@ function sumMore(children, acc) {
     const kind = c && c.kind;
     const d = (c && c.data) || {};
     if (kind === "more") {
-      const n = Number.isFinite(d.count) && d.count > 0 ? d.count : 0;
-      if (n > 0) acc.count += n;
-      else if (t1Parent(d)) {
+      const m = moreKind(d);
+      if (m && m.count) acc.count += m.count;
+      else if (m) {
         acc.count += 1;
         acc.atLeast = true;
       }
@@ -211,17 +271,18 @@ export function comments(children, depth, permalink, out) {
     const kind = c && c.kind;
     const d = (c && c.data) || {};
     if (kind === "more") {
-      const parent = t1Parent(d);
-      // the branch is <post permalink><comment id>/, so it needs a permalink to hang off:
-      // without one the line links the post, as before
-      const branch = parent && permalink.endsWith("/") ? `${parent}/` : "";
-      const url = `https://www.reddit.com${permalink}${branch}`;
-      const n = Number.isFinite(d.count) && d.count > 0 ? d.count : 0;
-      if (n > 0) {
-        out.push(quote(`*[${n} more repl${n === 1 ? "y" : "ies"} not loaded: ${url}]*`, depth));
-        out.push("");
-      } else if (parent) {
-        out.push(quote(`*[thread continues: ${url}]*`, depth));
+      const m = moreKind(d);
+      if (m) {
+        const parent = m.cut || t1Parent(d);
+        // the branch is <post permalink><comment id>/, so it needs a permalink to hang off:
+        // without one the line links the post, as before
+        const branch = parent && permalink.endsWith("/") ? `${parent}/` : "";
+        const url = `https://www.reddit.com${permalink}${branch}`;
+        if (m.count) {
+          out.push(quote(`*[${m.count} more repl${m.count === 1 ? "y" : "ies"} not loaded: ${url}]*`, depth));
+        } else {
+          out.push(quote(`*[thread continues: ${url}]*`, depth));
+        }
         out.push("");
       }
       continue;
@@ -250,7 +311,7 @@ export function postOf(data) {
 }
 
 // saved maps an image's number to its file name in folderRel (beside the .md); the rest link out.
-export function render(data, saved = {}, folderRel = "") {
+export function render(data, saved = {}, folderRel = "", nf = notFetched(data)) {
   const p = postOf(data);
   const link = `https://www.reddit.com${p.permalink ?? ""}`;
   const out = [
@@ -276,7 +337,7 @@ export function render(data, saved = {}, folderRel = "") {
     }
   }
   out.push("", p.selftext ? safeBody(p.selftext) : "*(no body text)*", "", "---", "", "## Comments", "");
-  const { count, atLeast } = notFetched(data);
+  const { count, atLeast } = nf;
   if (count > 0) {
     out.push(`*(This save holds the comments reddit sent in one page; reddit counts ${atLeast ? "at least " : ""}${count} more that ${count === 1 ? "was" : "were"} not fetched — the links below open them on reddit.)*`, "");
   }
