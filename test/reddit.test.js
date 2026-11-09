@@ -474,25 +474,39 @@ test("fetchImage refuses non-https, invalid and local/private-network URLs befor
 });
 
 test("fetchImage upgrades http on reddit's own image hosts to https instead of refusing", async () => {
+  // a fetch stub that records each URL it is asked for and answers with one image chunk
+  const okImage = (calls, ctype = "image/png") => async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, headers: headersOf({ "content-type": ctype }), body: streamOf([new Uint8Array([1])]) };
+  };
   for (const host of ["i.redd.it", "preview.redd.it", "external-preview.redd.it"]) {
     const calls = [];
-    const fetch = async (url) => {
-      calls.push(url);
-      return { ok: true, status: 200, headers: headersOf({ "content-type": "image/png" }), body: streamOf([new Uint8Array([1])]) };
-    };
-    const got = await fetchImage({ n: 1, u: `http://${host}/a.png?w=1`, ext: "" }, { fetch });
+    const got = await fetchImage({ n: 1, u: `http://${host}/a.png?w=1`, ext: "" }, { fetch: okImage(calls) });
     assert.deepEqual(calls, [`https://${host}/a.png?w=1`], host);
     assert.equal(got.name, "01.png");
   }
   // an http port doesn't carry over to https
-  const calls = [];
-  await fetchImage({ n: 1, u: "http://i.redd.it:8080/a.png", ext: "" }, {
-    fetch: async (url) => {
-      calls.push(url);
-      return { ok: true, status: 200, headers: headersOf({ "content-type": "image/png" }), body: streamOf([new Uint8Array([1])]) };
-    },
-  });
+  let calls = [];
+  await fetchImage({ n: 1, u: "http://i.redd.it:8080/a.png", ext: "" }, { fetch: okImage(calls) });
   assert.deepEqual(calls, ["https://i.redd.it/a.png"]);
+  // a trailing dot is the same host: upgraded, and fetched without the dot
+  calls = [];
+  await fetchImage({ n: 1, u: "http://i.redd.it./a.png", ext: "" }, { fetch: okImage(calls) });
+  assert.deepEqual(calls, ["https://i.redd.it/a.png"]);
+  // an upgraded image with no known type takes its extension from the URL it was posted as
+  calls = [];
+  const got = await fetchImage({ n: 2, u: "http://i.redd.it/a.webp", ext: "" }, { fetch: okImage(calls, "image/x-unknown") });
+  assert.deepEqual(calls, ["https://i.redd.it/a.webp"]);
+  assert.equal(got.name, "02.webp");
+});
+
+test("fetchImage refuses an address with a login in it, on both the https and the upgraded path", async () => {
+  const calls = [];
+  const fetch = async (url) => { calls.push(url); throw new Error("fetch should not be called"); };
+  for (const u of ["https://u:p@i.redd.it/a.png", "http://u:p@i.redd.it/a.png", "https://u@images.example.org/a.png", "http://:p@i.redd.it/a.png"]) {
+    await assert.rejects(fetchImage({ n: 1, u, ext: ".png" }, { fetch }), /^Error: not fetched: the address carries a login$/, u);
+  }
+  assert.equal(calls.length, 0, "fetch spy was never called");
 });
 
 test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
