@@ -36,13 +36,20 @@ test("quoting changes nothing the reader gets, and the oracle sees it when it do
     "```x`\n\t- \t\n  [a]", // a trailing tab ends a text line: still a soft break
     "  x\n1.  \t\n2. \t\t<b>",
     "> 2. > <b>```\n\t>  \t2. ```", // a tab inside a code span on a continuation line
+    // a fence run with an info-like tail can't close a fence: compared with its indent
+    `${F}\n\t${F}x\n${F}`,
+    // a fence's indent is spaces and tabs only: after an NBSP the line isn't closer-shaped
+    `${F}\n\t${String.fromCharCode(0xa0)}${F}\n${F}`,
     `  ${F}\n\tx\n  ${F}`, // a tab the fence's indent half uses: expanded, as it must be
     "a  \nb", // a hard break
+    // a setext underline or a break with a tab in its lead or body: the whole lead expands
+    "- a\n \t---",
+    "- b\n \t- -\t-",
   ];
   for (const input of cases) assert.equal(check(input), null, input);
-  // expanding each line's whole lead (quote() without content starts) changes the first five
+  // expanding each line's whole lead (quote() without content starts) changes the first seven
   const whole = (s, d) => quote(safeBody(s), d);
-  for (const input of cases.slice(0, 5)) assert.ok(check(input, whole)?.moved, input);
+  for (const input of cases.slice(0, 7)) assert.ok(check(input, whole)?.moved, input);
 });
 
 test("the oracle sees a raw tag that safeBody's input would leak", () => {
