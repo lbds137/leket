@@ -143,7 +143,7 @@ test("a listing page without a data array stops the walk naming the shape, never
   // an error body, a renamed field or null data would otherwise read as "0 sessions"
   for (const body of [{}, { data: null }, { error: { type: "x" } }, { sessions: [session("a", "t")] }, { data: "nope" }]) {
     const { fetch } = apiFetch([["GET", "/v1/code/sessions", () => ({ json: body })]]);
-    await assert.rejects(listSessions({ fetch }), /active.*API shape changed|API shape changed.*active/,
+    await assert.rejects(listSessions({ fetch }), /Listing (active|paused|archived) sessions failed: no data list \(the API shape changed\)/,
       JSON.stringify(body));
   }
 });
