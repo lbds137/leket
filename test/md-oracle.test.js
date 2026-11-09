@@ -4,15 +4,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { safeBody } from "../src/modules/reddit/md.js";
+import { safeBody, quote } from "../src/modules/reddit/md.js";
 import { loadCommonmark, rawHtml, linesKept, prng, generate } from "./md-oracle.js";
 
 const cm = loadCommonmark();
 const F = "```";
 
+// a body on its own (a post) and quoted one and two deep (comments, as comments() writes them)
 const check = (input) => {
   const out = safeBody(input);
-  const html = rawHtml(cm, out);
+  const html = [out, quote(out, 1), quote(out, 2)].flatMap((md) => rawHtml(cm, md));
   const kept = linesKept(input, out);
   return html.length || !kept ? { input, out, html, kept } : null;
 };
@@ -40,6 +41,12 @@ test("each leak class a review found leaves no raw HTML", () => {
     `-      ${F}\n  <x>`,
     // "2." behind quote markers can't interrupt the quote's paragraph either
     `> foo\n> 2. ${F}\n>    <x>`,
+    // a tab's width moves with the "> " a comment adds: "\t" code on its own, text when quoted
+    "\t<b>",
+    // a lone \r ends a line for the renderer too
+    "    code\r<b>",
+    // a link reference definition can't make a setext heading of the paragraph it opens
+    "[a]: b\n===\n    <x>",
   ];
   const fails = cases.map(check).filter(Boolean);
   assert.equal(fails.length, 0, fails.map(show).join("\n"));

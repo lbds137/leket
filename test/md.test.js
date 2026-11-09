@@ -321,6 +321,16 @@ test("quote prefixes each line at its depth and trims empty lines", () => {
   assert.equal(quote("", 1), ">");
 });
 
+test("quote splits at a lone \\r too and turns leading tabs into the spaces they stood for", () => {
+  assert.equal(quote("a\rb\r\nc", 1), "> a\n> b\n> c");
+  // "\t<x>" is code on its own; behind "> " a tab would be 2 columns wide and make it text
+  assert.equal(quote("\t<x>", 1), ">     <x>");
+  assert.equal(quote("-\tfoo\n  \tbar", 1), "> -   foo\n>     bar");
+  // a tab past the line's lead stays a tab, and depth 0 leaves the line alone
+  assert.equal(quote("a\tb", 1), "> a\tb");
+  assert.equal(quote("\tx", 0), "\tx");
+});
+
 test("mediaPost hands a crosspost's parent over, and keeps a post with its own media", () => {
   const parent = { id: "p1" };
   const child = { id: "c1", crosspost_parent_list: [parent] };

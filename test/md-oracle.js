@@ -42,14 +42,18 @@ export function rawHtml(cm, md) {
   return hits;
 }
 
-// safeBody's other promise: every input line comes back, `<` turned into `&lt;` at most,
-// plus at most one appended fence closer. A fix that escaped everything everywhere (code
-// included) would pass the HTML check; this keeps it honest the other way.
+// safeBody's other promise: every input line comes back, `<` turned into `&lt;` at most
+// (and a paragraph's opening `[` into `\[`), plus at most one appended fence closer. A fix
+// that escaped everything everywhere (code included) would pass the HTML check; this
+// keeps it honest the other way.
 export function linesKept(input, output) {
-  const inn = input.split("\n");
-  const out = output.split("\n");
+  const inn = input.split(/\r\n|\r|\n/);
+  const out = output.split(/\r\n|\r|\n/);
   if (out.length !== inn.length && out.length !== inn.length + 1) return false;
-  return inn.every((l, k) => out[k].replace(/&lt;/g, "<") === l);
+  return inn.every((l, k) => {
+    const back = out[k].replace(/&lt;/g, "<");
+    return back === l || back.replace("\\[", "[") === l;
+  });
 }
 
 // mulberry32: a seeded PRNG, so a failing case reproduces from its seed
@@ -71,7 +75,7 @@ const PREFIXES = ["", "", "", "> ", ">", "> > ", "- ", "* ", "1. ", "2. ", "10. 
   "    ", "     ", "\t", " \t", "-\t", "1.\t", "- \t", "> - ", "> 1. ", "> 2. ", "- > ", "1. > ", "  - ", "   > "];
 const CONTENTS = ["```", "````", "~~~", "``` js", "```x`", "<b>", "<div>", "<!-- c", "<x> y", "a <b> c", "`", "``", "a `b",
   "`<b>`", "a ` <b>", "\\`", "\\<b>", "---", "===", "***", "--", "=", "-", "1.", "# h", "#", "text", "x", "", "\t<b>",
-  "    <b>", "- ```", "2. ```", "> ```", "> <b>"];
+  "    <b>", "- ```", "2. ```", "> ```", "> <b>", "[a]: <b>", "[a]: b", "[a]", "a\r<b>", "\t\t<b>"];
 export function generate(rand) {
   const pick = (xs) => xs[Math.floor(rand() * xs.length)];
   const n = 1 + Math.floor(rand() * 8);
