@@ -450,8 +450,9 @@ test("below Chrome 116 (no getContexts) the worker's clients say whether the doc
   const getContexts = chrome.runtime.getContexts;
   delete chrome.runtime.getContexts;
   const hadSelf = "self" in globalThis, oldSelf = globalThis.self;
-  // the worker's clients list the document by its URL once it is open
-  globalThis.self = { clients: { matchAll: async () => (offscreenHas ? [{ url: OFFSCREEN_URL }] : [{ url: "chrome-extension://test-extension-id/other.html" }]) } };
+  // the worker's clients list the document by its URL once it is open, and only when
+  // uncontrolled clients are asked for: nothing proves the worker controls it
+  globalThis.self = { clients: { matchAll: async (opts) => (offscreenHas && opts?.includeUncontrolled === true ? [{ url: OFFSCREEN_URL }] : [{ url: "chrome-extension://test-extension-id/other.html" }]) } };
   try {
     const save = () => handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
     reset();

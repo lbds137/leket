@@ -447,6 +447,8 @@ async function scenarios(cdp, downloads) {
         self.smokeCancelArmed = false;
         chrome.downloads.cancel(d.id).then(() => { self.smokeCancelled = d.id; }, (e) => { self.smokeCancelled = "failed: " + e.message; });
       };
+      // live for the whole scenario: if a future Chrome treats this silent return as a
+      // suggestion, a rename regression shows up here first
       chrome.downloads.onDeterminingFilename.addListener(self.smokeNaming);
       return true; })()`);
     const dm = await open(DISCORD_DM);
@@ -484,7 +486,11 @@ async function scenarios(cdp, downloads) {
     // the cancelled try, by id (cancelled before it was named, its filename is empty, so a
     // name search can't find it), stays interrupted; and every zip Chrome knows, in any
     // state, is one other download — the retry — which completed
-    const [gone] = await extEval(`chrome.downloads.search({ id: ${JSON.stringify(cancelled)} }).then((d) => d.map((x) => [x.state, x.filename]))`);
+    // only a numeric id is searched: a soft-failed cancel (null, a "failed: …" string)
+    // would make Chrome throw a schema error and end the scenario before the zip checks
+    const [gone] = typeof cancelled === "number"
+      ? await extEval(`chrome.downloads.search({ id: ${cancelled} }).then((d) => d.map((x) => [x.state, x.filename]))`)
+      : [];
     const zipsSeen = await extEval(`chrome.downloads.search({ filenameRegex: "\\\\.zip$" }).then((d) => d.map((x) => [x.id, x.state]))`);
     const seen = zipsSeen.map(([id, state]) => `${id} ${state}`).join(", ") || "none";
     check(gone?.[0] === "interrupted", `discord: the cancelled try stays interrupted (${gone ? `${gone[0]}, filename "${gone[1]}"` : "not in Chrome's list"})`);
@@ -610,9 +616,12 @@ async function scenarios(cdp, downloads) {
     const twice = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-", state: "complete" }).then((d) => d.length)`)
       .then((n) => n >= 2 && n), "the second chat save to finish").catch(soft((e) => e.message));
     check(twice === 2 && again.startsWith("Done: 2 chats, 1 files saved to"), `chat: a second run saves again (${twice} finished; it said: ${again})`);
+    await sleep(500); // a stray third save would have a moment to land: Chrome's count, read again, still matches
+    const settled = await extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-" }).then((d) => d.length)`);
+    check(settled === 2, `chat: no further chat download started (${settled} in Chrome's list)`);
     const files = landed().filter((f) => f.startsWith("claude-chat-outputs-"));
     // one file, or two when a UTC midnight fell between the runs — never a "(1)" copy
-    check(files.length >= 1 && files.every((f) => /^claude-chat-outputs-\d{4}-\d{2}-\d{2}\.json$/.test(f)) && (files.length === 1 || files[1] > files[0]),
+    check(files.length >= 1 && files.length <= 2 && files.every((f) => /^claude-chat-outputs-\d{4}-\d{2}-\d{2}\.json$/.test(f)) && (files.length === 1 || files[1] > files[0]),
       `chat: the second run replaced the day's file, no renamed copy (found: ${files.join(", ")})`);
   });
 
