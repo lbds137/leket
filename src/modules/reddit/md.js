@@ -61,9 +61,9 @@ function expandLeadingTabs(line, from) {
 }
 
 // content: per line, where its text or code content starts (quoteBody); a line without
-// one has its whole lead expanded. Only an odd depth expands: an even one moves every column by a
-// multiple of 4, which keeps each tab's width. Trailing spaces stay (a hard line break,
-// or code); an empty line drops the prefix's own trailing space.
+// one has its whole lead expanded. Only an odd depth expands: an even one moves every
+// column by a multiple of 4, which keeps each tab's width. Trailing spaces stay (a hard
+// line break, or code); an empty line drops the prefix's own trailing space.
 export function quote(text, depth, content = []) {
   text = String(text ?? "");
   const prefix = "> ".repeat(depth);
@@ -513,7 +513,7 @@ function scanBlocks(lines) {
       if (container.type === "code_block" && (inCode || !container.fenced)) {
         const at = partial ? offset + 1 : offset;
         const rest = ln.slice(at);
-        const m = container.fenced && /^ *\t/.test(rest) && rest.trimStart().match(RE_CLOSING_FENCE);
+        const m = container.fenced && /^ *\t/.test(rest) && rest.replace(/^[ \t]+/, "").match(RE_CLOSING_FENCE);
         // a tab in the indent of a closer-shaped line has a width that moves with its
         // column: two columns over it can make the line close the fence (see quote())
         if (!(m && m[0][0] === container.fenceChar && m[0].length >= container.fenceLength)) content[i] = at;
