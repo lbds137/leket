@@ -121,12 +121,19 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
   } catch {
     throw new Error("not fetched: not a valid address");
   }
+  // fetch refuses a URL with a login in it; saying so beats a vague "couldn't reach it"
+  if (parsed.username || parsed.password) {
+    throw new Error("not fetched: the address carries a login");
+  }
   // older post data names reddit's own image hosts over http; those serve https too, so
   // they are upgraded rather than refused (the fetch itself stays https-only), on the
-  // default port: an http port means nothing on https
-  if (parsed.protocol === "http:" && REDDIT_IMAGE_HOSTS.has(parsed.hostname)) {
+  // default port: an http port means nothing on https. A trailing dot on the host is the
+  // same host, as isPrivateHost reads it too.
+  const bareHost = parsed.hostname.replace(/\.+$/, "");
+  if (parsed.protocol === "http:" && REDDIT_IMAGE_HOSTS.has(bareHost)) {
     parsed.protocol = "https:";
     parsed.port = "";
+    parsed.hostname = bareHost;
   }
   if (parsed.protocol !== "https:") {
     throw new Error("not fetched: only https images are fetched");
