@@ -193,6 +193,19 @@ test("a 200 that parses but isn't a post page refuses the save, in the wrapper's
   assert.equal(calls.length, 1, "one fetch, no retry");
 });
 
+test("comments that aren't a list refuse in the wrapper's words too, not as a bare TypeError", async () => {
+  for (const children of [5, {}]) {
+    const { fetch } = okFetch(JSON.stringify([{ data: { children: [{ data: { title: "t" } }] } }, { data: { children } }]));
+    await assert.rejects(
+      preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch }),
+      (e) => {
+        assert.match(e.message, /isn't this post's data/, JSON.stringify(children));
+        return true;
+      },
+    );
+  }
+});
+
 test("a refused fetch reports reddit's answer with the old.reddit advice, and does not retry", async () => {
   const calls = [];
   const fetch = async (url) => { calls.push(url); return { ok: false, status: 403, text: async () => "" }; };

@@ -460,3 +460,31 @@ test("a fence ends without a synthetic closer when its list item or blockquote e
   assert.equal(safeBody("> ```\n> <x>\n\n<y>"), "> ```\n> <x>\n\n&lt;y>");
   assert.equal(safeBody("> > ```\n> > <x>\n> <y>"), "> > ```\n> > <x>\n> &lt;y>");
 });
+
+test("a top-level fence indented 1-3 spaces isn't ended by a shallower line", () => {
+  assert.equal(safeBody(" ```\nx\n```\nafter <b>"), " ```\nx\n```\nafter &lt;b>");
+  assert.equal(safeBody("   ```\n<x>\n   ```\n<y>"), "   ```\n<x>\n   ```\n&lt;y>");
+});
+
+test("a span never reaches past a line that starts a new block", () => {
+  const t = "`";
+  // an HTML block that may interrupt a paragraph is escaped on its own
+  assert.equal(safeBody(`${t}a\n<div>\nfoo${t}\n\nrest <x>`), `${t}a\n&lt;div>\nfoo${t}\n\nrest &lt;x>`);
+  assert.equal(safeBody(`${t}a\n<!-- c\nfoo${t}`), `${t}a\n&lt;!-- c\nfoo${t}`);
+  // a blockquote start, a thematic break and a setext underline end the paragraph
+  assert.equal(safeBody(`${t}a\n> <b>\nfoo${t}`), `${t}a\n> &lt;b>\nfoo${t}`);
+  assert.equal(safeBody(`${t}a\n***\n<b>\nfoo${t}`), `${t}a\n***\n&lt;b>\nfoo${t}`);
+  assert.equal(safeBody(`${t}a\n===\n<b>\n${t}`), `${t}a\n===\n&lt;b>\n${t}`);
+  // inline-only tags (type 7) don't interrupt: the span still crosses them
+  assert.equal(safeBody(`${t}a\n<b>\nfoo${t}`), `${t}a\n<b>\nfoo${t}`);
+  // a lazy line inside a quote paragraph continues it: the span crosses it
+  assert.equal(safeBody(`> ${t}a\n<b>${t}`), `> ${t}a\n<b>${t}`);
+});
+
+test("a nested list's end returns to its parent item's content column", () => {
+  assert.equal(safeBody("- a\n  - b\n\n  c\n\n    <!-- x\n\nrest <y>"), "- a\n  - b\n\n  c\n\n    &lt;!-- x\n\nrest &lt;y>");
+  // a nested item's own code needs its column + 4
+  assert.equal(safeBody("- a\n  - b\n\n        <x>"), "- a\n  - b\n\n        <x>");
+  // a marker four columns past the content column is code, not a list item
+  assert.equal(safeBody("text\n\n    - <x>"), "text\n\n    - <x>");
+});

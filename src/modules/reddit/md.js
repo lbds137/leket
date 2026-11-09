@@ -135,8 +135,13 @@ const MARKERS = String.raw`(?: {0,3}(?:>[ ]?|[-*+][ ]+|\d{1,9}[.)][ ]+))*`;
 const PREFIX = new RegExp(`^${MARKERS}`);
 const FENCE_OPEN = new RegExp(`^(${MARKERS}[ ]{0,3})` + "(`{3,}|~{3,})(.*)$");
 const FENCE_CLOSE = new RegExp(`^(${MARKERS}[ ]*)` + "(`{3,}|~{3,})\\s*$");
-const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)]) +/;
+const LIST_ITEM = /^ *(?:[-*+]|\d{1,9}[.)]) +/;
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+// a thematic break or a setext underline: a line of its own that ends any paragraph
+const RULE = /^ {0,3}(?:([-*_])(?:[ \t]*\1){2,}|=+|-+)[ \t]*$/;
+// the HTML blocks that may interrupt a paragraph (CommonMark types 1-6); type 7 (any
+// other tag, `<b>`) can't, so it stays inline and is escaped with its paragraph
+const HTML_BLOCK = /^ {0,3}<(?:script|pre|style|textarea|!--|\?|![A-Za-z]|!\[CDATA\[|\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>|$))/i;
 
 // the container markers a prefix carries, spaces dropped: "> " → ">", "- " → "-", "  " → ""
 const markersOf = (prefix) => prefix.replace(/\s/g, "");
@@ -152,10 +157,20 @@ export function safeBody(text) {
   // (at the start, after a blank line, after an ATX heading, or after another
   // indented-code line) and its indent reaches the active list item's content column + 4.
   // Consecutive paragraph lines are buffered and escaped together so multi-line code
-  // spans match across line breaks.
+  // spans match across line breaks; any line that starts a new block flushes the buffer
+  // first, so a span never reaches past a block boundary (flushing only escapes more).
   let para = [];
+  let paraQuotes = 0;
   let inIndentedCode = false;
-  let listCol = 0;
+  // the content columns of the open list items, innermost last: a dedent closes only the
+  // items deeper than the line, so a nested list's end returns to its parent's column
+  const lists = [];
+  const listCol = () => (lists.length ? lists[lists.length - 1] : 0);
+  const closeListsPast = (indent) => {
+    while (lists.length && lists[lists.length - 1] > indent) lists.pop();
+  };
+  // the content column a fence lives in: below it, a non-blank line ends the fence
+  let fenceCol = 0;
   const flushPara = () => {
     if (para.length) {
       out.push(...escapeLine(para.join("\n")).split("\n"));
@@ -167,12 +182,13 @@ export function safeBody(text) {
     const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, "    ").length;
     if (fenceLen) {
       // a fence ends when its container ends (fewer > markers for a quote, or a
-      // non-blank line indented less than a list item's content column), with no closer
-      // appended; the ending line then goes through normal processing
+      // non-blank line indented less than its list item's content column), with no
+      // closer appended; the ending line then goes through normal processing. A
+      // top-level fence has column 0, so its own 1-3 space indent never ends it
       const fenceQuotes = (fencePrefix.match(/>/g) || []).length;
       const ended = fenceQuotes
         ? quotesOf(line) < fenceQuotes
-        : !blank && indent < fencePrefix.length;
+        : !blank && indent < fenceCol;
       if (!ended) {
         // a closer belongs to the opener's own container: inside a top-level fence, "- ```"
         // or "> ```" is code, not a closer (and a blockquoted fence needs its ">")
@@ -190,16 +206,27 @@ export function safeBody(text) {
       fenceLen = 0;
       fencePrefix = "";
     }
-    if (!blank && !para.length && indent < listCol) listCol = 0;
-    const list = line.match(LIST_ITEM);
+    // a line outside the open items, not a lazy paragraph continuation, closes them
+    if (!blank && !para.length) closeListsPast(indent);
+    if (!blank && RULE.test(line)) {
+      flushPara();
+      closeListsPast(indent);
+      inIndentedCode = false;
+      out.push(escapeLine(line));
+      continue;
+    }
+    // a list marker four or more columns past the content column is indented code
+    const list = indent < listCol() + 4 && !(inIndentedCode && indent >= 4) ? line.match(LIST_ITEM) : null;
     if (list) {
       flushPara();
-      listCol = list[0].length;
+      closeListsPast(indent);
+      lists.push(list[0].length);
     }
     const open = line.match(FENCE_OPEN);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
       flushPara();
-      if (!list && indent < listCol) listCol = 0;
+      if (!list) closeListsPast(indent);
+      fenceCol = listCol();
       fenceChar = open[2][0];
       fenceLen = open[2].length;
       // the closer, if one must be added, stays inside the same blockquote (a bare one
@@ -214,18 +241,22 @@ export function safeBody(text) {
       out.push(line);
       continue;
     }
-    if (indent >= listCol + 4 && (inIndentedCode || !para.length)) {
+    if (!list && indent >= listCol() + 4 && (inIndentedCode || !para.length)) {
       inIndentedCode = true;
       out.push(line);
       continue;
     }
     inIndentedCode = false;
-    if (ATX_HEADING.test(line)) {
+    if (ATX_HEADING.test(line) || HTML_BLOCK.test(line)) {
+      // a block of its own: escaped alone, never joined to a paragraph's spans
       flushPara();
-      if (indent < listCol) listCol = 0;
       out.push(escapeLine(line));
       continue;
     }
+    // a deeper blockquote starts a new paragraph; a line with fewer > is a lazy continuation
+    const q = quotesOf(line);
+    if (para.length && q > paraQuotes) flushPara();
+    if (!para.length) paraQuotes = q;
     para.push(line);
   }
   flushPara();
