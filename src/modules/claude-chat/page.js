@@ -5,7 +5,7 @@
 // matched (the probe reads that tab's resource timeline) and runs the fetches from
 // here, where the manifest's claude.ai host permission carries the login.
 import { match } from "../registry.js";
-import { parseChats, collectChats, readOrgPath, absolutizeOrgPath, outputsName } from "./outputs.js";
+import { parseChats, collectChats, readOrgPath, absolutizeOrgPath, outputsName, doneLine } from "./outputs.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
@@ -92,9 +92,8 @@ $("outputs-run").addEventListener("click", (e) => busy(e.target, async () => {
     const finish = (saved) => {
       failures(failedChats.map((r) => `${r.chat}: ${r.error}`));
       if (saved === true) {
-        say(`Done: ${chats.length} chats, ${done.fileCount} files saved to ${filename}.`
-          + (failedChats.length ? ` ${failedChats.length} chat(s) failed — their entries carry an "error".` : ""),
-          failedChats.length ? "warn" : "ok");
+        const end = doneLine({ chats: chats.length, fileCount: done.fileCount, results: done.results, filename });
+        say(end.text, end.warn ? "warn" : "ok");
       } else if (saved === false) {
         say(`The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads.`, "warn");
       } else {

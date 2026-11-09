@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Leket",
-  "version": "0.3.34",
+  "version": "0.3.35",
   "minimum_chrome_version": "109",
   "description": "Save Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "action": {
