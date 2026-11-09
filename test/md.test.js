@@ -338,7 +338,7 @@ test("quote keeps trailing spaces: a hard line break and code survive quoting", 
   assert.equal(quote("  ", 1), ">   ");
 });
 
-test("quoteBody keeps a code line's own tabs and expands only what its containers use", () => {
+test("quoteBody keeps a line's own tabs and expands only what its containers use", () => {
   const F = "```";
   // fence content keeps its tab: "> " takes 2 columns, the tab then runs from 2 to 4, as
   // the reader shows a tab at a code line's start anyway
@@ -353,8 +353,12 @@ test("quoteBody keeps a code line's own tabs and expands only what its container
   assert.equal(quoteBody(`${F}\n\t${F}\n<b>\n${F}`, 1), `> ${F}\n>     ${F}\n> <b>\n> ${F}`);
   // another fence char doesn't close it: kept as written
   assert.equal(quoteBody(`${F}\n\t~~~\n${F}`, 1), `> ${F}\n> \t~~~\n> ${F}`);
-  // text lines still expand, and depth 2 expands nothing
+  // a text line expands up to its text: a tab after that (a trailing one included, which
+  // as spaces would turn a soft break into a hard one) stays a tab
   assert.equal(quoteBody("-\tfoo", 1), "> -   foo");
+  assert.equal(quoteBody("a\n\t- \t\nb", 1), "> a\n>     - \t\n> b");
+  assert.equal(quoteBody("1.\ta\tb", 1), "> 1.  a\tb");
+  // and depth 2 expands nothing
   assert.equal(quoteBody(`${F}\n\t${F}\n${F}`, 2), `> > ${F}\n> > \t${F}\n> > ${F}`);
 });
 
