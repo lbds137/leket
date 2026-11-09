@@ -40,6 +40,9 @@ test("quoting changes nothing the reader gets, and the oracle sees it when it do
     `${F}\n\t${F}x\n${F}`,
     // a fence's indent is spaces and tabs only: after an NBSP the line isn't closer-shaped
     `${F}\n\t${String.fromCharCode(0xa0)}${F}\n${F}`,
+    // a run shorter than the opener, or of the other char, can't close it either
+    "````\n \t```\n````",
+    `${F}\n\t~~~\n${F}`,
     `  ${F}\n\tx\n  ${F}`, // a tab the fence's indent half uses: expanded, as it must be
     "a  \nb", // a hard break
     // a setext underline or a break with a tab in its lead or body: the whole lead expands
@@ -47,9 +50,9 @@ test("quoting changes nothing the reader gets, and the oracle sees it when it do
     "- b\n \t- -\t-",
   ];
   for (const input of cases) assert.equal(check(input), null, input);
-  // expanding each line's whole lead (quote() without content starts) changes the first seven
+  // expanding each line's whole lead (quote() without content starts) changes the first nine
   const whole = (s, d) => quote(safeBody(s), d);
-  for (const input of cases.slice(0, 7)) assert.ok(check(input, whole)?.moved, input);
+  for (const input of cases.slice(0, 9)) assert.ok(check(input, whole)?.moved, input);
 });
 
 test("the oracle sees a raw tag that safeBody's input would leak", () => {

@@ -70,8 +70,8 @@ export function rawHtml(cm, md) {
 // peeled off; quoting (comments) should change none of it. The one accepted difference
 // is a closer-shaped code line with a tab in its indent, whose indent quote() expands so
 // it can't close the fence two columns over (see md.js scanBlocks): a fenced block's
-// closer-shaped lines (a fence run, then trailing spaces or tabs only) are compared
-// without their indent.
+// closer-shaped lines (the opener's char, a run at least the opener's length, then
+// trailing spaces or tabs only) are compared without their indent.
 export function reading(cm, md, depth = 0) {
   let root = new cm.Parser().parse(md);
   for (let d = 0; d < depth; d++) {
@@ -90,7 +90,12 @@ export function reading(cm, md, depth = 0) {
     }
     let lit = n.literal;
     if (n.type === "code_block" && n.info !== null) { // fenced: indented code has no info
-      lit = lit.split("\n").map((l) => (/^[ \t]*(`{3,}|~{3,})[ \t]*$/.test(l) ? l.replace(/^[ \t]+/, "") : l)).join("\n");
+      // the opener's char and length have no public getter in the pinned commonmark 0.31.2
+      const closes = (l) => {
+        const m = l.replace(/^[ \t]+/, "").match(/^(`{3,}|~{3,})[ \t]*$/);
+        return m && m[1][0] === n._fenceChar && m[1].length >= n._fenceLength;
+      };
+      lit = lit.split("\n").map((l) => (closes(l) ? l.replace(/^[ \t]+/, "") : l)).join("\n");
     }
     out.push([n.type, lit, n.info, n.level, n.listType, n.listTight, n.listStart, n.listDelimiter, n.destination, n.title]);
   }
