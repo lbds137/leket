@@ -51,7 +51,15 @@ export function loadCommonmark() {
     const left = unmet(dir);
     if (left.length) throw new Error(`npm reported success but ${dir} still doesn't resolve ${left.join(", ")}`);
   }
-  return createRequire(join(dir, "/"))("commonmark");
+  const cm = createRequire(join(dir, "/"))("commonmark");
+  // reading() reads a fenced block's opener through private fields; if a commonmark
+  // version renames them, say so here rather than as a confusing reading diff
+  const fence = new cm.Parser().parse("~~~~\nx\n~~~~").firstChild;
+  if (fence?._fenceChar !== "~" || fence?._fenceLength !== 4) {
+    throw new Error(`${dir}'s commonmark no longer exposes a fenced block's _fenceChar/_fenceLength, `
+      + "which reading() needs: update reading() for this version, or reinstall " + COMMONMARK);
+  }
+  return cm;
 }
 
 // the literal of every raw HTML node CommonMark finds in md
