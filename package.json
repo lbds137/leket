@@ -1,6 +1,6 @@
 {
   "name": "leket",
-  "version": "0.3.28",
+  "version": "0.3.29",
   "private": true,
   "description": "A Chrome extension that saves Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "type": "module",

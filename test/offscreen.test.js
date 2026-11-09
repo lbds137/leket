@@ -88,3 +88,124 @@ test("the offscreen-side files never reference chrome.downloads", async () => {
     assert.ok(!src.includes("chrome.downloads"), `${f} references chrome.downloads — the document does not have it`);
   }
 });
+
+test("image, md and done handlers: token lookup, saved-name filter, folderRel check, token cleanup and sender refusal", async () => {
+  const galleryPost = postPage({
+    is_gallery: true,
+    is_self: false,
+    gallery_data: { items: [{ media_id: "a" }, { media_id: "b" }] },
+    media_metadata: {
+      a: { status: "valid", m: "image/png", s: { u: "https://i.redd.it/one.png" } },
+      b: { status: "valid", m: "image/jpeg", s: { u: "https://preview.redd.it/two.jpg" } },
+    },
+  });
+  fetchBody = JSON.stringify(galleryPost);
+  const run = await handled({ type: "leket:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  fetchBody = okBody;
+  assert.equal(run.ok, true);
+  assert.equal(typeof run.token, "string");
+  assert.equal(run.id, "abc123");
+  assert.deepEqual(run.images, [
+    { n: 1, u: "https://i.redd.it/one.png", ext: ".png" },
+    { n: 2, u: "https://preview.redd.it/two.jpg", ext: ".jpg" },
+  ]);
+
+  // sender refusal on all three new handlers (sender.tab and foreign sender.id)
+  for (const badSender of [{ id: "test-extension-id", tab: { id: 1 } }, { id: "foreign-extension" }]) {
+    for (const msg of [
+      { type: "leket:reddit-save-image", token: run.token, n: 1 },
+      { type: "leket:reddit-save-md", token: run.token, saved: { 1: "01.png" }, folderRel: "reddit-abc123-images" },
+      { type: "leket:reddit-save-done", token: run.token },
+    ]) {
+      assert.equal(await handled(msg, badSender), undefined);
+    }
+  }
+
+  // unknown token or unknown n on image and md handlers
+  assert.deepEqual(await handled({ type: "leket:reddit-save-image", token: "no-such-token", n: 1 }),
+    { ok: false, error: "that save is over" });
+  assert.deepEqual(await handled({ type: "leket:reddit-save-image", token: run.token, n: 99 }),
+    { ok: false, error: "that save is over" });
+  assert.deepEqual(await handled({ type: "leket:reddit-save-md", token: "no-such-token", saved: { 1: "01.png" }, folderRel: "reddit-abc123-images" }),
+    { ok: false, error: "that save is over" });
+
+  // leket:reddit-save-image success and failure
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    fetchCalls.push({ url, opts });
+    if (url === "https://i.redd.it/one.png") {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (k) => (k.toLowerCase() === "content-type" ? "image/png" : null) },
+        body: {
+          getReader: () => {
+            let done = false;
+            return {
+              read: async () => (done ? { done: true } : (done = true, { done: false, value: new Uint8Array([1, 2]) })),
+              cancel: async () => {},
+            };
+          },
+        },
+      };
+    }
+    return { ok: true, status: 200, headers: { get: () => "text/html" } };
+  };
+  try {
+    const imgOk = await handled({ type: "leket:reddit-save-image", token: run.token, n: 1 });
+    assert.equal(imgOk.ok, true);
+    assert.equal(imgOk.name, "01.png");
+    assert.match(imgOk.url, /^blob:/);
+
+    const imgFail = await handled({ type: "leket:reddit-save-image", token: run.token, n: 2 });
+    assert.deepEqual(imgFail, { ok: false, error: "the server sent text/html, not an image" });
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+
+  // folderRel check on leket:reddit-save-md
+  for (const badFolder of ["wrong-images", "reddit-other-images", "../reddit-abc123-images", ""]) {
+    const bad = await handled({ type: "leket:reddit-save-md", token: run.token, saved: { 1: "01.png" }, folderRel: badFolder });
+    assert.equal(bad.ok, false, `expected refusal for folderRel=${badFolder}`);
+  }
+
+  // saved-name filter on leket:reddit-save-md: keeps valid row 1, drops invalid row 2 and unknown row 3
+  const realCreate = URL.createObjectURL;
+  const blobs = [];
+  URL.createObjectURL = (b) => { blobs.push(b); return realCreate(b); };
+  let mdReply;
+  try {
+    mdReply = await handled({
+      type: "leket:reddit-save-md",
+      token: run.token,
+      saved: { 1: "01.png", 2: "../02.jpg", 3: "03.png" },
+      folderRel: "reddit-abc123-images",
+    });
+    // also check single-digit and non-image extension are filtered out
+    await handled({
+      type: "leket:reddit-save-md",
+      token: run.token,
+      saved: { 1: "1.png", 2: "02.svg" },
+      folderRel: "reddit-abc123-images",
+    });
+  } finally {
+    URL.createObjectURL = realCreate;
+  }
+  assert.equal(mdReply.ok, true);
+  assert.equal(mdReply.mdName, "reddit-abc123.md");
+  assert.match(mdReply.mdUrl, /^blob:/);
+  const mdText = await blobs[0].text();
+  assert.ok(mdText.includes("![image 1](<reddit-abc123-images/01.png>)"), mdText);
+  assert.ok(mdText.includes("Image 1 source: https://i.redd.it/one.png"), mdText);
+  assert.ok(mdText.includes("![image 2](<https://preview.redd.it/two.jpg>)"), "rejected saved[2] falls back to remote URL");
+  const mdTextAllRejected = await blobs[1].text();
+  assert.ok(mdTextAllRejected.includes("![image 1](<https://i.redd.it/one.png>)"), mdTextAllRejected);
+  assert.ok(mdTextAllRejected.includes("![image 2](<https://preview.redd.it/two.jpg>)"), mdTextAllRejected);
+
+  // leket:reddit-save-done deletes the token
+  assert.deepEqual(await handled({ type: "leket:reddit-save-done", token: run.token }), { ok: true });
+  assert.deepEqual(await handled({ type: "leket:reddit-save-image", token: run.token, n: 1 }),
+    { ok: false, error: "that save is over" });
+  assert.deepEqual(await handled({ type: "leket:reddit-save-md", token: run.token, saved: { 1: "01.png" }, folderRel: "reddit-abc123-images" }),
+    { ok: false, error: "that save is over" });
+});

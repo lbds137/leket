@@ -2,18 +2,21 @@
 // lives there, not in the offscreen document whose blob it reads.
 import { trackDownload } from "../../lib/download.js";
 
-// files is the array of { url, name } to save, in order (json first, md second): each
-// downloads on its own before the next starts. A refused or interrupted download
-// throws — the later files are not attempted (their blobs freed: nothing will read
-// them), and a re-click re-saves the lot (overwrite makes that clean). onSettled fires
-// per file, with that file's entry, once its own download is over for good (a download
-// with no word yet may still be reading the blob, so it fires only then — the worker
-// uses it to ask the document to revoke that blob).
-// Background always passes exactly two files, json then md; the message builder's
-// three shapes below assume that count. notFetched is md.js's { count, atLeast }: when
-// count > 0 and both files saved, the message adds the unfetched-comments note (never
-// while the .md is unconfirmed, since the note points the reader at it).
-export async function downloadPrepared(downloads, files, { timeout, onSettled, notFetched } = {}) {
+// files is the [json, md] pair of { url, name } to save, in order: each downloads on its
+// own before the next starts. A refused or interrupted json or md download throws — the
+// later files are not attempted (their blobs freed: nothing will read them), and a
+// re-click re-saves the lot (overwrite makes that clean). When opts.images is given, the
+// post's images are fetched and downloaded one at a time into opts.images.folder between
+// the json and the md (a failed image is noted and skipped without stopping the save),
+// and when at least one image saved, renderMd(saved) re-renders the .md with relative
+// links and replaces files[1] (freeing its unlinked blob). onSettled fires per file or
+// image, with its { url, name }, once its own download is over for good (a download with
+// no word yet may still be reading the blob, so it fires only then — the worker uses it
+// to ask the document to revoke that blob).
+// The message builder's three base shapes cover the [json, md] pair, followed by the
+// images sentence (when images.list is non-empty) and the unfetched-comments note (when
+// notFetched.count > 0 and both main files saved).
+export async function downloadPrepared(downloads, files, { timeout, onSettled, notFetched, images } = {}) {
   // saveAs is pinned off so the save never raises a prompt of its own; Chrome's own
   // "ask where to save each file" setting still asks when it is on — the API flag
   // can't suppress the user's setting (runtime-confirmed 11-04) — and the save lands
@@ -23,19 +26,63 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
   // go on reading the stale original.
   const settled = [];
   const unsettled = [];
+  const savedImages = {};
+  const failedImages = [];
+  const failMain = (file, rest) => {
+    // this save is over for good, and so are the files after it: nothing will ever
+    // read their blobs, so they are revoked alongside this one's — a skipped file's
+    // blob would otherwise sit in the document (MBs on a big thread) until restart
+    if (onSettled) for (const r of rest) onSettled(r);
+    const stillSaving = unsettled.map((f) => f.name).join(" and ");
+    throw new Error(`Chrome didn't complete the save of ${file.name}`
+      + (stillSaving ? `; ${stillSaving} ${unsettled.length === 1 ? "is" : "are"} still saving, unconfirmed` : "")
+      + " — check Chrome's downloads, then click Save again.");
+  };
   for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+    let file = files[i];
+    if (i === 1 && images && Array.isArray(images.list) && images.list.length > 0) {
+      for (const row of images.list) {
+        let r;
+        try {
+          r = await images.fetchImage(row.n);
+        } catch (e) {
+          r = { ok: false, error: (e && e.message) || String(e) };
+        }
+        if (!r || !r.ok) {
+          failedImages.push({ n: row.n, why: (r && r.error) || "no answer" });
+          continue;
+        }
+        const imgSaved = await trackDownload(
+          downloads,
+          { url: r.url, filename: `${images.folder}/${r.name}`, saveAs: false, conflictAction: "overwrite" },
+          { timeout },
+        );
+        if (imgSaved !== null && onSettled) onSettled({ url: r.url, name: r.name });
+        if (imgSaved === true) {
+          savedImages[row.n] = r.name;
+        } else if (imgSaved === false) {
+          failedImages.push({ n: row.n, why: "Chrome didn't complete the save" });
+        } else {
+          failedImages.push({ n: row.n, why: "no word from Chrome yet" });
+        }
+      }
+      if (Object.keys(savedImages).length > 0) {
+        let md;
+        try {
+          md = await images.renderMd(savedImages);
+        } catch (e) {
+          // Chrome never saw this .md: the save stops here, the images already landed
+          if (onSettled) onSettled(file);
+          throw new Error(`Couldn't write ${file.name} with links to the saved images (${(e && e.message) || e}) — click Save again.`);
+        }
+        if (onSettled) onSettled(file);
+        file = md;
+      }
+    }
     const saved = await trackDownload(downloads, { url: file.url, filename: file.name, saveAs: false, conflictAction: "overwrite" }, { timeout });
     if (saved !== null && onSettled) onSettled(file);
     if (saved === false) {
-      // this save is over for good, and so are the files after it: nothing will ever
-      // read their blobs, so they are revoked alongside this one's — a skipped file's
-      // blob would otherwise sit in the document (MBs on a big thread) until restart
-      if (onSettled) for (const rest of files.slice(i + 1)) onSettled(rest);
-      const stillSaving = unsettled.map((f) => f.name).join(" and ");
-      throw new Error(`Chrome didn't complete the save of ${file.name}`
-        + (stillSaving ? `; ${stillSaving} ${unsettled.length === 1 ? "is" : "are"} still saving, unconfirmed` : "")
-        + " — check Chrome's downloads, then click Save again.");
+      failMain(file, files.slice(i + 1));
     }
     (saved === null ? unsettled : settled).push(file);
   }
@@ -46,6 +93,18 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
     message = `Saved ${settled[0].name} to Downloads. ${unsettled[0].name} is still saving, with no word for a long while — if it never lands in Downloads, click Save again.`;
   } else {
     message = `${unsettled.map((f) => f.name).join(" and ")} are still saving, with no word for a long while — if they never land in Downloads, click Save again.`;
+  }
+  if (images && Array.isArray(images.list) && images.list.length > 0) {
+    const k = Object.keys(savedImages).length;
+    const m = images.list.length;
+    const why = failedImages.map((f) => `image ${f.n}: ${f.why}`).join("; ");
+    if (k === m) {
+      message += ` The post's ${m === 1 ? "image is" : `${m} images are`} in ${images.folder}.`;
+    } else if (k > 0) {
+      message += ` ${k} of ${m} images saved in ${images.folder}; the .md links the rest on reddit (${why}).`;
+    } else {
+      message += ` The post's ${m === 1 ? "image wasn't" : "images weren't"} saved; the .md links ${m === 1 ? "it" : "them"} on reddit (${why}).`;
+    }
   }
   const n = notFetched && Number.isFinite(notFetched.count) ? notFetched.count : 0;
   if (n > 0 && unsettled.length === 0) {

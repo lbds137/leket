@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { postOf, mediaPost, images, when, quote, comments, notFetched, safeBody, quoteBody, render } from "../src/modules/reddit/md.js";
+import { postOf, mediaPost, images, imageFileName, when, quote, comments, notFetched, safeBody, quoteBody, render } from "../src/modules/reddit/md.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const comment = (over = {}) => ({ kind: "t1", data: {
@@ -294,6 +294,36 @@ test("a saved image links its local file and names its source", () => {
   const md = render(postPage({ post_hint: "image", url_overridden_by_dest: "https://i.redd.it/pic.png" }), { 1: "01.jpg" }, "NAME-images");
   assert.ok(md.includes("![image 1](<NAME-images/01.jpg>)"), md);
   assert.ok(md.includes("Image 1 source: https://i.redd.it/pic.png"), md);
+});
+
+test("a saved image angle-encodes folderRel and the file name, and writes Image n source:", () => {
+  const md = render(
+    postPage({ post_hint: "image", url_overridden_by_dest: "https://i.redd.it/pic.png" }),
+    { 1: "01 <a>.png" },
+    "dir\\b",
+  );
+  assert.ok(md.includes("![image 1](<dir%5Cb/01%20%3Ca%3E.png>)"), md);
+  assert.ok(md.includes("Image 1 source: https://i.redd.it/pic.png"), md);
+});
+
+test("imageFileName picks MIME over row ext over URL path ext, falls back to .jpg, and pads to at least two digits", () => {
+  // MIME wins over row ext and URL path ext
+  assert.equal(imageFileName(1, "image/png", ".gif", "https://i.redd.it/a.webp"), "01.png");
+  assert.equal(imageFileName(2, "image/jpeg", ".png", "https://i.redd.it/a.gif"), "02.jpg");
+  // row ext wins when MIME is unknown or empty
+  assert.equal(imageFileName(3, "image/unknown", ".gif", "https://i.redd.it/a.webp"), "03.gif");
+  assert.equal(imageFileName(4, "", ".webp", "https://i.redd.it/a.png"), "04.webp");
+  // URL path ext (lowercased) when MIME and row ext are empty
+  assert.equal(imageFileName(5, "image/unknown", "", "https://i.redd.it/pic.JPEG?width=100"), "05.jpeg");
+  assert.equal(imageFileName(6, "", "", "https://i.redd.it/sub/pic.PNG"), "06.png");
+  // non-image ext, missing ext or unparsable URL falls back to .jpg
+  assert.equal(imageFileName(7, "image/bmp", "", "https://i.redd.it/pic.bmp"), "07.jpg");
+  assert.equal(imageFileName(8, "", ".svg", "https://i.redd.it/pic.png"), "08.jpg");
+  assert.equal(imageFileName(9, "", "", "https://i.redd.it/noext"), "09.jpg");
+  assert.equal(imageFileName(9, "", "", "not a url"), "09.jpg");
+  // n >= 100 keeps all digits
+  assert.equal(imageFileName(100, "image/png", "", "https://i.redd.it/a.png"), "100.png");
+  assert.equal(imageFileName(125, "image/gif", "", "https://i.redd.it/a.gif"), "125.gif");
 });
 
 // --- body and trailing newline ---

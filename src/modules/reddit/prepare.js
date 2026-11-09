@@ -8,7 +8,9 @@
 // reading one. The console script dev-docs/browser/reddit-json.js is the spec, as-is;
 // its old.reddit advice stays advice in the error text — never an auto-retry.
 import { POST_PATHNAME } from "../registry.js";
-import { render, notFetched } from "./md.js";
+import { render, notFetched, postOf, images, imageFileName } from "./md.js";
+
+const MAX_IMAGE_BYTES = 50 * 1048576;
 
 export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   const here = new URL(tabUrl);
@@ -50,18 +52,64 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   // wrapper (md.js's own message inside), so Chrome never writes a file that can't be read
   // the count is taken inside the try too: an odd shape (children not a list) is the
   // same not-this-post's-data refusal, not a bare TypeError
-  let mdText, nf;
+  let mdText, nf, imgs;
   try {
     nf = notFetched(data);
     mdText = render(data, {}, "", nf);
+    imgs = images(postOf(data)).filter(([, u]) => u).map(([n, u, , ext]) => ({ n, u, ext }));
   } catch (e) {
     throw new Error(`reddit answered with something that isn't this post's data — try again from old.reddit.com/comments/${id[1]} (${e && e.message || e})`);
   }
   return {
+    id: id[1],
+    data,
+    images: imgs,
     url: URL.createObjectURL(new Blob([text], { type: "application/json" })),
     name: `reddit-${id[1]}.json`,
     mdUrl: URL.createObjectURL(new Blob([mdText], { type: "text/markdown" })),
     mdName: `reddit-${id[1]}.md`,
     notFetched: nf,
+  };
+}
+
+export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
+  const unreachable = (e) => new Error(`couldn't reach it (${(e && e.message) || e})`);
+  let r;
+  try {
+    r = await doFetch(u, { credentials: "omit", signal: AbortSignal.timeout(60_000) });
+  } catch (e) {
+    throw unreachable(e);
+  }
+  if (!r.ok) throw new Error(`the server answered ${r.status}`);
+  const rawType = (r.headers && typeof r.headers.get === "function" && r.headers.get("content-type")) || "";
+  const ctype = rawType.split(";")[0].trim().toLowerCase();
+  if (!ctype.startsWith("image/")) {
+    throw new Error(`the server sent ${ctype || "no content type"}, not an image`);
+  }
+  const cl = Number(r.headers && typeof r.headers.get === "function" && r.headers.get("content-length"));
+  if (cl > MAX_IMAGE_BYTES) throw new Error("over 50 MB");
+  if (!r.body) throw new Error("the server sent no image data");
+  const chunks = [];
+  let total = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    let step;
+    try {
+      step = await reader.read();
+    } catch (e) {
+      throw unreachable(e);
+    }
+    const { done, value } = step;
+    if (done) break;
+    total += value.byteLength ?? value.length;
+    if (total > MAX_IMAGE_BYTES) {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      throw new Error("over 50 MB");
+    }
+    chunks.push(value);
+  }
+  return {
+    url: URL.createObjectURL(new Blob(chunks, { type: ctype })),
+    name: imageFileName(n, ctype, ext, u),
   };
 }

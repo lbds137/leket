@@ -86,20 +86,40 @@ const redditSave = async (tabUrl) => {
   }
   await ensureOffscreen();
   // a broadcast: every extension page gets it, and today only the offscreen document
-  // answers a reddit-save-run. No other page may grow a listener that replies to it —
-  // the worker would read that reply as the save's result.
+  // answers the reddit-save-* messages (run, image, md, done, revoke). No other page may
+  // grow a listener that replies to them — the worker would read that reply as the save's
+  // own.
   const prep = await chrome.runtime.sendMessage({ type: "leket:reddit-save-run", tabUrl });
   if (!prep || !prep.ok) {
     return { ok: false, error: (prep && prep.error) || SAVE_PAGE_SILENT };
   }
-  const done = await downloadPrepared(chrome.downloads, [
-    { url: prep.url, name: prep.name },
-    { url: prep.mdUrl, name: prep.mdName },
-  ], {
-    notFetched: prep.notFetched,
-    onSettled: (file) => chrome.runtime.sendMessage({ type: "leket:reddit-save-revoke", url: file.url }).catch(() => {}),
-  });
-  return { ok: true, message: done.message };
+  const folder = `reddit-${prep.id}-images`;
+  const images = Array.isArray(prep.images) && prep.images.length > 0 ? {
+    list: prep.images,
+    folder,
+    fetchImage: (n) => chrome.runtime.sendMessage({ type: "leket:reddit-save-image", token: prep.token, n })
+      .catch((e) => ({ ok: false, error: (e && e.message) || String(e) })),
+    renderMd: async (saved) => {
+      const reply = await chrome.runtime.sendMessage({ type: "leket:reddit-save-md", token: prep.token, saved, folderRel: folder });
+      if (!reply || !reply.ok) throw new Error((reply && reply.error) || SAVE_PAGE_SILENT);
+      return { url: reply.mdUrl, name: reply.mdName };
+    },
+  } : undefined;
+  try {
+    const done = await downloadPrepared(chrome.downloads, [
+      { url: prep.url, name: prep.name },
+      { url: prep.mdUrl, name: prep.mdName },
+    ], {
+      notFetched: prep.notFetched,
+      images,
+      onSettled: (file) => chrome.runtime.sendMessage({ type: "leket:reddit-save-revoke", url: file.url }).catch(() => {}),
+    });
+    return { ok: true, message: done.message };
+  } finally {
+    if (prep.token) {
+      chrome.runtime.sendMessage({ type: "leket:reddit-save-done", token: prep.token }).catch(() => {});
+    }
+  }
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {

@@ -67,6 +67,25 @@ const redditBody = JSON.stringify(postPage({}, [
   { kind: "t1", data: { id: "c1", author: "someone_else", body: "a comment", score: 3, created_utc: 1699000100, replies: "" } },
   { kind: "more", data: { count: 2, parent_id: "t1_c1", children: ["x", "y"] } },
 ]));
+const REDDIT_GALLERY = "https://www.reddit.com/r/x/comments/def456/a_gallery/";
+const REDDIT_GALLERY_JSON = "https://www.reddit.com/comments/def456.json?raw_json=1&limit=500";
+const SMOKE_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+const SMOKE_IMG_A = "https://i.redd.it/smokea.png";
+const SMOKE_IMG_B = "https://preview.redd.it/smokeb.jpg";
+const SMOKE_IMG_C = "https://images.example.org/smokec.png";
+const redditGalleryBody = JSON.stringify(postPage({
+  id: "def456",
+  permalink: "/r/x/comments/def456/a_gallery/",
+  is_gallery: true,
+  is_self: false,
+  selftext: "",
+  gallery_data: { items: [{ media_id: "a" }, { media_id: "b" }, { media_id: "c" }] },
+  media_metadata: {
+    a: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_A } },
+    b: { status: "valid", m: "image/jpg", s: { u: SMOKE_IMG_B } },
+    c: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_C } },
+  },
+}, []));
 const DISCORD_DM = "https://discord.com/channels/@me/111";
 const ATTACHMENT = "https://cdn.discordapp.com/attachments/1/2/note.txt";
 const ATTACHMENT_BODY = "hello";
@@ -109,6 +128,11 @@ const ETSY_REDACT = { name: "betsy", short: "bpt", firstSounds: "bpt" };
 const WEB = new Map([
   [REDDIT_POST, { type: "text/html", body: html("a reddit post") }],
   [REDDIT_JSON, { type: "application/json", body: redditBody }],
+  [REDDIT_GALLERY, { type: "text/html", body: html("a reddit gallery") }],
+  [REDDIT_GALLERY_JSON, { type: "application/json", body: redditGalleryBody }],
+  [SMOKE_IMG_A, { type: "image/png", body: SMOKE_PNG }],
+  [SMOKE_IMG_B, { type: "text/html", body: html("removed") }],
+  [SMOKE_IMG_C, { type: "image/png", body: SMOKE_PNG }],
   [DISCORD_DM, { type: "text/html", body: html("a discord dm") }],
   [ATTACHMENT, { type: "text/plain", body: ATTACHMENT_BODY }],
   [CLAUDE_CODE, { type: "text/html", body: html("a claude code page") }],
@@ -420,7 +444,7 @@ async function scenarios(cdp, downloads) {
       const settled = await extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123" }).then((d) => d.length)`);
       check(settled === 2 * round, `reddit save ${round}: no further reddit download started (${settled} in Chrome's list)`);
       // its own files only: no scenario's position in the run depends on another's downloads
-      const mine = landed().filter((f) => f.startsWith("reddit-"));
+      const mine = landed().filter((f) => f.startsWith("reddit-abc123"));
       check(JSON.stringify(mine) === JSON.stringify(["reddit-abc123.json", "reddit-abc123.md"]),
         `reddit save ${round}: exactly reddit-abc123.json + .md on disk, no renamed copy (found: ${mine.join(", ")})`);
       if (existsSync(join(downloads, "reddit-abc123.json"))) {
@@ -428,6 +452,38 @@ async function scenarios(cdp, downloads) {
       }
       await evalIn(popup.sessionId, "window.close()").catch(() => {});
       await waitFor(async () => !(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.url.endsWith("/src/popup/popup.html")), "the popup to close");
+    }
+  });
+
+  // ---- reddit images: gallery post with one good image, one HTML placeholder, one CORS-blocked host ----
+  await scenario("reddit images", async () => {
+    console.log("smoke: reddit images save");
+    await open(REDDIT_GALLERY);
+    const popup = await clickPopup("Save this post as Markdown");
+    const line = await waitFor(() => evalIn(popup.sessionId,
+      `(() => { const p = document.getElementById("card").lastElementChild; const t = p && !p.hidden ? p.textContent : ""; return t && t !== "Working…" ? { t, warn: p.classList.contains("warn") } : false; })()`),
+    "the popup's result line", 30000);
+    check(!line.warn, `reddit images: the popup reports success (it said: ${line.t})`);
+    check(line.t.includes("1 of 3 images saved in reddit-def456-images"), `reddit images: the popup reports 1 of 3 images saved (it said: ${line.t})`);
+    const mine = landed().filter((f) => f.startsWith("reddit-def456"));
+    check(JSON.stringify(mine) === JSON.stringify(["reddit-def456-images", "reddit-def456.json", "reddit-def456.md"]),
+      `reddit images: folder, json and md on disk (found: ${mine.join(", ")})`);
+    const imgDir = join(downloads, "reddit-def456-images");
+    const imgs = existsSync(imgDir) ? readdirSync(imgDir).filter((f) => !f.endsWith(".crdownload")).sort() : [];
+    check(JSON.stringify(imgs) === JSON.stringify(["01.png"]),
+      `reddit images: only 01.png landed in reddit-def456-images, no 02.* or 03.* (found: ${imgs.join(", ") || "none"})`);
+    if (existsSync(join(imgDir, "01.png"))) {
+      check(readFileSync(join(imgDir, "01.png")).equals(SMOKE_PNG), "reddit images: 01.png has the exact served bytes");
+    } else {
+      check(false, "reddit images: 01.png has the exact served bytes (missing)");
+    }
+    if (existsSync(join(downloads, "reddit-def456.md"))) {
+      const md = readFileSync(join(downloads, "reddit-def456.md"), "utf8");
+      check(md.includes("](<reddit-def456-images/01.png>)"), "reddit images: the .md links 01.png relatively");
+      check(md.includes("https://preview.redd.it/smokeb.jpg") && md.includes("https://images.example.org/smokec.png"),
+        "reddit images: the .md keeps remote links for the failed images");
+    } else {
+      check(false, "reddit images: reddit-def456.md exists on disk (missing)");
     }
   });
 

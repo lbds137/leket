@@ -1,10 +1,9 @@
 // The reddit post → Markdown converter, ported part for part from the dev-docs CLI
-// bin/reddit-export (its post_of, media_post, images, when, quote, comments, render —
-// the python file is the spec). Pure by design: no chrome APIs, no fetch, no DOM —
-// the extension's fetch half lives in prepare.js and the CLI's image-folder download
-// (save_images) and its network half stay CLI-only. Images render as remote links; the
-// saved/folderRel arguments are the follow-on images PR's surface, unused by the
-// extension for now.
+// bin/reddit-export (its post_of, media_post, images, save_images naming, when, quote,
+// comments, render — the python file is the spec). Pure by design: no chrome APIs, no
+// fetch, no DOM — the extension's fetch half lives in prepare.js and its download half
+// in download.js. Saved images link relatively into folderRel; any that couldn't be
+// saved link out.
 //
 // Where the port deliberately differs from the python:
 // - null fields fall back to the placeholder (u/[deleted], r/?, (untitled)) where
@@ -19,7 +18,8 @@
 //   destination (`[x](<url>)`), which then shows as text, and a `<https://…>` autolink,
 //   which turns into plain text (the URL still reads; it just isn't a link): rare in
 //   reddit, accepted.
-// - remote image links are wrapped in `<...>`.
+// - image links (saved and remote) are wrapped in `<...>`, with `<`, `>`, whitespace
+//   and `\` percent-encoded (encodeAngle).
 // - code spans pair within one line: a `<` in a span the renderer carries across a line
 //   break shows as `&lt;`, and after an unclosed backtick every `<` in the rest of the
 //   paragraph is escaped (safeBody), as is every `<` after a link's `](` or `][` (a
@@ -121,6 +121,16 @@ export function images(p) {
     if (u && (p.post_hint === "image" || pathIsImage(u))) out.push([1, u, "", "", ""]);
   }
   return out;
+}
+
+export function imageFileName(n, ctype, ext, u) {
+  let urlExt = "";
+  try {
+    const m = new URL(u).pathname.toLowerCase().match(/\.[^./]+$/);
+    if (m) urlExt = m[0];
+  } catch { /* no valid URL */ }
+  const e = MIME_EXT[ctype] || ext || urlExt;
+  return String(n).padStart(2, "0") + (IMAGE_EXT.includes(e) ? e : ".jpg");
 }
 
 function t1Parent(d) {
@@ -697,7 +707,7 @@ export function render(data, saved = {}, folderRel = "", nf = notFetched(data)) 
     if (!u) {
       out.push("", `*(gallery item ${n}${caption ? ": " + alt : ""} not saved: ${plain(skip)})*`);
     } else if (saved[n]) {
-      out.push("", `![${alt}](<${folderRel}/${saved[n]}>)`, `Image ${n} source: ${plain(u)}`);
+      out.push("", `![${alt}](<${encodeAngle(`${folderRel}/${saved[n]}`)}>)`, `Image ${n} source: ${plain(u)}`);
     } else {
       out.push("", `![${alt}](<${encodeAngle(u)}>)`);
     }
