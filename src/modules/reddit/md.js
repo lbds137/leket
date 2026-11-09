@@ -18,10 +18,10 @@
 //   which turns into plain text (the URL still reads; it just isn't a link): rare in
 //   reddit, accepted.
 // - remote image links are wrapped in `<...>`.
-// - every list marker is taken as an item start, even where CommonMark says it can't
-//   interrupt a paragraph ("2019. was" mid-paragraph): the cost is over-escaping only (a
-//   span that should cross that line doesn't, so a `<` in it shows as `&lt;`), never a
-//   raw `<`, so it is accepted.
+// - code spans pair within one line: a `<` in a span the renderer carries across a line
+//   break shows as `&lt;`, and after an unclosed backtick every `<` in the rest of the
+//   paragraph is escaped (safeBody). Pairing whole paragraphs was tried and dropped: each
+//   misjudged block boundary left a `<` raw, and a raw `<` is what this escape prevents.
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -96,10 +96,13 @@ function encodeAngle(u) {
   return String(u).replace(/</g, "%3C").replace(/>/g, "%3E").replace(/ /g, "%20");
 }
 
-function escapeLine(line) {
-  if (!line.includes("<")) return line;
+// One line's escape: code spans pair within the line only. `open` says a backtick run
+// found no closer here; in the rendered file it may close on a later line of the same
+// paragraph, so safeBody stops trusting spans on the lines after it.
+function escapeSpans(line) {
   const parts = line.split(/(`+)/);
   let out = "";
+  let open = false;
   for (let i = 0; i < parts.length; i++) {
     if (i % 2 === 0) {
       out += parts[i].replace(/</g, "&lt;");
@@ -124,10 +127,15 @@ function escapeLine(line) {
         i = close;
       } else {
         out += run;
+        open = true;
       }
     }
   }
-  return out;
+  return { text: out, open };
+}
+
+function escapeLine(line) {
+  return escapeSpans(line).text;
 }
 
 // A fence may sit behind blockquote and list markers ("> ```", "- ```", "1. ```"), and a
@@ -173,13 +181,21 @@ export function safeBody(text) {
   // a 4-space (or tab) line is indented code only where a paragraph can't be continuing
   // (at the start, after a blank line, after an ATX heading, or after another
   // indented-code line) and its indent reaches the active list item's content column + 4.
-  // Consecutive paragraph lines are buffered and escaped together so multi-line code
-  // spans match across line breaks; a line that starts a new block in the OUTPUT flushes
-  // the buffer first, so a span never reaches past a block boundary. Spans pair the way
-  // the escaped output will render, so a line whose escaping changes its block (an HTML
-  // block start, which escaped is plain text) joins the paragraph instead.
+  // Code spans pair within one line only (escapeSpans): a span the renderer would carry
+  // across a line break shows its `<` as `&lt;`, a cosmetic cost. Once a line leaves a
+  // backtick run unclosed, that run may close on a later line in the rendered file, so
+  // spans stop being trusted: every `<` is escaped until a blank line, a quote-only line
+  // or a fence, where a paragraph surely ends. Any boundary this function misjudges
+  // costs over-escaping, never a raw `<`.
   let para = [];
   let paraQuotes = 0;
+  let untrusted = false;
+  const esc = (l) => {
+    if (untrusted) return l.replace(/</g, "&lt;");
+    const r = escapeSpans(l);
+    if (r.open) untrusted = true;
+    return r.text;
+  };
   let inIndentedCode = false;
   // the content columns of the open list items, innermost last: a dedent closes only the
   // items deeper than the line, so a nested list's end returns to its parent's column
@@ -193,7 +209,7 @@ export function safeBody(text) {
   let fenceQuotedCol = 0;
   const flushPara = () => {
     if (para.length) {
-      out.push(...escapeLine(para.join("\n")).split("\n"));
+      out.push(...para.map(esc));
       para = [];
     }
   };
@@ -242,26 +258,30 @@ export function safeBody(text) {
       closeListsPast(indent);
       lists.push(empty[1].length + empty[2].length + 1);
       inIndentedCode = false;
-      out.push(escapeLine(line));
+      out.push(esc(line));
       continue;
     }
     if (!blank && RULE.test(line)) {
       flushPara();
       closeListsPast(indent);
       inIndentedCode = false;
-      out.push(escapeLine(line));
+      out.push(esc(line));
       continue;
     }
+    // an ordered marker other than 1 can't interrupt a paragraph (CommonMark): mid-
+    // paragraph, "2019. was" or "2. ```" is plain text, neither an item nor a fence
+    const nonInterrupting = para.length > 0 && /^ *\d{1,9}[.)]/.test(line) && !/^ *0*1[.)]/.test(line);
     // a list marker four or more columns past the content column is indented code
-    const list = indent < listCol() + 4 && !(inIndentedCode && indent >= 4) ? line.match(LIST_ITEM) : null;
+    const list = !nonInterrupting && indent < listCol() + 4 && !(inIndentedCode && indent >= 4) ? line.match(LIST_ITEM) : null;
     if (list) {
       flushPara();
       closeListsPast(indent);
       lists.push(contentColumn(list));
     }
-    const open = line.match(FENCE_OPEN);
+    const open = nonInterrupting ? null : line.match(FENCE_OPEN);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
       flushPara();
+      untrusted = false;
       if (!list) closeListsPast(indent);
       fenceCol = listCol();
       // a list item behind quote markers: its content column, counted after the quotes
@@ -282,6 +302,7 @@ export function safeBody(text) {
     const quoteBlank = !blank && quotesOf(line) > 0 && /^[\s>]*$/.test(line);
     if (blank || quoteBlank) {
       flushPara();
+      untrusted = false;
       out.push(line);
       continue;
     }
@@ -292,16 +313,15 @@ export function safeBody(text) {
     }
     inIndentedCode = false;
     if (ATX_HEADING.test(line)) {
-      // a block of its own: escaped alone, never joined to a paragraph's spans
+      // a block of its own
       flushPara();
-      out.push(escapeLine(line));
+      out.push(esc(line));
       continue;
     }
     // an HTML block start is escaped up front, whatever span it may sit in (inside one
     // the &lt; only over-escapes, which is harmless): escaped, it is no block at all
-    // but paragraph text, so it joins the paragraph and its backticks pair with the
-    // lines around it as they will in the output
-    // (checked after any quote or list markers: a block can start inside a container)
+    // but paragraph text (checked after any quote or list markers: a block can start
+    // inside a container)
     const markers = line.match(PREFIX)[0];
     const body = line.slice(markers.length);
     const lineText = HTML_BLOCK.test(body) ? markers + body.replace("<", "&lt;") : line;

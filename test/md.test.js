@@ -433,10 +433,17 @@ test("a 4-space line is indented code only where no paragraph is continuing", ()
   assert.equal(safeBody("    <a>\n\n    <b>\nafter <c>"), "    <a>\n\n    <b>\nafter &lt;c>");
 });
 
-test("safeBody matches code spans across line breaks inside a paragraph, and ends them at paragraph boundaries", () => {
-  assert.equal(safeBody("`a <b>\nfoo` and <c>"), "`a <b>\nfoo` and &lt;c>");
-  assert.equal(safeBody("> `a <b>\n> foo` and <c>"), "> `a <b>\n> foo` and &lt;c>");
-  assert.equal(safeBody("`a <b>\n\nfoo`"), "`a &lt;b>\n\nfoo`");
+test("spans pair within a line; after an unclosed backtick the paragraph's later < are all escaped", () => {
+  // a span the renderer carries across the break over-escapes (cosmetic), never leaks
+  assert.equal(safeBody("`a <b>\nfoo` and <c>"), "`a &lt;b>\nfoo` and &lt;c>");
+  assert.equal(safeBody("> `a <b>\n> foo` and <c>"), "> `a &lt;b>\n> foo` and &lt;c>");
+  // a later line's own span isn't trusted while a backtick is open: it may pair across
+  assert.equal(safeBody("x `a\nfoo `<x>`"), "x `a\nfoo `&lt;x>`");
+  // a blank line, a quote-only line or a fence ends the paragraph and restores trust
+  assert.equal(safeBody("`a\n\n`<b>`"), "`a\n\n`<b>`");
+  assert.equal(safeBody("> `a\n>\n> `<b>`"), "> `a\n>\n> `<b>`");
+  // a balanced line before leaves the next line's spans trusted
+  assert.equal(safeBody("`a` b\n`<c>`"), "`a` b\n`<c>`");
 });
 
 test("safeBody treats backslash-escaped backticks outside a code span as literal, and backslashes inside a span as literal", () => {
@@ -475,10 +482,15 @@ test("a span never reaches past a line that starts a new block", () => {
   assert.equal(safeBody(`${t}a\n> <b>\nfoo${t}`), `${t}a\n> &lt;b>\nfoo${t}`);
   assert.equal(safeBody(`${t}a\n***\n<b>\nfoo${t}`), `${t}a\n***\n&lt;b>\nfoo${t}`);
   assert.equal(safeBody(`${t}a\n===\n<b>\n${t}`), `${t}a\n===\n&lt;b>\n${t}`);
-  // inline-only tags (type 7) don't interrupt: the span still crosses them
-  assert.equal(safeBody(`${t}a\n<b>\nfoo${t}`), `${t}a\n<b>\nfoo${t}`);
-  // a lazy line inside a quote paragraph continues it: the span crosses it
-  assert.equal(safeBody(`> ${t}a\n<b>${t}`), `> ${t}a\n<b>${t}`);
+  // spans don't cross lines: inside a would-be multi-line span the < over-escapes
+  assert.equal(safeBody(`${t}a\n<b>\nfoo${t}`), `${t}a\n&lt;b>\nfoo${t}`);
+  assert.equal(safeBody(`> ${t}a\n<b>${t}`), `> ${t}a\n&lt;b>${t}`);
+  // a block starting behind quote markers: never a raw <
+  assert.equal(safeBody(`> ${t}a\n> - <b>${t}`), `> ${t}a\n> - &lt;b>${t}`);
+  assert.equal(safeBody(`> ${t}a\n> # <b>${t}`), `> ${t}a\n> # &lt;b>${t}`);
+  assert.equal(safeBody(`> ${t}a\n> ***\n> <b>${t}`), `> ${t}a\n> ***\n> &lt;b>${t}`);
+  // an ordered marker other than 1 can't interrupt: mid-paragraph "2. ```" is no fence
+  assert.equal(safeBody("foo\n2. ```\n   <x>"), "foo\n2. ```\n   &lt;x>");
 });
 
 test("a nested list's end returns to its parent item's content column", () => {
@@ -507,8 +519,8 @@ test("a quote-only line ends the quote's paragraph, so a span can't pair across 
   assert.equal(safeBody(`> ${t}a\n> \n> <b>${t}`), `> ${t}a\n> \n> &lt;b>${t}`);
   assert.equal(safeBody(`> > ${t}a\n>\n> > <b>${t}`), `> > ${t}a\n>\n> > &lt;b>${t}`);
   assert.equal(safeBody(`> > ${t}a\n> >\n> > <b>${t}`), `> > ${t}a\n> >\n> > &lt;b>${t}`);
-  // within one quote paragraph the span still crosses lines
-  assert.equal(safeBody(`> ${t}a\n> <b>${t}`), `> ${t}a\n> <b>${t}`);
+  // within one quote paragraph spans don't cross lines either: over-escaped, not raw
+  assert.equal(safeBody(`> ${t}a\n> <b>${t}`), `> ${t}a\n> &lt;b>${t}`);
 });
 
 test("a list item's fence inside a quote ends where the item ends", () => {
