@@ -53,10 +53,12 @@ test("quoting changes nothing the reader gets, and the oracle sees it when it do
     "- a\n \t---",
     "- b\n \t- -\t-",
   ];
-  for (const input of [...moves, ...holds]) assert.equal(check(input), null, input);
+  // a failure says what check() found (which depth moved, and to what), not just the input
+  const why = (f, input) => (f ? show(f) : `input ${JSON.stringify(input)}: nothing moved`);
+  for (const input of [...moves, ...holds]) { const f = check(input); assert.equal(f, null, why(f, input)); }
   const whole = (s, d) => quote(safeBody(s), d);
-  for (const input of moves) assert.ok(check(input, whole)?.moved, input);
-  for (const input of holds) assert.equal(check(input, whole), null, input);
+  for (const input of moves) { const f = check(input, whole); assert.ok(f?.moved, why(f, input)); }
+  for (const input of holds) { const f = check(input, whole); assert.equal(f, null, why(f, input)); }
 });
 
 test("the oracle sees a raw tag that safeBody's input would leak", () => {
