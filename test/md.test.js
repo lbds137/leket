@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { postOf, mediaPost, images, when, quote, comments, notFetched, safeBody, render } from "../src/modules/reddit/md.js";
+import { postOf, mediaPost, images, when, quote, comments, notFetched, safeBody, quoteBody, render } from "../src/modules/reddit/md.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const comment = (over = {}) => ({ kind: "t1", data: {
@@ -329,6 +329,33 @@ test("quote splits at a lone \\r too and turns leading tabs into the spaces they
   // a tab past the line's lead stays a tab, and depth 0 leaves the line alone
   assert.equal(quote("a\tb", 1), "> a\tb");
   assert.equal(quote("\tx", 0), "\tx");
+  // an even depth moves columns by a multiple of 4, so every tab keeps its width
+  assert.equal(quote("\t<x>", 2), "> > \t<x>");
+});
+
+test("quote keeps trailing spaces: a hard line break and code survive quoting", () => {
+  assert.equal(quote("a  \nb", 1), "> a  \n> b");
+  assert.equal(quote("  ", 1), ">   ");
+});
+
+test("quoteBody keeps a code line's own tabs and expands only what its containers use", () => {
+  const F = "```";
+  // fence content keeps its tab: "> " takes 2 columns, the tab then runs from 2 to 4, as
+  // the reader shows a tab at a code line's start anyway
+  assert.equal(quoteBody(`${F}\n\tx\n${F}`, 1), `> ${F}\n> \tx\n> ${F}`);
+  // indented code: the 4 columns that make it code are spaces now, the rest is as written
+  assert.equal(quoteBody("\t\tx", 1), ">     \tx");
+  // a fence indented 2 strips 2 columns of the tab and keeps the other 2 as spaces
+  assert.equal(quoteBody(`  ${F}\n\tx\n  ${F}`, 1), `>   ${F}\n>     x\n>   ${F}`);
+  // a quoted fence: ">\t" uses part of the tab, so the whole tab expands
+  assert.equal(quoteBody(`> ${F}\n>\tx`, 1), `> > ${F}\n> >   x\n> > ${F}`);
+  // closer-shaped: kept, the tab would be 2 wide and close the fence, so it expands
+  assert.equal(quoteBody(`${F}\n\t${F}\n<b>\n${F}`, 1), `> ${F}\n>     ${F}\n> <b>\n> ${F}`);
+  // another fence char doesn't close it: kept as written
+  assert.equal(quoteBody(`${F}\n\t~~~\n${F}`, 1), `> ${F}\n> \t~~~\n> ${F}`);
+  // text lines still expand, and depth 2 expands nothing
+  assert.equal(quoteBody("-\tfoo", 1), "> -   foo");
+  assert.equal(quoteBody(`${F}\n\t${F}\n${F}`, 2), `> > ${F}\n> > \t${F}\n> > ${F}`);
 });
 
 test("mediaPost hands a crosspost's parent over, and keeps a post with its own media", () => {

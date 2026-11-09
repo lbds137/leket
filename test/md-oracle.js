@@ -13,23 +13,43 @@ export const COMMONMARK = "commonmark@0.31.2";
 // its dependencies, pinned too (it asks for ~ ranges), so a later release of one can't
 // move the oracle
 const DEPS = ["entities@3.0.1", "mdurl@1.0.1", "minimist@1.2.8"];
+const PINS = [COMMONMARK, ...DEPS];
+// no install scripts run (the oracle needs none) and no lockfile is written
+const INSTALL = ["install", "--no-save", "--package-lock=false", "--ignore-scripts", "--no-audit", "--no-fund"];
+
+// The pins the cache in dir doesn't satisfy: each package is resolved the way commonmark
+// itself requires it (a nested copy under commonmark wins over a top-level one), so a
+// cache filled by hand can't hand the oracle other versions.
+function unmet(dir) {
+  const pkg = join(dir, "node_modules", "commonmark", "package.json");
+  if (!existsSync(pkg)) return PINS;
+  const req = createRequire(pkg);
+  return PINS.filter((pin) => {
+    const name = pin.slice(0, pin.lastIndexOf("@"));
+    // the lookup's own node_modules order; a package.json behind an exports map can't
+    // be required, so it is read from the first directory that has the package
+    const at = req.resolve.paths(name).map((p) => join(p, name, "package.json")).find((p) => existsSync(p));
+    try {
+      return !at || `${name}@${JSON.parse(readFileSync(at, "utf8")).version}` !== pin;
+    } catch {
+      return true;
+    }
+  });
+}
 
 export function loadCommonmark() {
-  const version = COMMONMARK.split("@")[1];
   const dir = process.env.LEKET_ORACLE_CACHE || join(homedir(), ".cache", "leket-oracle", COMMONMARK);
-  const pkg = join(dir, "node_modules", "commonmark", "package.json");
-  const installed = () => existsSync(pkg) && JSON.parse(readFileSync(pkg, "utf8")).version === version;
-  if (!installed()) {
+  if (unmet(dir).length) {
     mkdirSync(dir, { recursive: true });
     try {
-      execFileSync("npm", ["install", "--prefix", dir, "--no-save", "--no-audit", "--no-fund", COMMONMARK, ...DEPS],
-        { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
+      execFileSync("npm", [...INSTALL, "--prefix", dir, ...PINS], { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
     } catch (e) {
       throw new Error(`the CommonMark oracle needs ${COMMONMARK} and npm couldn't install it into ${dir} `
-        + `(network down?). Run: npm install --prefix "${dir}" --no-save ${[COMMONMARK, ...DEPS].join(" ")} — `
+        + `(network down?). Run: npm ${INSTALL.join(" ")} --prefix "${dir}" ${PINS.join(" ")} — `
         + `or set LEKET_ORACLE_CACHE to a directory that has it. npm said: ${e.stderr || e.message}`);
     }
-    if (!installed()) throw new Error(`npm reported success but ${pkg} isn't ${COMMONMARK}`);
+    const left = unmet(dir);
+    if (left.length) throw new Error(`npm reported success but ${dir} still doesn't resolve ${left.join(", ")}`);
   }
   return createRequire(join(dir, "/"))("commonmark");
 }
@@ -43,6 +63,22 @@ export function rawHtml(cm, md) {
     if (e.entering && (e.node.type === "html_inline" || e.node.type === "html_block")) hits.push(e.node.literal);
   }
   return hits;
+}
+
+// the literal of every code block CommonMark finds in md, each line of it as the reader
+// sees it: quoting (comments) should change none of them. The one accepted difference is
+// a closer-shaped line with a tab in its indent, whose indent quote() expands so it can't
+// close the fence two columns over (see md.js scanBlocks), so that indent is dropped here.
+export function codeText(cm, md) {
+  const walker = new cm.Parser().parse(md).walker();
+  const blocks = [];
+  let e;
+  while ((e = walker.next())) {
+    if (e.entering && e.node.type === "code_block") {
+      blocks.push(e.node.literal.split("\n").map((l) => (/^ *\t[ \t]*(`{3,}|~{3,})/.test(l) || /^ +(`{3,}|~{3,})/.test(l) ? l.trimStart() : l)));
+    }
+  }
+  return blocks;
 }
 
 // safeBody's other promise: every input line comes back, `<` turned into `&lt;` at most

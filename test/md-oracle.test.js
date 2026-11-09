@@ -1,25 +1,31 @@
 // safeBody against a real CommonMark parser (test/md-oracle.js): no raw HTML survives,
-// and every input line is kept. Fixed cases pin each leak class a review found; the
-// seeded fuzz looks for new ones. LEKET_FUZZ_N and LEKET_FUZZ_SEED widen or move it.
+// every input line is kept, and quoting keeps code blocks as written. Fixed cases pin
+// each leak class a review found; the seeded fuzz looks for new ones. LEKET_FUZZ_N and
+// LEKET_FUZZ_SEED widen or move it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { safeBody, quote, render } from "../src/modules/reddit/md.js";
-import { loadCommonmark, rawHtml, linesKept, prng, generate } from "./md-oracle.js";
+import { safeBody, quoteBody, render } from "../src/modules/reddit/md.js";
+import { loadCommonmark, rawHtml, codeText, linesKept, prng, generate } from "./md-oracle.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const cm = loadCommonmark();
 const F = "```";
 
-// a body on its own (a post) and quoted one and two deep (comments, as comments() writes them)
+// a body on its own (a post) and quoted one and two deep (comments, as comments() writes
+// them): no raw HTML, every line kept, and quoting leaves each code block's text as it was
 const check = (input) => {
   const out = safeBody(input);
-  const html = [out, quote(out, 1), quote(out, 2)].flatMap((md) => rawHtml(cm, md));
+  const quoted = [quoteBody(input, 1), quoteBody(input, 2)];
+  const html = [out, ...quoted].flatMap((md) => rawHtml(cm, md));
   const kept = linesKept(input, out);
-  return html.length || !kept ? { input, out, html, kept } : null;
+  const code = JSON.stringify(codeText(cm, out));
+  const moved = quoted.find((md) => JSON.stringify(codeText(cm, md)) !== code);
+  return html.length || !kept || moved !== undefined ? { input, out, html, kept, moved } : null;
 };
 const show = (f) => `input ${JSON.stringify(f.input)}\n  safeBody ${JSON.stringify(f.out)}\n  `
-  + (f.html.length ? `raw HTML ${JSON.stringify(f.html)}` : "a line was lost or changed");
+  + (f.html.length ? `raw HTML ${JSON.stringify(f.html)}`
+    : !f.kept ? "a line was lost or changed" : `quoting changed a code block: ${JSON.stringify(f.moved)}`);
 
 test("the oracle sees a raw tag that safeBody's input would leak", () => {
   assert.deepEqual(rawHtml(cm, "a <b> c"), ["<b>"]);
@@ -29,6 +35,11 @@ test("the oracle sees a raw tag that safeBody's input would leak", () => {
 
 test("each leak class a review found leaves no raw HTML", () => {
   const cases = [
+    // a closer-shaped code line with a tab in its indent: kept as written, quoting would
+    // make the tab 2 wide and the line a closer, leaving the next line as text
+    `${F}\n\t${F}\n<b>\n${F}`,
+    `${F}\n \t${F}\n<b>\n${F}`,
+    `- ${F}\n  \t${F}\n  <b>`,
     // a sibling item's fence: "2." can't interrupt a paragraph, but it can start an item of an open list
     `1. step\n2. ${F}\n   code\n   ${F}\n   then <b>`,
     // a lone "--" or "===" with no paragraph above is text, so a 4-space line after it continues it
