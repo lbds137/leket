@@ -89,9 +89,9 @@ If the page warns that the name also matches Etsy's own words or the file's fiel
 
 1. Open the post itself on [www.reddit.com](https://www.reddit.com) or [old.reddit.com](https://old.reddit.com) in Chrome (its address has `/comments/` in it).
 2. Click the **Leket** button in the toolbar, then **Save this post as Markdown**. The popup stays open and says how it went; if you close it, the save still finishes.
-3. `reddit-<post id>.md`, the post and its comments as readable Markdown, and `reddit-<post id>.json`, the data reddit sent, land in your Downloads folder, and any images on reddit's own image hosts download into `reddit-<post id>-images/` beside the `.md`, which links them. Saving the same post again replaces them.
+3. `reddit-<post id>.md`, the post and its comments as readable Markdown, and `reddit-<post id>.json`, the data reddit sent, land in your Downloads folder, and any images on reddit's own image hosts download into `reddit-<post id>-images/` beside the `.md`, which links them. Saving the same post again replaces them. Chrome can't delete files, though: if a re-save names an image differently (`01.png` becoming `01.jpg`) or the post now has fewer images, the old files stay in the folder; the `.md` links only the current ones.
 
-Images hosted elsewhere are tried too, and if one can't be fetched the `.md` links it on reddit. Leket fetches the comments in one request, as your logged-in browser sees them; on a big thread reddit leaves some out. The popup says how many, and the `.md` links to those threads on reddit. If Chrome is set to ask where to save each file, it asks for each image too.
+Images hosted elsewhere are tried too, over https only and never from a local or private-network address, and if one can't be fetched the `.md` links it where it's hosted. Leket fetches the comments in one request, as your logged-in browser sees them; on a big thread reddit leaves some out. The popup says how many, and the `.md` links to those threads on reddit. If Chrome is set to ask where to save each file, it asks for each image too.
 
 ## claude.ai sessions and chat outputs
 
