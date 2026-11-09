@@ -1,6 +1,6 @@
-// Leket collector. The extension injects it into the page's own world when its
-// toolbar button is clicked on a DM (discord.com/channels/@me/<channel id>), a server
-// channel or a thread (discord.com/channels/<server id>/<channel id>). Pasted into
+// Leket collector. The extension injects it into the page's own world when the popup's
+// "Save this conversation" button is pressed on a DM (discord.com/channels/@me/<channel
+// id>), a server channel or a thread (discord.com/channels/<server id>/<channel id>). Pasted into
 // DevTools (F12 > Console) instead, it works alone and Save downloads the JSON only.
 //
 // Reads only what the Discord page has already loaded while you scroll up; it makes no
@@ -27,7 +27,7 @@
 (() => {
   const [, GUILD, CHANNEL] = location.pathname.match(/^\/channels\/(@me|\d+)\/(\d+)/) || [];
   if (!CHANNEL) return alert("Open a DM or a server channel first (the address should be discord.com/channels/…/<number>).");
-  // a second click on the toolbar button while the panel is open leaves the one there
+  // a second launch from the popup while the panel is open leaves the one there
   if (document.getElementById("leket-panel")) return;
   const IS_DM = GUILD === "@me";
   // The tab title is "(3) Discord | @name" while there are unread messages; it names the
