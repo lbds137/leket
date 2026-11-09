@@ -227,8 +227,13 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
     const fwd = (m.forwarded || []).map((f, k) => `<div class="forward"><div class="f-label">Forwarded</div>${text(f.text)}` +
       listed(f.attachments, `${m.id}|${k}`) + (f.embeds || []).map(embed).join("") + `</div>`).join("") +
       (m.forward_of && !(m.forwarded || []).length ? `<div class="forward"><em>forwarded message: its content was not found</em></div>` : "");
+    // a join, pin, call or boost notice carries no text of its own: say what it is rather
+    // than leave a name over an empty bubble (0 is a plain message, 19 a reply)
+    const bare = !m.text && !(m.attachments || []).length && !(m.embeds || []).length && !fwd;
+    const notice = bare && Number.isInteger(m.type) && m.type !== 0 && m.type !== 19
+      ? `<em>a Discord notice (type ${m.type}): its wording isn't saved</em>` : "";
     body += `<div class="msg${sameAuthor ? " cont" : ""}" id="m${esc(m.id)}">${reply}${head}` +
-      `<div class="text">${text(m.text)}${m.edited ? ' <span class="edited">(edited)</span>' : ""}</div>` +
+      `<div class="text">${notice}${text(m.text)}${m.edited ? ' <span class="edited">(edited)</span>' : ""}</div>` +
       fwd + listed(m.attachments, `${m.id}|`) + (m.embeds || []).map(embed).join("") + `</div>`;
     last = m;
   }

@@ -628,7 +628,9 @@
   const START = IS_DM ? /beginning of your direct message history/i
     : /This is the start of the #|Welcome to #|Started by /i;
   let reachedStart = false;
-  const atStart = (s) => START.test(s.textContent);
+  // only text outside the message rows counts: a message quoting the header's wording
+  // ("Welcome to #rules") must neither end the climb nor mark the save complete
+  const atStart = (s) => START.test(ownText(s));
 
   // "start at": the newest edge of a chunk, for a save resumed mid-conversation (jump to a
   // Discord search result first, then collect down to the "stop at" day). Nothing is

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, fetchFile, restBetweenFiles } from "../src/lib/build.js";
-import { FOLDER, attachmentList, fetchable, fileName, needsParts } from "../src/lib/files.js";
+import { FOLDER, attachmentList, fetchable, fileName, needsParts, saveName } from "../src/lib/files.js";
 import { PART_LIMIT } from "../src/lib/zip.js";
 import { render } from "../src/lib/render.js";
 
@@ -817,4 +817,28 @@ test("a stop reaches a worker retrying a 503: the manifest goes out without wait
   const f2 = r.records.find((m) => m.filename === "f2.bin");
   assert.equal(f2.error, "not saved — the save stopped early", "the stop, not the 503, is why f2 is unsaved");
   assert.equal(r.leftBehind, 2, "f2 and f3 never got into a part");
+});
+
+test("the save's name keeps the collector's shape and stays short enough for its zip parts", () => {
+  assert.equal(saveName("discord-general-123.json"), "discord-general-123.json");
+  assert.equal(saveName("../etc/passwd"), "discord-export.json");
+  assert.equal(saveName("discord-a b-1.json"), "discord-export.json");
+  // a 100-character CJK thread name is ~300 bytes: cut on a character boundary
+  const long = saveName(`discord-${"字".repeat(100)}-123456789012345678.json`);
+  assert.match(long, /^discord-字+-123456789012345678\.json$/u);
+  assert.ok(new TextEncoder().encode(long).length <= 200, long);
+  // the longest part name the build makes from it still fits in 255 bytes
+  assert.ok(new TextEncoder().encode(long.replace(/\.json$/, "-part99-of-99.zip")).length <= 255);
+});
+
+test("a Discord notice with nothing to show says what it is instead of an empty bubble", () => {
+  const e = exp();
+  e.messages = [{ ...e.messages[0], id: "900", text: "", attachments: [], embeds: [], edited: false, type: 7 }];
+  const html = render(e, [], { timeZone: "UTC" });
+  assert.match(html, /<div class="text"><em>a Discord notice \(type 7\): its wording isn't saved<\/em><\/div>/);
+  // an ordinary empty message (type 0) and a reply (19) get no notice
+  for (const type of [0, 19, undefined]) {
+    e.messages = [{ ...e.messages[0], text: "", attachments: [], embeds: [], type }];
+    assert.doesNotMatch(render(e, [], { timeZone: "UTC" }), /a Discord notice/, String(type));
+  }
 });
