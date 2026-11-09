@@ -176,5 +176,7 @@ predate this list.
 - **Empty answers warn** (0.3.16). An id that returns no messages and no error says
   "wrong id?" instead of ending green. Since 0.3.24 the file says so too, with
   `empty: true` (absent otherwise, like `truncated`).
-- **The page cap must be at least 1** (0.3.24). `maxPages` below one page throws
-  before any fetch, instead of marking every conversation both empty and capped.
+- **The page cap must be a whole number of at least 1** (0.3.24). Anything else —
+  below one page, a fraction, `Infinity` — throws a RangeError before any fetch,
+  instead of marking every conversation both empty and capped. There is no uncapped
+  mode: a walk always has a cap.

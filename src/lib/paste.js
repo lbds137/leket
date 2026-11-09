@@ -18,7 +18,7 @@
 export function assignedJson(text, name) {
   let t = String(text ?? "").trim();
   const head = `(?<![^\\n\\r])[ \\t]*window\\.${String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*`;
-  const m = new RegExp(`${head}([\\s\\S]*?);[ \\t]*(?:\\r?\\n|$)`).exec(t)
+  const m = new RegExp(`${head}([\\s\\S]*?);[ \\t]*(?:\\r\\n?|\\n|$)`).exec(t)
     || new RegExp(`${head}([\\s\\S]*)$`).exec(t);
   if (m) t = m[1].trim();
   return t.replace(/;\s*$/, "");
