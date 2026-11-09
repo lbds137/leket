@@ -484,6 +484,15 @@ test("fetchImage upgrades http on reddit's own image hosts to https instead of r
     assert.deepEqual(calls, [`https://${host}/a.png?w=1`], host);
     assert.equal(got.name, "01.png");
   }
+  // an http port doesn't carry over to https
+  const calls = [];
+  await fetchImage({ n: 1, u: "http://i.redd.it:8080/a.png", ext: "" }, {
+    fetch: async (url) => {
+      calls.push(url);
+      return { ok: true, status: 200, headers: headersOf({ "content-type": "image/png" }), body: streamOf([new Uint8Array([1])]) };
+    },
+  });
+  assert.deepEqual(calls, ["https://i.redd.it/a.png"]);
 });
 
 test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
@@ -526,6 +535,9 @@ test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
     ["https://nas.lan/", true],
     ["https://metadata.google.internal/", true],
     ["https://[2001:4860::1]/", false],
+    ["https://[3fff::1]/", true],
+    ["https://[3fff:fff::1]/", true],
+    ["https://[3fff:1000::1]/", false],
     ["https://[2001:200::1]/", false],
     ["https://192.88.98.1/", false],
     ["https://myhome.arpa.example.com/", false],

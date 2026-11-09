@@ -79,10 +79,12 @@ export function isPrivateHost(hostname) {
   if (h.startsWith("[")) {
     // public only in global unicast (2000::/3), minus 6to4 (2002::/16), which carries an
     // IPv4 address that could be a private one, the IANA special-purpose block 2001::/23
-    // (Teredo, benchmarking, ORCHID and the rest) and documentation (2001:db8::/32)
+    // (Teredo, benchmarking, ORCHID and the rest) and documentation (2001:db8::/32,
+    // 3fff::/20)
     const [g0, g1] = h.slice(1, -1).split(":").map((g) => (g === "" ? 0 : parseInt(g, 16)));
     return !(g0 >= 0x2000 && g0 < 0x4000) || g0 === 0x2002
-      || (g0 === 0x2001 && (g1 < 0x200 || g1 === 0xdb8));
+      || (g0 === 0x2001 && (g1 < 0x200 || g1 === 0xdb8))
+      || (g0 === 0x3fff && g1 < 0x1000);
   }
   const ipv4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (ipv4) {
@@ -120,9 +122,11 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
     throw new Error("not fetched: not a valid address");
   }
   // older post data names reddit's own image hosts over http; those serve https too, so
-  // they are upgraded rather than refused (the fetch itself stays https-only)
+  // they are upgraded rather than refused (the fetch itself stays https-only), on the
+  // default port: an http port means nothing on https
   if (parsed.protocol === "http:" && REDDIT_IMAGE_HOSTS.has(parsed.hostname)) {
     parsed.protocol = "https:";
+    parsed.port = "";
   }
   if (parsed.protocol !== "https:") {
     throw new Error("not fetched: only https images are fetched");
