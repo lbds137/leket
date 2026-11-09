@@ -118,7 +118,9 @@ function t1Parent(d) {
 }
 
 function encodeAngle(u) {
-  return String(u).replace(/</g, "%3C").replace(/>/g, "%3E").replace(/ /g, "%20");
+  // whitespace too, line breaks above all: a break inside <...> ends the image there and the
+  // rest of the URL becomes blocks of its own; a backslash would escape the closing >
+  return String(u).replace(/[<>\s\\]/g, (c) => encodeURIComponent(c));
 }
 
 // One line's escape: code spans pair within the line only. `open` says a backtick run
