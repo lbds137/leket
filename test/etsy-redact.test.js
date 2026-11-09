@@ -1,6 +1,8 @@
-// The redact guard block (src/modules/etsy/redact.js) exactly as received from
-// Jackalope, genericized — these pins are written against the block as received; a pin
-// that cannot pass is a STOP-report, not a fix. Nothing here fetches; the fetch red line
+// The redact guard block (src/modules/etsy/redact.js), received from Jackalope and
+// genericized. Every pin above the markup section (it opens "Etsy message bodies are
+// HTML") is written against the block as received, and must keep passing unchanged: a
+// pin that cannot pass is a STOP-report, not a fix. The markup section covers what was
+// added here (the glued short form and the markup reading). Nothing here fetches; the fetch red line
 // stays for the per-file convention (test/etsy.test.js, claude-sessions-export.test.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -189,4 +191,53 @@ test("known-and-accepted over-redaction: a name starting with n/r/t/b/f over-red
   const lineStart = nat(JSON.stringify("see you\nat noon"));
   assert.equal(lineStart, JSON.stringify("see you\n[redacted] noon"));
   assert.equal(JSON.parse(lineStart), "see you\n[redacted] noon");
+});
+
+// Etsy message bodies are HTML, so the name can arrive spelled through an entity, split
+// by a tag, percent-encoded, or glued to the word before it. Each case rides a JSON body,
+// as the export does, and the output must still parse.
+const inBody = (text) => JSON.stringify({ text: `hello ${text} there` });
+const bodyOf = (out) => JSON.parse(out).text;
+
+test("an entity, a tag or a percent escape inside the name cannot hide it", () => {
+  for (const spelled of ["j&#97;ne", "J&#x61;nedoe", "Ja<wbr>ne", "Ja<br />ne", "jane%64oe"]) {
+    assert.equal(bodyOf(f(inBody(spelled))), "hello [redacted] there", spelled);
+  }
+});
+
+test("the short form glued to the word before it goes when it starts a capital", () => {
+  assert.equal(bodyOf(f(inBody("HiJane"))), "hello Hi[redacted] there");
+  assert.equal(bodyOf(f(inBody("JaneSmith"))), "hello [redacted]Smith there");
+  assert.equal(bodyOf(f(inBody("thanksGane!"))), "hello thanks[redacted]! there", "a first-sound variant");
+});
+
+test("entity spellings: uppercase X, no semicolon, named, and layered ones decode", () => {
+  for (const spelled of ["J&#X61;nedoe", "j&#97ne", "j&#0097;ne", "jane&nbsp;doe", "Ja&shy;ne", "j&amp;#97;ne", "jane%2564oe", "Ja&lt;br&gt;ne"]) {
+    assert.equal(bodyOf(f(inBody(spelled))), "hello [redacted] there", spelled);
+  }
+});
+
+test("a tag carrying a quoted attribute is skipped whole; the JSON quotes around it stay", () => {
+  assert.equal(bodyOf(f(inBody('Ja<span class="x">ne'))), "hello [redacted] there");
+});
+
+test("a tag never reaches across a JSON string's own quote", () => {
+  // as the stripping must not read it: "<i" in one string and "x>" in the next would make
+  // one tag spanning the structure between them, joining Ja and ne
+  const fed = JSON.stringify({ a: "Ja<i", b: "x>ne" });
+  assert.equal(f(fed), fed);
+});
+
+test("entities that name no character leave the text alone and do not throw", () => {
+  for (const odd of ["&#55357;", "&#xD800;", "&#1114112;", "&#x110000;", "&bogus;", "%E9", "100%"]) {
+    const fed = inBody(odd);
+    assert.equal(f(fed), fed, odd);
+  }
+});
+
+test("words and keys that only resemble the short form stay untouched", () => {
+  for (const word of ["ORGANELLE", "Organelle", "myJanet", "JANET", "isGaneral", "hasJaneway"]) {
+    const fed = JSON.stringify({ [word]: word });
+    assert.equal(f(fed), fed, word);
+  }
 });
