@@ -222,6 +222,13 @@ test("start at warns when the newest message is more than a day before start-at,
   assert.ok(!oneDay.status.includes("NOT in this save"));
 });
 
+test("a message quoting the start header's wording doesn't end the climb as the start", () => {
+  const { loads, status } = runPage("auto", [], { AUTO_QUOTE: "1" });
+  assert.equal(loads, 25);
+  assert.doesNotMatch(status, /reached the start/);
+  assert.match(status, /STALLED, not at the start/);
+});
+
 test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 steps", () => {
   const { paces, restNotes, loads, status } = runPage("auto");
   assert.equal(loads, 25);

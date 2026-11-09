@@ -1,7 +1,7 @@
 // The export tab: reads the save from the Discord tab's bridge, fetches its attachments,
 // builds the zip and downloads it. It stays open with what happened.
 import { build } from "../../lib/build.js";
-import { attachmentList, needsParts } from "../../lib/files.js";
+import { attachmentList, needsParts, saveName } from "../../lib/files.js";
 import { PART_LIMIT } from "../../lib/zip.js";
 import { createPartDownload } from "../../lib/part.js";
 import { esc } from "../../lib/render.js";
@@ -47,9 +47,7 @@ const humanSize = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB`
   try {
     const save = await readSave();
     const { attachments, exp } = save;
-    // the collector's own names are "discord-<name>-<channel id>.json"; anything else posted
-    // to the bridge (a path, a name the zip uses itself) is not used as a file name
-    const file = /^discord-[\p{L}\p{N}._-]+-\d+\.json$/u.test(save.file) ? save.file : "discord-export.json";
+    const file = saveName(save.file);
     document.title = `Leket: ${exp.channel || "saving"}`;
     $("title").textContent = [exp.channel, exp.guild_name].filter(Boolean).join(" · ") || "Leket";
     const records = attachments ? attachmentList(exp) : [];

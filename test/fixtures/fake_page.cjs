@@ -156,13 +156,24 @@ const AUTO = scenario === "auto";
 const AUTO_LOADS = 25;
 let loads = 0, vnow = Date.UTC(2021, 1, 1);
 const paces = [], restNotes = [], restLoads = [];
-const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0, querySelectorAll: () => [],
+// AUTO_QUOTE=1: the third older message quotes the header's wording ("Welcome to #rules"),
+// rows carry their text inside the scroller as Discord's do, and the loader stalls after
+// the last load without ever showing the header — the climb must say STALLED
+const QUOTE = process.env.AUTO_QUOTE === "1";
+let header = "";
+const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0,
+  querySelectorAll(sel) { return QUOTE && sel === `li[id^="chat-messages-${CHANNEL}-"]` ? lis.filter((li) => li.parentElement === this) : []; },
   dispatchEvent() {
-    if (loads === AUTO_LOADS) return void (this.textContent = "Welcome to #general!");
-    const m = { id: String(BigInt(snowflake(1)) - BigInt(++loads)), author: users.alice, content: `older ${loads}` };
-    lis.push(el({ id: `chat-messages-${CHANNEL}-${m.id}`, parentElement: this,
+    if (loads === AUTO_LOADS) return void (header = QUOTE ? "" : "Welcome to #general!");
+    const m = { id: String(BigInt(snowflake(1)) - BigInt(++loads)), author: users.alice,
+      content: QUOTE && loads === 3 ? "hey all, Welcome to #rules" : `older ${loads}` };
+    lis.push(el({ id: `chat-messages-${CHANNEL}-${m.id}`, parentElement: this, textContent: m.content,
       "__reactFiber$x": { memoizedProps: { message: m }, return: null } }));
   } });
+// a getter, not a prop: el() spreads its props, which would read it once and freeze it
+Object.defineProperty(scrollEl, "textContent", {
+  get() { return [header, ...(QUOTE ? lis.filter((li) => li.parentElement === this).map((li) => li.textContent) : [])].join(" "); },
+});
 if (AUTO) lis.forEach((li) => { li.parentElement = scrollEl; });
 // AUTO_RESTART=N presses Stop and then Auto-scroll once, in the pause after step N;
 // AUTO_RESTART=rest does it as the long rest begins; AUTO_STOP_WAIT=N does it in the

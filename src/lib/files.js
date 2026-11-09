@@ -23,6 +23,19 @@ export function fileName(prefix, filename) {
   return prefix + stem + ext;
 }
 
+// The save's own name, "discord-<name>-<channel id>.json" as the collector makes it; anything
+// else posted to the bridge (a path, a name the zip uses itself) becomes a fixed name. The
+// name part comes from the tab title with no cap of its own, so it is cut, on a character
+// boundary, to keep the whole name within 200 bytes: the zip parts add "-partN-of-M.zip".
+export function saveName(file) {
+  const m = /^discord-([\p{L}\p{N}._-]+)-(\d+)\.json$/u.exec(String(file));
+  if (!m) return "discord-export.json";
+  let name = m[1];
+  const room = 200 - utf8.encode(`discord--${m[2]}.json`).length;
+  while (utf8.encode(name).length > room) name = [...name].slice(0, -1).join("");
+  return `discord-${name}-${m[2]}.json`;
+}
+
 export function fetchable(url) {
   try {
     const u = new URL(url);
