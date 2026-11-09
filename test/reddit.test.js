@@ -456,7 +456,9 @@ test("fetchImage refuses non-https, invalid and local/private-network URLs befor
   const fetch = async (url) => { calls.push(url); throw new Error("fetch should not be called"); };
   for (const [u, expected] of [
     ["not a url", /^Error: not fetched: not a valid address$/],
-    ["http://i.redd.it/a.png", /^Error: not fetched: only https images are fetched$/],
+    ["http://images.example.org/a.png", /^Error: not fetched: only https images are fetched$/],
+    ["http://i.redd.it.example.org/a.png", /^Error: not fetched: only https images are fetched$/],
+    ["ftp://i.redd.it/a.png", /^Error: not fetched: only https images are fetched$/],
     ["https://localhost/a.png", /^Error: not fetched: a local or private-network address$/],
     ["https://127.0.0.1/a.png", /^Error: not fetched: a local or private-network address$/],
     ["https://2130706433/a.png", /^Error: not fetched: a local or private-network address$/],
@@ -469,6 +471,19 @@ test("fetchImage refuses non-https, invalid and local/private-network URLs befor
     await assert.rejects(fetchImage({ n: 1, u, ext: ".png" }, { fetch }), expected, u);
   }
   assert.equal(calls.length, 0, "fetch spy was never called");
+});
+
+test("fetchImage upgrades http on reddit's own image hosts to https instead of refusing", async () => {
+  for (const host of ["i.redd.it", "preview.redd.it", "external-preview.redd.it"]) {
+    const calls = [];
+    const fetch = async (url) => {
+      calls.push(url);
+      return { ok: true, status: 200, headers: headersOf({ "content-type": "image/png" }), body: streamOf([new Uint8Array([1])]) };
+    };
+    const got = await fetchImage({ n: 1, u: `http://${host}/a.png?w=1`, ext: "" }, { fetch });
+    assert.deepEqual(calls, [`https://${host}/a.png?w=1`], host);
+    assert.equal(got.name, "01.png");
+  }
 });
 
 test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
@@ -501,7 +516,19 @@ test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
     ["https://[2001::1]/", true],
     ["https://192.0.1.1/", false],
     ["https://198.20.0.1/", false],
-    ["https://[2001:db8::1]/", false],
+    ["https://[2001:db8::1]/", true],
+    ["https://[2001:2::1]/", true],
+    ["https://[2001:10::1]/", true],
+    ["https://[2001:1ff::1]/", true],
+    ["https://192.88.99.1/", true],
+    ["https://home.arpa/", true],
+    ["https://x.home.arpa/", true],
+    ["https://nas.lan/", true],
+    ["https://metadata.google.internal/", true],
+    ["https://[2001:4860::1]/", false],
+    ["https://[2001:200::1]/", false],
+    ["https://192.88.98.1/", false],
+    ["https://myhome.arpa.example.com/", false],
     ["https://notlocaldomain.com/", false],
   ]) {
     assert.equal(isPrivateHost(new URL(u).hostname), expected, u);

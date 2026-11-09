@@ -74,21 +74,25 @@ const SMOKE_IMG_A = "https://i.redd.it/smokea.png";
 const SMOKE_IMG_B = "https://preview.redd.it/smokeb.jpg";
 const SMOKE_IMG_C = "https://images.example.org/smokec.png";
 // served, but the save must never ask for them: a non-https one and a loopback one
-const SMOKE_IMG_D = "http://i.redd.it/smoked.png";
+const SMOKE_IMG_D = "http://images.example.org/smoked.png";
 const SMOKE_IMG_E = "https://127.0.0.1/smokee.png";
+// named over http on reddit's own host: the save upgrades it and fetches the https URL
+const SMOKE_IMG_F = "http://i.redd.it/smokef.png";
+const SMOKE_IMG_F_HTTPS = "https://i.redd.it/smokef.png";
 const redditGalleryBody = JSON.stringify(postPage({
   id: "def456",
   permalink: "/r/x/comments/def456/a_gallery/",
   is_gallery: true,
   is_self: false,
   selftext: "",
-  gallery_data: { items: [{ media_id: "a" }, { media_id: "b" }, { media_id: "c" }, { media_id: "d" }, { media_id: "e" }] },
+  gallery_data: { items: [{ media_id: "a" }, { media_id: "b" }, { media_id: "c" }, { media_id: "d" }, { media_id: "e" }, { media_id: "f" }] },
   media_metadata: {
     a: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_A } },
     b: { status: "valid", m: "image/jpg", s: { u: SMOKE_IMG_B } },
     c: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_C } },
     d: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_D } },
     e: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_E } },
+    f: { status: "valid", m: "image/png", s: { u: SMOKE_IMG_F } },
   },
 }, []));
 const DISCORD_DM = "https://discord.com/channels/@me/111";
@@ -140,6 +144,7 @@ const WEB = new Map([
   [SMOKE_IMG_C, { type: "image/png", body: SMOKE_PNG }],
   [SMOKE_IMG_D, { type: "image/png", body: SMOKE_PNG }],
   [SMOKE_IMG_E, { type: "image/png", body: SMOKE_PNG }],
+  [SMOKE_IMG_F_HTTPS, { type: "image/png", body: SMOKE_PNG }],
   [DISCORD_DM, { type: "text/html", body: html("a discord dm") }],
   [ATTACHMENT, { type: "text/plain", body: ATTACHMENT_BODY }],
   [CLAUDE_CODE, { type: "text/html", body: html("a claude code page") }],
@@ -465,7 +470,7 @@ async function scenarios(cdp, downloads) {
     }
   });
 
-  // ---- reddit images: gallery post with one good image, one HTML placeholder, one CORS-blocked host, one http and one loopback image never requested ----
+  // ---- reddit images: gallery post with one good image, one HTML placeholder, one CORS-blocked host, one http and one loopback image never requested, one http reddit image upgraded to https ----
   await scenario("reddit images", async () => {
     console.log("smoke: reddit images save");
     await open(REDDIT_GALLERY);
@@ -474,7 +479,9 @@ async function scenarios(cdp, downloads) {
       `(() => { const p = document.getElementById("card").lastElementChild; const t = p && !p.hidden ? p.textContent : ""; return t && t !== "Working…" ? { t, warn: p.classList.contains("warn") } : false; })()`),
     "the popup's result line", 30000);
     check(!line.warn, `reddit images: the popup reports success (it said: ${line.t})`);
-    check(line.t.includes("1 of 5 images saved in reddit-def456-images"), `reddit images: the popup reports 1 of 5 images saved (it said: ${line.t})`);
+    check(line.t.includes("2 of 6 images saved in reddit-def456-images"), `reddit images: the popup reports 2 of 6 images saved (it said: ${line.t})`);
+    check(requested.includes(SMOKE_IMG_F_HTTPS) && !requested.includes(SMOKE_IMG_F),
+      "reddit images: the http i.redd.it image was fetched over https, never http");
     check(!requested.includes(SMOKE_IMG_D) && !requested.includes(SMOKE_IMG_E),
       `reddit images: the http and loopback images were never requested (asked for: ${requested.filter((u) => u === SMOKE_IMG_D || u === SMOKE_IMG_E).join(", ") || "neither"})`);
     const mine = landed().filter((f) => f.startsWith("reddit-def456"));
@@ -482,16 +489,19 @@ async function scenarios(cdp, downloads) {
       `reddit images: folder, json and md on disk (found: ${mine.join(", ")})`);
     const imgDir = join(downloads, "reddit-def456-images");
     const imgs = existsSync(imgDir) ? readdirSync(imgDir).filter((f) => !f.endsWith(".crdownload")).sort() : [];
-    check(JSON.stringify(imgs) === JSON.stringify(["01.png"]),
-      `reddit images: only 01.png landed in reddit-def456-images, no 02.* to 05.* (found: ${imgs.join(", ") || "none"})`);
-    if (existsSync(join(imgDir, "01.png"))) {
-      check(readFileSync(join(imgDir, "01.png")).equals(SMOKE_PNG), "reddit images: 01.png has the exact served bytes");
-    } else {
-      check(false, "reddit images: 01.png has the exact served bytes (missing)");
+    check(JSON.stringify(imgs) === JSON.stringify(["01.png", "06.png"]),
+      `reddit images: only 01.png and 06.png landed in reddit-def456-images, no 02.* to 05.* (found: ${imgs.join(", ") || "none"})`);
+    for (const name of ["01.png", "06.png"]) {
+      if (existsSync(join(imgDir, name))) {
+        check(readFileSync(join(imgDir, name)).equals(SMOKE_PNG), `reddit images: ${name} has the exact served bytes`);
+      } else {
+        check(false, `reddit images: ${name} has the exact served bytes (missing)`);
+      }
     }
     if (existsSync(join(downloads, "reddit-def456.md"))) {
       const md = readFileSync(join(downloads, "reddit-def456.md"), "utf8");
-      check(md.includes("](<reddit-def456-images/01.png>)"), "reddit images: the .md links 01.png relatively");
+      check(md.includes("](<reddit-def456-images/01.png>)") && md.includes("](<reddit-def456-images/06.png>)"),
+        "reddit images: the .md links 01.png and 06.png relatively");
       check([SMOKE_IMG_B, SMOKE_IMG_C, SMOKE_IMG_D, SMOKE_IMG_E].every((u) => md.includes(u)),
         "reddit images: the .md keeps remote links for the failed images");
     } else {

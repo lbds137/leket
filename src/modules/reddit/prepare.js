@@ -11,6 +11,8 @@ import { POST_PATHNAME } from "../registry.js";
 import { render, notFetched, postOf, images, imageFileName } from "./md.js";
 
 const MAX_IMAGE_BYTES = 50 * 1048576;
+// the manifest's image host_permissions
+const REDDIT_IMAGE_HOSTS = new Set(["i.redd.it", "preview.redd.it", "external-preview.redd.it"]);
 
 export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   const here = new URL(tabUrl);
@@ -75,10 +77,12 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
 export function isPrivateHost(hostname) {
   const h = hostname.replace(/\.+$/, "");
   if (h.startsWith("[")) {
-    // public only in global unicast (2000::/3), minus 6to4 (2002::/16) and Teredo
-    // (2001:0::/32), which carry an IPv4 address that could be a private one
+    // public only in global unicast (2000::/3), minus 6to4 (2002::/16), which carries an
+    // IPv4 address that could be a private one, the IANA special-purpose block 2001::/23
+    // (Teredo, benchmarking, ORCHID and the rest) and documentation (2001:db8::/32)
     const [g0, g1] = h.slice(1, -1).split(":").map((g) => (g === "" ? 0 : parseInt(g, 16)));
-    return !(g0 >= 0x2000 && g0 < 0x4000) || g0 === 0x2002 || (g0 === 0x2001 && g1 === 0);
+    return !(g0 >= 0x2000 && g0 < 0x4000) || g0 === 0x2002
+      || (g0 === 0x2001 && (g1 < 0x200 || g1 === 0xdb8));
   }
   const ipv4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (ipv4) {
@@ -91,12 +95,15 @@ export function isPrivateHost(hostname) {
       || (a === 172 && b >= 16 && b <= 31)
       || (a === 192 && b === 168)
       || (a === 192 && b === 0 && (c === 0 || c === 2))
+      || (a === 192 && b === 88 && c === 99)
       || (a === 198 && (b === 18 || b === 19))
       || (a === 198 && b === 51 && c === 100)
       || (a === 203 && b === 0 && c === 113)
       || a >= 224;
   }
-  return !h.includes(".") || /(^|\.)(localhost|localdomain)$|\.(local|internal|home\.arpa|lan)$/.test(h);
+  // names: single-label, and *.localhost, *.localdomain, *.home.arpa (each bare too),
+  // *.local, *.internal, *.lan
+  return !h.includes(".") || /(^|\.)(localhost|localdomain|home\.arpa)$|\.(local|internal|lan)$/.test(h);
 }
 
 export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
@@ -112,6 +119,11 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
   } catch {
     throw new Error("not fetched: not a valid address");
   }
+  // older post data names reddit's own image hosts over http; those serve https too, so
+  // they are upgraded rather than refused (the fetch itself stays https-only)
+  if (parsed.protocol === "http:" && REDDIT_IMAGE_HOSTS.has(parsed.hostname)) {
+    parsed.protocol = "https:";
+  }
   if (parsed.protocol !== "https:") {
     throw new Error("not fetched: only https images are fetched");
   }
@@ -121,7 +133,7 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
   const unreachable = (e) => new Error(`couldn't reach it (${(e && e.message) || e})`);
   let r;
   try {
-    r = await doFetch(u, { credentials: "omit", redirect: "manual", signal: AbortSignal.timeout(60_000) });
+    r = await doFetch(parsed.href, { credentials: "omit", redirect: "manual", signal: AbortSignal.timeout(60_000) });
   } catch (e) {
     throw unreachable(e);
   }
