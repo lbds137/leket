@@ -34,8 +34,13 @@ const OFFSCREEN_URL = "chrome-extension://test-extension-id/src/modules/reddit/o
 const offscreenCreates = [];
 const relayedRuns = [];
 const revokesSent = [];
+const imageRequests = [];
+const mdRequests = [];
+const donesSent = [];
 let relayReply = null; // what the offscreen page answers the worker's relay with
 let relayThrows = null; // or the error the relay rejects with
+let imageReply = null;
+let mdReply = null;
 let workerListening = true;
 
 globalThis.chrome = {
@@ -52,6 +57,18 @@ globalThis.chrome = {
         relayedRuns.push(msg);
         if (relayThrows) throw relayThrows;
         return relayReply;
+      }
+      if (msg && msg.type === "leket:reddit-save-image") {
+        imageRequests.push(msg);
+        return typeof imageReply === "function" ? imageReply(msg) : imageReply;
+      }
+      if (msg && msg.type === "leket:reddit-save-md") {
+        mdRequests.push(msg);
+        return typeof mdReply === "function" ? mdReply(msg) : mdReply;
+      }
+      if (msg && msg.type === "leket:reddit-save-done") {
+        donesSent.push(msg);
+        return { ok: true };
       }
       if (msg && msg.type === "leket:reddit-save-revoke") {
         revokesSent.push(msg);
@@ -81,15 +98,20 @@ const reset = () => {
   offscreenCreates.length = 0;
   relayedRuns.length = 0;
   revokesSent.length = 0;
+  imageRequests.length = 0;
+  mdRequests.length = 0;
+  donesSent.length = 0;
   relayReply = null;
   relayThrows = null;
+  imageReply = null;
+  mdReply = null;
   workerListening = true;
   workerDownloads.endState = "complete";
   workerDownloads.calls.length = 0;
 };
 
 const { commands } = await import("../src/modules/reddit/json.js");
-const { preparePostJson } = await import("../src/modules/reddit/prepare.js");
+const { preparePostJson, fetchImage } = await import("../src/modules/reddit/prepare.js");
 const { downloadPrepared } = await import("../src/modules/reddit/download.js");
 const { render } = await import("../src/modules/reddit/md.js");
 
@@ -260,6 +282,167 @@ test("a page without a post id in its path is refused, in the script's words, an
   assert.equal(calls.length, 0, "nothing was fetched");
 });
 
+test("preparePostJson returns id, data and savable images for gallery, single-image and self posts", async () => {
+  const selfPrep = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch: okFetch().fetch });
+  assert.equal(selfPrep.id, "abc123");
+  assert.ok(Array.isArray(selfPrep.data));
+  assert.deepEqual(selfPrep.images, []);
+
+  const singleBody = JSON.stringify(postPage({ is_self: false, post_hint: "image", url_overridden_by_dest: "https://i.redd.it/solo.png" }));
+  const singlePrep = await preparePostJson("https://www.reddit.com/r/x/comments/abc123/t/", { fetch: okFetch(singleBody).fetch });
+  assert.equal(singlePrep.id, "abc123");
+  assert.deepEqual(singlePrep.images, [{ n: 1, u: "https://i.redd.it/solo.png", ext: "" }]);
+
+  const galleryBody = JSON.stringify(postPage({
+    is_gallery: true,
+    is_self: false,
+    gallery_data: { items: [{ media_id: "a" }, { media_id: "b" }, { media_id: "c" }] },
+    media_metadata: {
+      a: { status: "valid", m: "image/png", s: { u: "https://i.redd.it/one.png" } },
+      b: { e: "RedditVideo", s: { mp4: "https://v.redd.it/clip.mp4" } },
+      c: { status: "valid", m: "image/jpeg", s: { u: "https://preview.redd.it/three.jpg" } },
+    },
+  }));
+  const galleryPrep = await preparePostJson("https://www.reddit.com/r/x/comments/def456/t/", { fetch: okFetch(galleryBody).fetch });
+  assert.equal(galleryPrep.id, "def456");
+  assert.deepEqual(galleryPrep.images, [
+    { n: 1, u: "https://i.redd.it/one.png", ext: ".png" },
+    { n: 3, u: "https://preview.redd.it/three.jpg", ext: ".jpg" },
+  ]);
+});
+
+// --- fetchImage: image fetch, ctype/size guards, blob creation
+
+const streamOf = (chunks, { onCancel } = {}) => ({
+  getReader: () => {
+    let i = 0;
+    return {
+      read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }),
+      cancel: async () => { if (onCancel) onCancel(); },
+    };
+  },
+});
+
+const headersOf = (map) => ({
+  get: (k) => map[k.toLowerCase()] ?? null,
+});
+
+test("fetchImage fetches with credentials omit and returns a typed blob URL and CLI filename", async () => {
+  const calls = [];
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const fetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return {
+      ok: true,
+      status: 200,
+      headers: headersOf({ "content-type": "Image/PNG; charset=utf-8", "content-length": "4" }),
+      body: streamOf([bytes]),
+    };
+  };
+  const realCreate = URL.createObjectURL;
+  const blobs = [];
+  URL.createObjectURL = (b) => { blobs.push(b); return realCreate(b); };
+  let got;
+  try {
+    got = await fetchImage({ n: 2, u: "https://i.redd.it/pic", ext: ".jpg" }, { fetch });
+  } finally {
+    URL.createObjectURL = realCreate;
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://i.redd.it/pic");
+  assert.equal(calls[0].opts.credentials, "omit");
+  assert.ok(calls[0].opts.signal instanceof AbortSignal);
+  assert.equal(got.name, "02.png");
+  assert.match(got.url, /^blob:/);
+  assert.equal(blobs.length, 1);
+  assert.equal(blobs[0].type, "image/png");
+  assert.deepEqual(new Uint8Array(await blobs[0].arrayBuffer()), bytes);
+});
+
+test("fetchImage refuses non-image content types, HTTP errors, oversized responses and network errors", async () => {
+  // non-image content-type (and missing content-type)
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.jpg", ext: ".jpg" }, {
+      fetch: async () => ({ ok: true, status: 200, headers: headersOf({ "content-type": "text/html; charset=UTF-8" }), body: streamOf([]) }),
+    }),
+    /^Error: the server sent text\/html, not an image$/,
+  );
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.jpg", ext: ".jpg" }, {
+      fetch: async () => ({ ok: true, status: 200, headers: headersOf({}), body: streamOf([]) }),
+    }),
+    /^Error: the server sent no content type, not an image$/,
+  );
+  // HTTP 404
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.jpg", ext: ".jpg" }, {
+      fetch: async () => ({ ok: false, status: 404, headers: headersOf({}) }),
+    }),
+    /^Error: the server answered 404$/,
+  );
+  // an image response with no body says so, not a bare TypeError
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => ({ ok: true, status: 200, headers: headersOf({ "content-type": "image/png" }), body: null }),
+    }),
+    /^Error: the server sent no image data$/,
+  );
+  // over the 50 MiB cap by content-length
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        headers: headersOf({ "content-type": "image/png", "content-length": String(50 * 1048576 + 1) }),
+      }),
+    }),
+    /^Error: over 50 MB$/,
+  );
+  // over the cap mid-stream: cancels the reader as soon as the count passes 50 MiB
+  let cancelled = false;
+  let reads = 0;
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        headers: headersOf({ "content-type": "image/png" }),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              reads += 1;
+              return { done: false, value: new Uint8Array(30 * 1048576) };
+            },
+            cancel: async () => { cancelled = true; },
+          }),
+        },
+      }),
+    }),
+    /^Error: over 50 MB$/,
+  );
+  assert.equal(cancelled, true, "the reader was cancelled when the stream passed 50 MiB");
+  assert.equal(reads, 2, "stopped on the chunk that crossed the cap");
+  // fetch throw
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => { throw new TypeError("Failed to fetch"); },
+    }),
+    /^Error: couldn't reach it \(Failed to fetch\)$/,
+  );
+  // body-read rejection
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        headers: headersOf({ "content-type": "image/png" }),
+        body: { getReader: () => ({ read: async () => { throw new Error("stream reset"); } }) },
+      }),
+    }),
+    /^Error: couldn't reach it \(stream reset\)$/,
+  );
+});
+
 // --- downloadPrepared: the worker's half (chrome.downloads lives here), two files
 // --- (json first, md second), downloaded one after the other
 
@@ -396,6 +579,166 @@ test("both files going quiet names both, and onSettled fired for neither", async
   assert.deepEqual(settledNames, [], "an unsettled download may still be reading the blob: no revoke");
 });
 
+test("downloadPrepared with images downloads json -> images -> re-rendered md, frees the old md blob, and formats all three message shapes", async () => {
+  workerDownloads.calls.length = 0;
+  const events = [];
+  const settled = [];
+  let renderedWith = null;
+  const done = await downloadPrepared(workerDownloads, twoFiles, {
+    notFetched: { count: 2, atLeast: false },
+    onSettled: (f) => { events.push(`settled:${f.url}`); settled.push(f); },
+    images: {
+      list: [{ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, { n: 2, u: "https://i.redd.it/b.jpg", ext: ".jpg" }],
+      folder: "reddit-abc123-images",
+      fetchImage: async (n) => {
+        events.push(`fetch:${n}`);
+        return n === 1 ? { ok: true, url: "blob:img1", name: "01.png" } : { ok: true, url: "blob:img2", name: "02.jpg" };
+      },
+      renderMd: async (saved) => {
+        events.push("renderMd");
+        renderedWith = saved;
+        return { url: "blob:md-new", name: "reddit-abc123.md" };
+      },
+    },
+  });
+  assert.deepEqual(workerDownloads.calls.map((c) => [c.url, c.filename]), [
+    ["blob:json", "reddit-abc123.json"],
+    ["blob:img1", "reddit-abc123-images/01.png"],
+    ["blob:img2", "reddit-abc123-images/02.jpg"],
+    ["blob:md-new", "reddit-abc123.md"],
+  ]);
+  assert.deepEqual(renderedWith, { 1: "01.png", 2: "02.jpg" });
+  assert.deepEqual(settled.map((f) => f.url), ["blob:json", "blob:img1", "blob:img2", "blob:md", "blob:md-new"],
+    "the unlinked initial md blob is freed before the re-rendered md downloads, and the new md is freed when it settles");
+  assert.equal(done.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's 2 images are in reddit-abc123-images. 2 more comments weren't fetched — the .md links to them on reddit.");
+  workerDownloads.calls.length = 0;
+
+  // 1 of 1 image saved (singular)
+  const singleDone = await downloadPrepared(workerDownloads, twoFiles, {
+    images: {
+      list: [{ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }],
+      folder: "reddit-abc123-images",
+      fetchImage: async () => ({ ok: true, url: "blob:img1", name: "01.png" }),
+      renderMd: async () => ({ url: "blob:md-new", name: "reddit-abc123.md" }),
+    },
+  });
+  assert.equal(singleDone.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's image is in reddit-abc123-images.");
+  workerDownloads.calls.length = 0;
+
+  // 0 < k < m (partial save)
+  const partialDone = await downloadPrepared(workerDownloads, twoFiles, {
+    images: {
+      list: [{ n: 1 }, { n: 2 }, { n: 3 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async (n) => (n === 1
+        ? { ok: true, url: "blob:img1", name: "01.png" }
+        : { ok: false, error: n === 2 ? "the server answered 404" : "over 50 MB" }),
+      renderMd: async (saved) => {
+        assert.deepEqual(saved, { 1: "01.png" });
+        return { url: "blob:md-new", name: "reddit-abc123.md" };
+      },
+    },
+  });
+  assert.equal(partialDone.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 1 of 3 images saved in reddit-abc123-images; the .md links the rest on reddit (image 2: the server answered 404; image 3: over 50 MB).");
+  workerDownloads.calls.length = 0;
+
+  // k === 0 (none saved, plural and singular): downloads original files[1] and never calls renderMd
+  let renderCalled = false;
+  const zeroPlural = await downloadPrepared(workerDownloads, twoFiles, {
+    images: {
+      list: [{ n: 1 }, { n: 2 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async (n) => ({ ok: false, error: `bad ${n}` }),
+      renderMd: async () => { renderCalled = true; return { url: "blob:md-new", name: "reddit-abc123.md" }; },
+    },
+  });
+  assert.equal(renderCalled, false, "renderMd is not called when no image saved");
+  assert.deepEqual(workerDownloads.calls.map((c) => c.url), ["blob:json", "blob:md"], "original md is downloaded unchanged");
+  assert.equal(zeroPlural.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's images weren't saved; the .md links them on reddit (image 1: bad 1; image 2: bad 2).");
+  workerDownloads.calls.length = 0;
+
+  const zeroSingle = await downloadPrepared(workerDownloads, twoFiles, {
+    images: {
+      list: [{ n: 1 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async () => null,
+      renderMd: async () => { renderCalled = true; return { url: "blob:md-new", name: "reddit-abc123.md" }; },
+    },
+  });
+  assert.equal(renderCalled, false);
+  assert.equal(zeroSingle.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's image wasn't saved; the .md links it on reddit (image 1: no answer).");
+  workerDownloads.calls.length = 0;
+});
+
+test("downloadPrepared with images: a json refusal fetches no image; image download false/null doesn't stop the save; a renderMd throw names the .md", async () => {
+  // json refusal fetches no image
+  let fetched = 0;
+  const realSearch = workerDownloads.search;
+  workerDownloads.search = async () => [{ state: "interrupted" }];
+  await assert.rejects(
+    downloadPrepared(workerDownloads, twoFiles, {
+      images: {
+        list: [{ n: 1 }],
+        folder: "reddit-abc123-images",
+        fetchImage: async () => { fetched += 1; return { ok: true, url: "blob:img1", name: "01.png" }; },
+        renderMd: async () => ({ url: "blob:md-new", name: "reddit-abc123.md" }),
+      },
+    }),
+    /Chrome didn't complete the save of reddit-abc123\.json/,
+  );
+  assert.equal(fetched, 0, "no image is fetched when the json fails");
+  workerDownloads.calls.length = 0;
+
+  // image download false (interrupted) and null (timeout) don't stop the save
+  let call = 0;
+  workerDownloads.search = async () => {
+    call += 1;
+    // call 1 = json (complete), call 2 = img1 (interrupted -> false), call 3 = img2 (in_progress -> null), call 4 = md (complete)
+    if (call === 2) return [{ state: "interrupted" }];
+    if (call === 3) return [{ state: "in_progress" }];
+    return [{ state: "complete" }];
+  };
+  const settledUrls = [];
+  const res = await downloadPrepared(workerDownloads, twoFiles, {
+    timeout: 5,
+    onSettled: (f) => settledUrls.push(f.url),
+    images: {
+      list: [{ n: 1 }, { n: 2 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async (n) => ({ ok: true, url: `blob:img${n}`, name: `0${n}.png` }),
+      renderMd: async () => { throw new Error("should not be called"); },
+    },
+  });
+  workerDownloads.search = realSearch;
+  workerDownloads.calls.length = 0;
+  assert.equal(res.settled, true);
+  assert.equal(res.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's images weren't saved; the .md links them on reddit (image 1: Chrome didn't complete the save; image 2: no word from Chrome yet).");
+  assert.deepEqual(settledUrls, ["blob:json", "blob:img1", "blob:md"],
+    "interrupted img1 fires onSettled; timed-out img2 does NOT fire onSettled");
+
+  // renderMd throw names the .md and frees files[1]
+  const freedOnThrow = [];
+  await assert.rejects(
+    downloadPrepared(workerDownloads, twoFiles, {
+      onSettled: (f) => freedOnThrow.push(f.url),
+      images: {
+        list: [{ n: 1 }],
+        folder: "reddit-abc123-images",
+        fetchImage: async () => ({ ok: true, url: "blob:img1", name: "01.png" }),
+        renderMd: async () => { throw new Error("offscreen gone"); },
+      },
+    }),
+    /^Error: Couldn't write reddit-abc123\.md with links to the saved images \(offscreen gone\) — click Save again\.$/,
+  );
+  assert.deepEqual(freedOnThrow, ["blob:json", "blob:img1", "blob:md"]);
+  workerDownloads.calls.length = 0;
+});
+
 // --- the popup command and the worker relay
 
 test("the popup command hands the save to the worker and shows its message", async () => {
@@ -518,4 +861,50 @@ test("a tab url the registry would not match is refused, and nothing is opened o
   assert.match(reply.error, /no longer a reddit post page/);
   assert.equal(offscreenCreates.length, 0);
   assert.equal(relayedRuns.length, 0);
+});
+
+test("the worker relay sends image, md and done messages, and sends done even when a download throws", async () => {
+  reset();
+  relayReply = {
+    ok: true,
+    token: "tok-1",
+    id: "abc123",
+    images: [{ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }],
+    url: "blob:json",
+    name: "reddit-abc123.json",
+    mdUrl: "blob:md-initial",
+    mdName: "reddit-abc123.md",
+  };
+  imageReply = { ok: true, url: "blob:img1", name: "01.png" };
+  mdReply = { ok: true, mdUrl: "blob:md-final", mdName: "reddit-abc123.md" };
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  assert.ok(reply && reply.ok, JSON.stringify(reply));
+  assert.match(reply.message, /The post's image is in reddit-abc123-images\./);
+  assert.deepEqual(imageRequests, [{ type: "leket:reddit-save-image", token: "tok-1", n: 1 }]);
+  assert.deepEqual(mdRequests, [{
+    type: "leket:reddit-save-md",
+    token: "tok-1",
+    saved: { 1: "01.png" },
+    folderRel: "reddit-abc123-images",
+  }]);
+  assert.deepEqual(donesSent, [{ type: "leket:reddit-save-done", token: "tok-1" }]);
+  assert.deepEqual(revokesSent.map((m) => m.url), ["blob:json", "blob:img1", "blob:md-initial", "blob:md-final"]);
+
+  // when the download throws, leket:reddit-save-done is still sent in finally
+  reset();
+  relayReply = {
+    ok: true,
+    token: "tok-2",
+    id: "abc123",
+    images: [{ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }],
+    url: "blob:json",
+    name: "reddit-abc123.json",
+    mdUrl: "blob:md-initial",
+    mdName: "reddit-abc123.md",
+  };
+  workerDownloads.endState = "interrupted";
+  const failedReply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  workerDownloads.endState = "complete";
+  assert.equal(failedReply.ok, false);
+  assert.deepEqual(donesSent, [{ type: "leket:reddit-save-done", token: "tok-2" }], "done is sent even when the download throws");
 });

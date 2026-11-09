@@ -134,6 +134,16 @@ test("render: no JSON field written into the file carries raw HTML", () => {
   assert.match(link, /Links to: .*&lt;x>/);
 });
 
+test("render: a saved image's folderRel and name are angle-encoded on one line with no raw HTML", () => {
+  const out = render(
+    postPage({ is_self: false, post_hint: "image", url: "https://i.redd.it/a.png", selftext: "```\n<ok>" }),
+    { 1: "01 <x> \\\n```\n<x>.png" },
+    "dir <x> \\\n```\n<x>",
+  );
+  assert.deepEqual(rawHtml(cm, out), [], out);
+  assert.match(out, /^!\[image 1\]\(<[^\n]+>\)$/m);
+});
+
 test("seeded fuzz: no raw HTML, every line kept, quoting changes nothing the reader gets", () => {
   const n = Number(process.env.LEKET_FUZZ_N) || 20000;
   const seed = Number(process.env.LEKET_FUZZ_SEED) || 0x1e4e7;
