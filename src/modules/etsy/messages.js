@@ -16,12 +16,12 @@ const messagesIn = (node, out = []) => {
 // nothing — the caller narrates the stop (the console's prompt, then alert)
 // A token is a bare id or a conversation link (an etsy.com host, or none, then
 // /messages/<id>, any query or fragment); the first of each id is kept, so a repeat is
-// not exported twice. Tokens split on whitespace; commas split only a token with no "/",
-// so a comma in a link's query can't split off a stray id. A pasted sentence's wrapping
-// punctuation — (link). <link> "77"; — is trimmed first.
+// not exported twice. Tokens split on whitespace; commas split a token unless the whole
+// token is one link, so a comma in a link's query can't split off a stray id. A pasted
+// sentence's wrapping punctuation — (link). <link> "77"; — is trimmed first.
 const unwrap = (t) => t.replace(/^[(<"'[]+/, "").replace(/[.,;:)>"'\]]+$/, "");
 const tokensOf = (text) => (text || "").split(/\s+/).map(unwrap)
-  .flatMap((t) => t.includes("/") ? [t] : t.split(",").map(unwrap)).filter(Boolean);
+  .flatMap((t) => t.includes("/") && idOf(t) ? [t] : t.split(",").map(unwrap)).filter(Boolean);
 const idOf = (token) => /^\d+$/.test(token) ? token
   : (token.match(/^(?:(?:https?:\/\/)?(?:[\w-]+\.)*etsy\.com)?\/messages\/(\d+)(?:[/?#]|$)/i) || [])[1] || null;
 const parseIds = (text, pathname = "") => {

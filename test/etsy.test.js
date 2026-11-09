@@ -100,6 +100,12 @@ test("a comma inside a link doesn't split off a stray id", () => {
   assert.deepEqual(parseIds("1,2, https://www.etsy.com/messages/9?x=1,2,3"), ["1", "2", "9"]);
 });
 
+test("a comma-joined run holding a link still splits when the whole isn't one link", () => {
+  assert.deepEqual(parseIds("1,2,https://etsy.com/messages/3"), ["1", "2", "3"]);
+  assert.deepEqual(parseIds("https://www.etsy.com/messages/9,10"), ["9", "10"]);
+  assert.deepEqual(ignoredTokens("1,2/3"), ["2/3"]);
+});
+
 test("only an etsy.com link (or a bare /messages/ path) counts; the host is case-blind", () => {
   assert.deepEqual(ignoredTokens("https://example.com/messages/9 https://etsy.com.evil.example/messages/8"),
     ["https://example.com/messages/9", "https://etsy.com.evil.example/messages/8"]);
