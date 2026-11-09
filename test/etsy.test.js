@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { messagesIn, parseIds, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted }
+const { messagesIn, parseIds, ignoredTokens, collectConversations, serializePayload, outputName, redactStateFor, redactionCollisions, redactLineFor, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted }
   = await import("../src/modules/etsy/messages.js");
 const { makeRedact } = await import("../src/modules/etsy/redact.js");
 const { match } = await import("../src/modules/registry.js");
@@ -68,6 +68,25 @@ test("parseIds falls back to the /messages/ pathname, and text beats pathname", 
   assert.deepEqual(parseIds("", "/shop/thing"), []);
   assert.deepEqual(parseIds("", ""), []);
   assert.deepEqual(parseIds("9", "/messages/123"), ["9"]);
+});
+
+test("parseIds takes the id out of a pasted conversation link, in any of its forms", () => {
+  assert.deepEqual(parseIds("https://www.etsy.com/messages/222"), ["222"]);
+  assert.deepEqual(parseIds("111, etsy.com/messages/333?ref=hdr_user_menu-messages, /messages/444/"), ["111", "333", "444"]);
+  assert.deepEqual(parseIds("https://www.etsy.com/messages/555#x"), ["555"]);
+  // a link elsewhere on etsy is not a conversation
+  assert.deepEqual(parseIds("https://www.etsy.com/listing/666/thing"), []);
+});
+
+test("parseIds keeps the first of each id: a repeat (bare or linked) is not exported twice", () => {
+  assert.deepEqual(parseIds("111, 222, 111 https://www.etsy.com/messages/222"), ["111", "222"]);
+});
+
+test("ignoredTokens names every token that is neither an id nor a conversation link", () => {
+  assert.deepEqual(ignoredTokens("12a, 34, x https://www.etsy.com/messages/5 https://www.etsy.com/listing/6"),
+    ["12a", "x", "https://www.etsy.com/listing/6"]);
+  assert.deepEqual(ignoredTokens("1, 2\n3"), []);
+  assert.deepEqual(ignoredTokens(""), []);
 });
 
 test("two consecutive pages adding nothing stop the walk, and pages counts every page", async () => {

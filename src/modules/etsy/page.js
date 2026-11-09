@@ -3,7 +3,7 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, collectConversations, serializePayload, outputName, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted } from "./messages.js";
+import { parseIds, ignoredTokens, collectConversations, serializePayload, outputName, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted } from "./messages.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
@@ -62,6 +62,14 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
   redactLine.hidden = true;
   // read every input once, before any await — an empty box falls back to the conversation
   // the popup was opened on
+  const ignored = ignoredTokens($("ids").value);
+  if (ignored.length) {
+    // a typo'd or foreign token stops the run: dropped silently, the rest would save
+    // under a green line that never mentions the conversation that was meant
+    const shown = ignored.slice(0, 5).map((t) => `"${t}"`).join(", ") + (ignored.length > 5 ? `, and ${ignored.length - 5} more` : "");
+    say(`Not a conversation id or link: ${shown}. Give ids (123456789) or etsy.com/messages/<id> links, then save again.`, "warn");
+    return;
+  }
   const ids = parseIds($("ids").value, tabPathname);
   if (!ids.length) {
     say("No conversation ids given.", "warn");
