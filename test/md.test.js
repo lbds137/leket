@@ -488,3 +488,12 @@ test("a nested list's end returns to its parent item's content column", () => {
   // a marker four columns past the content column is code, not a list item
   assert.equal(safeBody("text\n\n    - <x>"), "text\n\n    - <x>");
 });
+
+test("an empty list item opens its content column; after a paragraph a lone - is a setext underline", () => {
+  assert.equal(safeBody("-\n    <!-- x\n\nrest <y>"), "-\n    &lt;!-- x\n\nrest &lt;y>");
+  assert.equal(safeBody("- \n    <!-- x"), "- \n    &lt;!-- x");
+  assert.equal(safeBody("- a\n-\n  b\n\n    <!-- x"), "- a\n-\n  b\n\n    &lt;!-- x");
+  assert.equal(safeBody("1.\n    <!-- x"), "1.\n    &lt;!-- x");
+  // a setext heading closes its paragraph, so the 4-space line after it is code
+  assert.equal(safeBody("foo\n-\n    <!-- x"), "foo\n-\n    <!-- x");
+});
