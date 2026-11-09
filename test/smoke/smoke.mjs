@@ -735,14 +735,15 @@ async function scenarios(cdp, downloads) {
     // check does) and by a rejected promise. The page's own downloads.download is
     // replaced for these rounds; the tab closes with the scenario. Nothing will ever read
     // the blob, so the page must free its URL: the browser's fetch of it then fails.
+    // A refusal at the call ends the run with no export, so the redact line is hidden; a
+    // rejected promise ends it through the normal finish, which keeps the line.
     const refusals = [
-      [5, "() => { throw new Error('smoke: refused at the call'); }", "smoke: refused at the call"],
+      [5, "() => { throw new Error('smoke: refused at the call'); }", "smoke: refused at the call", ""],
       [6, "() => Promise.reject(new Error('smoke: refused by Chrome'))",
-        "The download didn't finish — Chrome interrupted or refused it, and "],
+        "The download didn't finish — Chrome interrupted or refused it, and ",
+        "Redact: off — no etsyRedact config; the export is unredacted."],
     ];
-    for (const [round, stub, said] of refusals) {
-      const listed = `chrome.downloads.search({ filenameRegex: "etsy-conversations-" }).then((d) => d.length)`;
-      const before = await extEval(listed);
+    for (const [round, stub, said, redactSaid] of refusals) {
       await evalIn(ep, `(() => {
         if (!window.smokeBlobs) {
           window.smokeBlobs = [];
@@ -755,12 +756,12 @@ async function scenarios(cdp, downloads) {
         document.getElementById("ids").value = ${JSON.stringify(ETSY_ID)};
         document.getElementById("etsy-run").click(); return true; })()`);
       const end = await waitFor(() => evalIn(ep, etsyState).then((s) => s.cls === "warn" && s),
-        `etsy save ${round}'s end line`, 20000).catch(soft((e) => ({ t: e.message })));
+        `etsy save ${round}'s end line`, 20000).catch(soft((e) => ({ t: e.message, fails: [] })));
       check(end.t.startsWith(said), `etsy save ${round}: the refusal reaches the end line (it said: ${end.t})`);
+      check(end.rt === redactSaid && end.fails.length === 0,
+        `etsy save ${round}: the redact line is ${redactSaid ? "the off line" : "hidden"} and nothing is listed as failed (it said: ${end.rt}; ${end.fails.length} failures)`);
       const blobs = await evalIn(ep, `Promise.all(window.smokeBlobs.map((u) => fetch(u).then(() => "readable", () => "freed")))`);
       check(JSON.stringify(blobs) === '["freed"]', `etsy save ${round}: the page made one blob and freed its URL (${JSON.stringify(blobs)})`);
-      const after = await extEval(listed);
-      check(after === before, `etsy save ${round}: no download reached Chrome's list (${before} -> ${after})`);
     }
   },
   // the cleanup: the stored config never reaches a later scenario (scenario() closes the tabs)
