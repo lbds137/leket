@@ -23,13 +23,16 @@
 // - code spans pair within one line: a `<` in a span the renderer carries across a line
 //   break shows as `&lt;`, and after an unclosed backtick every `<` in the rest of the
 //   paragraph is escaped (safeBody), as is every `<` after a link's `](` or `][` (a
-//   destination, title or label holds no spans). Block boundaries come from a port of CommonMark's
-//   own block parser (scanBlocks), checked against the real one (test/md-oracle.test.js).
+//   destination, title or label holds no spans). Block boundaries come from a port of
+//   CommonMark's own block parser (scanBlocks), checked against the real one
+//   (test/md-oracle.test.js).
 // - a paragraph opening with `[` that a setext underline (`===`, `---`) turns into a
 //   heading gets `\[` (safeBody; it shows as `[`): a link reference definition there
 //   would decide whether the heading forms, and that parse isn't ported.
-// - a lone \r ends a line, as it does for the renderer; quote() expands a line's leading
-//   tabs, since "> " shifts the columns a tab's width depends on.
+// - a lone \r ends a line, as it does for the renderer; at an odd depth quote() expands a
+//   line's leading tabs, since "> " shifts the columns a tab's width depends on (a code
+//   line's content keeps its tabs, except on a closer-shaped line), and it keeps trailing
+//   spaces, where python's rstrip drops a hard line break.
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -41,9 +44,11 @@ export function when(ts) {
 
 // A tab's width depends on its column, and "> " moves every column by 2: a line's leading
 // tabs (in its indent and container markers) become the spaces they stood for on their
-// own, so "\tcode" stays code inside a quote. Tabs further in don't shape blocks.
-function expandLeadingTabs(line) {
-  const lead = line.match(/^[ \t>*+\-.)\d]*/)[0];
+// own, so "\tcode" stays code inside a quote. Tabs further in don't shape blocks. On a
+// code line (from, see scanBlocks) only the part before its content is expanded: the
+// content's own tabs are kept, as the reader would see them unquoted.
+function expandLeadingTabs(line, from) {
+  const lead = from === undefined ? line.match(/^[ \t>*+\-.)\d]*/)[0] : line.slice(0, from);
   if (!lead.includes("\t")) return line;
   let col = 0;
   let spaced = "";
@@ -55,11 +60,18 @@ function expandLeadingTabs(line) {
   return spaced + line.slice(lead.length);
 }
 
-export function quote(text, depth) {
+// code: per line, where its code content starts (quoteBody); a line without one has its
+// whole lead expanded. Only an odd depth expands: an even one moves every column by a
+// multiple of 4, which keeps each tab's width. Trailing spaces stay (a hard line break,
+// or code); an empty line drops the prefix's own trailing space.
+export function quote(text, depth, code = []) {
   text = String(text ?? "");
   const prefix = "> ".repeat(depth);
   // a lone \r ends a line for the renderer too, so it gets its own "> "
-  return text.split(/\r\n|\r|\n/).map((line) => (prefix + (depth ? expandLeadingTabs(line) : line)).trimEnd()).join("\n");
+  return text.split(/\r\n|\r|\n/).map((line, i) => {
+    if (!line) return prefix.trimEnd();
+    return prefix + (depth % 2 ? expandLeadingTabs(line, code[i]) : line);
+  }).join("\n");
 }
 
 // The post that holds the media: a crosspost keeps its gallery and image in its parent.
@@ -199,12 +211,15 @@ const RE_SETEXT = /^(?:=+|-+)[ \t]*$/;
 const isSpaceOrTab = (c) => c === " " || c === "\t";
 
 // Returns, per line, the id of the paragraph or heading it is text of (0: kept as is),
-// the paragraph-opening `[`s a setext underline turns into headings (see safeBody), and
-// the closer an unclosed fence needs, behind its containers' markers ("" if none).
+// the paragraph-opening `[`s a setext underline turns into headings (see safeBody), the
+// closer an unclosed fence needs, behind its containers' markers ("" if none), and, per
+// code line, the index its literal content starts at (unset: not code, or a closer-shaped
+// line quote() must expand anyway).
 function scanBlocks(lines) {
   const node = (type, parent) => ({ type, parent, open: true, last: null, hasChild: false });
   const doc = node("document", null);
   const kinds = [];
+  const code = [];
   const brackets = [];
   let ids = 0;
   let tip = doc;
@@ -219,7 +234,7 @@ function scanBlocks(lines) {
   let indent = 0;
   let indented = false;
   let blank = false;
-  let partial = false;
+  let partial = false; // the reference's partiallyConsumedTab: where a code line's content starts
   let atx = 0;
 
   const canContain = (t, c) => (t === "list" ? c === "item" : (t === "document" || t === "block_quote" || t === "item") && c !== "item");
@@ -464,7 +479,8 @@ function scanBlocks(lines) {
     }
     allClosed = container === oldtip;
     lastMatched = container;
-    let matchedLeaf = container.type === "code_block";
+    const inCode = container.type === "code_block";
+    let matchedLeaf = inCode;
     while (!matchedLeaf) {
       findNextNonspace();
       if (!indented && !RE_MAYBE_SPECIAL.test(ln.slice(nextNonspace))) {
@@ -489,6 +505,16 @@ function scanBlocks(lines) {
       kinds.push(container.id);
     } else if (container.type === "code_block" || container.type === "heading" || container.type === "thematic_break") {
       kinds.push(atx); // an ATX heading's line is text; a fence, code, a break or an underline isn't
+      // a code line (not a fence's opener): its content starts where the reference's
+      // addLine starts it, past a tab the containers only partly used
+      if (container.type === "code_block" && (inCode || !container.fenced)) {
+        const at = partial ? offset + 1 : offset;
+        const rest = ln.slice(at);
+        const m = container.fenced && /^ *\t/.test(rest) && rest.trimStart().match(RE_CLOSING_FENCE);
+        // a tab in the indent of a closer-shaped line has a width that moves with its
+        // column: two columns over it can make the line close the fence (see quote())
+        if (!(m && m[0][0] === container.fenceChar && m[0].length >= container.fenceLength)) code[i] = at;
+      }
     } else if (offset < ln.length && !blank) {
       const p = addChild("paragraph");
       p.id = ++ids;
@@ -510,7 +536,7 @@ function scanBlocks(lines) {
     }
     closer += tip.fenceChar.repeat(tip.fenceLength);
   }
-  return { kinds, brackets, closer };
+  return { kinds, brackets, closer, code };
 }
 
 // Bodies keep every line as written except: a `<` in paragraph or heading text becomes
@@ -518,13 +544,27 @@ function scanBlocks(lines) {
 // closer line. Code spans pair within a line only: a span the renderer carries across a
 // line break shows its `<` as `&lt;`, a cosmetic cost. Once a line leaves a backtick run
 // unclosed, every later `<` in that paragraph is escaped, since the run may close on a
-// later line; the same holds from a link's `](` or `][` on. One more edit: a paragraph opening with `[` that a setext underline turns
-// into a heading gets `\[`, because a link reference definition there decides whether
-// the heading forms at all, and that parse isn't ported; `\[` shows as `[`.
+// later line; the same holds from a link's `](` or `][` on. One more edit: a paragraph
+// opening with `[` that a setext underline turns into a heading gets `\[`, because a link
+// reference definition there decides whether the heading forms at all, and that parse
+// isn't ported; `\[` shows as `[`.
 export function safeBody(text) {
+  return escapeBody(text).text;
+}
+
+// A comment's body as comments() writes it: safeBody's text, quoted with its code lines
+// known, so quote() keeps their content as written.
+export function quoteBody(text, depth) {
+  const { text: out, code } = escapeBody(text);
+  return quote(out, depth, code);
+}
+
+// safeBody's work, plus scanBlocks' per-line code starts: no edit touches a code line, so
+// they hold for the output's lines too
+function escapeBody(text) {
   const parts = String(text ?? "").split(/(\r\n|\r|\n)/);
   const lines = parts.filter((_, k) => k % 2 === 0);
-  const { kinds, brackets, closer } = scanBlocks(lines);
+  const { kinds, brackets, closer, code } = scanBlocks(lines);
   for (const [i, at] of brackets) lines[i] = lines[i].slice(0, at) + "\\" + lines[i].slice(at);
   let scope = 0;
   let untrusted = false;
@@ -550,7 +590,7 @@ export function safeBody(text) {
   });
   // the closer follows the body's own last line break: "\n" after a final "\r" would fuse
   // with it into one break and swallow the empty last line
-  return closer ? out + (parts.length > 1 ? parts[parts.length - 2] : "\n") + closer : out;
+  return { text: closer ? out + (parts.length > 1 ? parts[parts.length - 2] : "\n") + closer : out, code };
 }
 
 function moreKind(d) {
@@ -613,7 +653,7 @@ export function comments(children, depth, permalink, out) {
     const head = `**u/${plain(d.author ?? "[deleted]")}** · ${plain(d.score ?? "?")} points · ${when(d.created_utc)}`;
     out.push(quote(head, depth));
     out.push(quote("", depth));
-    out.push(quote(safeBody(d.body), depth));
+    out.push(quoteBody(d.body, depth));
     out.push("");
     const replies = d.replies;
     if (replies && typeof replies === "object") {
