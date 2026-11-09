@@ -606,7 +606,7 @@ test("a skipped session is never fetched, still counted in progress and _titles"
 
 test("an events page without a data array fails that session naming the shape, so it is not saved as empty", async () => {
   // a green 0-event session would be promoted into the skip list and never re-fetched
-  for (const body of [{}, { data: null }, { error: { type: "x" } }]) {
+  for (const body of [{}, { data: null }, { error: { type: "x" } }, { data: "nope" }]) {
     const b = oneEventSession("B", "tB", 200);
     const fetch = standIn({
       "https://claude.ai/v1/code/sessions/A/events?limit=500": () => body,
