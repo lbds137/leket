@@ -8,6 +8,10 @@ const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
 const VIDEO = /\.(mp4|webm|mov|m4v)$/i;
 const AUDIO = /\.(ogg|oga|mp3|wav|m4a|flac|opus)$/i;
 
+// Discord's system message types (recipient add/remove, call, name/icon change, pin, join,
+// boosts, follow, discovery, thread created, invite reminder, automod, role subscription)
+const NOTICE_TYPES = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 22, 24, 25]);
+
 // Discord's own markup in a message: inline code, links, mentions, custom emoji, timestamps, escapes.
 const TOKEN = /`([^`\n]+)`|(https?:\/\/[^\s<>"`]+)|<@!?(\d+)>|<@&(\d+)>|<#(\d+)>|<a?:([\w~-]+):\d+>|<t:(-?\d+)(?::[tTdDfFR])?>|\\([^0-9A-Za-z\s])/g;
 
@@ -228,9 +232,10 @@ export function render(exp, records, { timeZone = "UTC", streamed = false } = {}
       listed(f.attachments, `${m.id}|${k}`) + (f.embeds || []).map(embed).join("") + `</div>`).join("") +
       (m.forward_of && !(m.forwarded || []).length ? `<div class="forward"><em>forwarded message: its content was not found</em></div>` : "");
     // a join, pin, call or boost notice carries no text of its own: say what it is rather
-    // than leave a name over an empty bubble (0 is a plain message, 19 a reply)
+    // than leave a name over an empty bubble. Only Discord's documented system types: a
+    // bot's command reply (20, 23) or a thread starter (21) can be empty and is no notice
     const bare = !m.text && !(m.attachments || []).length && !(m.embeds || []).length && !fwd;
-    const notice = bare && Number.isInteger(m.type) && m.type !== 0 && m.type !== 19
+    const notice = bare && NOTICE_TYPES.has(m.type)
       ? `<em>a Discord notice (type ${m.type}): its wording isn't saved</em>` : "";
     body += `<div class="msg${sameAuthor ? " cont" : ""}" id="m${esc(m.id)}">${reply}${head}` +
       `<div class="text">${notice}${text(m.text)}${m.edited ? ' <span class="edited">(edited)</span>' : ""}</div>` +

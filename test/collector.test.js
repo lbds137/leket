@@ -227,6 +227,9 @@ test("a message quoting the start header's wording doesn't end the climb as the 
   assert.equal(loads, 25);
   assert.doesNotMatch(status, /reached the start/);
   assert.match(status, /STALLED, not at the start/);
+  // a row that is a piece of the header ("Welcome") is cut from the row, not the header
+  const short = runPage("auto", [], { AUTO_QUOTE: "short" });
+  assert.match(short.status, /reached the start of the channel/);
 });
 
 test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 steps", () => {
