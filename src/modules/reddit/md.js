@@ -18,6 +18,10 @@
 //   which turns into plain text (the URL still reads; it just isn't a link): rare in
 //   reddit, accepted.
 // - remote image links are wrapped in `<...>`.
+// - every list marker is taken as an item start, even where CommonMark says it can't
+//   interrupt a paragraph ("2019. was" mid-paragraph): the cost is over-escaping only (a
+//   span that should cross that line doesn't, so a `<` in it shows as `&lt;`), never a
+//   raw `<`, so it is accepted.
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -186,6 +190,7 @@ export function safeBody(text) {
   };
   // the content column a fence lives in: below it, a non-blank line ends the fence
   let fenceCol = 0;
+  let fenceQuotedCol = 0;
   const flushPara = () => {
     if (para.length) {
       out.push(...escapeLine(para.join("\n")).split("\n"));
@@ -200,9 +205,13 @@ export function safeBody(text) {
       // non-blank line indented less than its list item's content column), with no
       // closer appended; the ending line then goes through normal processing. A
       // top-level fence has column 0, so its own 1-3 space indent never ends it
+      // Inside a quote, a list item's fence also ends where the text after the quote
+      // markers drops below the item's content column ("> - ```" then "> <x>")
       const fenceQuotes = (fencePrefix.match(/>/g) || []).length;
+      const afterQuotes = fenceQuotes ? line.replace(new RegExp(`^(?: {0,3}>[ ]?){${fenceQuotes}}`), "") : "";
       const ended = fenceQuotes
         ? quotesOf(line) < fenceQuotes
+          || (fenceQuotedCol > 0 && !/^\s*$/.test(afterQuotes) && columnAfter(afterQuotes.match(/^[ \t]*/)[0]) < fenceQuotedCol)
         : !blank && indent < fenceCol;
       if (!ended) {
         // a closer belongs to the opener's own container: inside a top-level fence, "- ```"
@@ -255,6 +264,10 @@ export function safeBody(text) {
       flushPara();
       if (!list) closeListsPast(indent);
       fenceCol = listCol();
+      // a list item behind quote markers: its content column, counted after the quotes
+      const quoted = open[1].match(/^(?: {0,3}>[ ]?)*/)[0];
+      const quotedItem = quoted ? open[1].slice(quoted.length).match(LIST_ITEM) : null;
+      fenceQuotedCol = quotedItem ? contentColumn(quotedItem) : 0;
       fenceChar = open[2][0];
       fenceLen = open[2].length;
       // the closer, if one must be added, stays inside the same blockquote (a bare one
@@ -264,7 +277,10 @@ export function safeBody(text) {
       out.push(line);
       continue;
     }
-    if (blank) {
+    // a line of only quote markers (">", "> ", "> >") is a blank line inside the quote:
+    // it ends the quote's paragraph, so a span can't pair across it
+    const quoteBlank = !blank && quotesOf(line) > 0 && /^[\s>]*$/.test(line);
+    if (blank || quoteBlank) {
       flushPara();
       out.push(line);
       continue;
@@ -301,9 +317,11 @@ export function safeBody(text) {
 }
 
 function moreKind(d) {
-  if (Number.isFinite(d.count) && d.count > 0) return { count: d.count };
+  // { count, parent }: count > 0 is reddit's own figure; count 0 with a parent is a
+  // thread-continues cut; neither is no node worth a line (null)
   const parent = t1Parent(d);
-  return parent ? { cut: parent } : null;
+  const count = Number.isFinite(d.count) && d.count > 0 ? d.count : 0;
+  return count || parent ? { count, parent } : null;
 }
 
 function sumMore(children, acc) {
@@ -340,7 +358,7 @@ export function comments(children, depth, permalink, out) {
     if (kind === "more") {
       const m = moreKind(d);
       if (m) {
-        const parent = m.cut || t1Parent(d);
+        const { parent } = m;
         // the branch is <post permalink><comment id>/, so it needs a permalink to hang off:
         // without one the line links the post, as before
         const branch = parent && permalink.endsWith("/") ? `${parent}/` : "";

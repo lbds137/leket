@@ -501,6 +501,25 @@ test("indents count tabs to the next multiple of 4, and a list gap of 5+ columns
   assert.equal(safeBody("- a\n\n  \t  <x>"), "- a\n\n  \t  <x>");
 });
 
+test("a quote-only line ends the quote's paragraph, so a span can't pair across it", () => {
+  const t = "`";
+  assert.equal(safeBody(`> ${t}a\n>\n> <b>${t}`), `> ${t}a\n>\n> &lt;b>${t}`);
+  assert.equal(safeBody(`> ${t}a\n> \n> <b>${t}`), `> ${t}a\n> \n> &lt;b>${t}`);
+  assert.equal(safeBody(`> > ${t}a\n>\n> > <b>${t}`), `> > ${t}a\n>\n> > &lt;b>${t}`);
+  assert.equal(safeBody(`> > ${t}a\n> >\n> > <b>${t}`), `> > ${t}a\n> >\n> > &lt;b>${t}`);
+  // within one quote paragraph the span still crosses lines
+  assert.equal(safeBody(`> ${t}a\n> <b>${t}`), `> ${t}a\n> <b>${t}`);
+});
+
+test("a list item's fence inside a quote ends where the item ends", () => {
+  const f = "```";
+  assert.equal(safeBody(`> - ${f}\n> <x>`), `> - ${f}\n> &lt;x>`);
+  // still inside the item: kept raw, and the closer closes it
+  assert.equal(safeBody(`> - ${f}\n>   <x>\n>   ${f}\n> <y>`), `> - ${f}\n>   <x>\n>   ${f}\n> &lt;y>`);
+  // unclosed and never left: closed at the end inside the quote
+  assert.equal(safeBody(`> - ${f}\n>   <x>`), `> - ${f}\n>   <x>\n>   ${f}`);
+});
+
 test("an escaped HTML block start joins the paragraph, so its backticks pair as the output renders them", () => {
   const t = "`";
   assert.equal(safeBody(`<div>${t}\nfoo ${t}<x>${t}`), `&lt;div>${t}\nfoo ${t}&lt;x>${t}`);
