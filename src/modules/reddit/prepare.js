@@ -80,14 +80,20 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
   } catch (e) {
     throw unreachable(e);
   }
-  if (!r.ok) throw new Error(`the server answered ${r.status}`);
+  // a refused response's unread body is cancelled, so its connection closes now rather
+  // than at the timeout
+  const refuse = (why) => {
+    if (r.body && typeof r.body.cancel === "function") r.body.cancel().catch(() => {});
+    return new Error(why);
+  };
+  if (!r.ok) throw refuse(`the server answered ${r.status}`);
   const rawType = (r.headers && typeof r.headers.get === "function" && r.headers.get("content-type")) || "";
   const ctype = rawType.split(";")[0].trim().toLowerCase();
   if (!ctype.startsWith("image/")) {
-    throw new Error(`the server sent ${ctype || "no content type"}, not an image`);
+    throw refuse(`the server sent ${ctype || "no content type"}, not an image`);
   }
   const cl = Number(r.headers && typeof r.headers.get === "function" && r.headers.get("content-length"));
-  if (cl > MAX_IMAGE_BYTES) throw new Error("over 50 MB");
+  if (cl > MAX_IMAGE_BYTES) throw refuse("over 50 MB");
   if (!r.body) throw new Error("the server sent no image data");
   const chunks = [];
   let total = 0;

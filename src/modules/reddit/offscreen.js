@@ -7,6 +7,7 @@ import { preparePostJson, fetchImage } from "./prepare.js";
 import { render } from "./md.js";
 
 const saves = new Map();
+const STALE_MS = 24 * 60 * 60 * 1000;
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   // the worker is the only caller that matters; mirror its sender line — a content
@@ -20,8 +21,16 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === "leket:reddit-save-run" && typeof msg.tabUrl === "string") {
     preparePostJson(msg.tabUrl).then(
       ({ id, data, images, url, name, mdUrl, mdName, notFetched }) => {
+        // a save whose worker died never sends done: drop any older than the longest
+        // save could run (each image may wait out the 15-minute no-word timeout)
+        for (const [t, s] of saves) if (Date.now() - s.at > STALE_MS) saves.delete(t);
+        // a post with no images is the plain two-file save: nothing to keep, no token
+        if (!images.length) {
+          reply({ ok: true, id, images, url, name, mdUrl, mdName, notFetched });
+          return;
+        }
         const token = crypto.randomUUID();
-        saves.set(token, { id, data, notFetched, images });
+        saves.set(token, { id, data, notFetched, images, at: Date.now() });
         reply({ ok: true, token, id, images, url, name, mdUrl, mdName, notFetched });
       },
       (e) => reply({ ok: false, error: (e && e.message) || String(e) }),
