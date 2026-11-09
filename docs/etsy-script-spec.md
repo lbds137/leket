@@ -180,3 +180,15 @@ predate this list.
   below one page, a fraction, `Infinity` — throws a RangeError before any fetch,
   instead of marking every conversation both empty and capped. There is no uncapped
   mode: a walk always has a cap.
+- **Pasted links count as ids** (0.3.36). An `etsy.com/messages/<id>` link (with or
+  without the scheme and host, wrapping punctuation trimmed) reads as its id, and a
+  repeated id saves once. A token that is neither stops the run before any fetch,
+  naming it, instead of being dropped while the rest save green.
+- **The guard reads through markup** (0.3.37). Etsy message bodies are HTML, so the
+  name is also matched with numeric and common named entities and `%XX` escapes read
+  as their characters and tags read as nothing, layer by layer (`&amp;#97;` is an a).
+  A hit there redacts the whole spelling in the file. A tag never crosses an
+  unescaped quote, so the reading stays inside one JSON string. The short form glued
+  to the word before it is caught where a capital starts it (`HiJane`, `JaneSmith`),
+  case-sensitively, so `ORGANELLE` stays whole. A same-size export takes about 1.3 to
+  1.6 times as long to redact.

@@ -66,7 +66,7 @@ The JSON holds each conversation's messages as Etsy's own messages page receives
 
 ### Hiding a name in the export (optional)
 
-Leket can replace one person's name with `[redacted]` throughout the Etsy export: the full name, its short form, and the misspellings speech-to-text tends to make of them. An email address that contains either becomes `[email redacted]`. It's off until you set it up, and the page says which way it is on every save (**Redact: on**, or **Redact: off** and why). The `redact` field in the file records the same thing.
+Leket can replace one person's name with `[redacted]` throughout the Etsy export: the full name, its short form, and the misspellings speech-to-text tends to make of them, including where the message's HTML spells them with entities, splits them with a tag or glues the short form onto the word before it. An email address that contains either becomes `[email redacted]`. It's off until you set it up, and the page says which way it is on every save (**Redact: on**, or **Redact: off** and why). The `redact` field in the file records the same thing.
 
 The name never goes into this repo. It lives in Chrome's storage for this extension, on your computer only. To set it:
 
