@@ -91,9 +91,14 @@ export const absolutizeOrgPath = (tabUrl, orgPath) => new URL(tabUrl).origin + o
 // inline and the rest (binary, or a text label over bytes that aren't UTF-8) base64.
 // A chat's failure is recorded on its entry (partial files kept) and the walk moves
 // on; onProgress(done, total, fileCount) fires after each chat.
-export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onProgress } = {}) {
+export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onProgress, timeoutMs = 60_000 } = {}) {
+  // a fresh signal per fetch, as in every other module: a hung request fails its chat
+  // instead of holding the run, and its button, forever. The signal covers the body
+  // read too; `step` names where a timeout landed (the engine's wording says neither).
+  let step = "";
   const get = async (url) => {
-    const r = await doFetch(url, { credentials: "include" });
+    step = (url.split("/wiggle/")[1] || url).replace(/\?.*$/, "");
+    const r = await doFetch(url, { credentials: "include", signal: AbortSignal.timeout(timeoutMs) });
     if (!r.ok) throw new Error(`${r.status} ${url.split("/wiggle/")[1] || url}`);
     return r;
   };
@@ -108,6 +113,9 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
         throw new Error("list-files: no files_metadata (the API shape changed)");
       }
       for (const meta of listing.files_metadata) {
+        // an entry with no path can't be fetched or placed: skip it, counted on the
+        // entry, rather than let it end the chat with a TypeError
+        if (typeof meta?.path !== "string") { entry.no_path = (entry.no_path || 0) + 1; continue; }
         if (!meta.path.startsWith("/mnt/user-data/outputs/")) continue;
         const blob = await (await get(base + "download-file?path=" + encodeURIComponent(meta.path))).blob();
         const file = { path: meta.path, size: meta.size, created_at: meta.created_at, content_type: meta.content_type };
@@ -119,13 +127,27 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
         fileCount++;
       }
     } catch (err) {
-      entry.error = err.message;
+      entry.error = err?.name === "TimeoutError" ? `${step} timed out after ${timeoutMs / 1000} s` : err.message;
       failed++;
     }
     results.push(entry);
     if (onProgress) onProgress(i + 1, chats.length, fileCount);
   }
   return { results, fileCount, failed };
+}
+
+// The end line of a saved run. Anything the file carries that isn't a clean save — a
+// failed chat, a file that arrived at another size than listed (size_mismatch, which
+// can be 0), a listed file with no path — turns it into a warning that names it.
+export function doneLine({ chats, fileCount, results, filename }) {
+  const failedChats = results.filter((r) => r.error).length;
+  const mismatched = results.reduce((n, r) => n + r.files.filter((f) => f.size_mismatch != null).length, 0);
+  const noPath = results.reduce((n, r) => n + (r.no_path || 0), 0);
+  const text = `Done: ${chats} chats, ${fileCount} files saved to ${filename}.`
+    + (failedChats ? ` ${failedChats} chat(s) failed — their entries carry an "error".` : "")
+    + (mismatched ? ` ${mismatched} file(s) arrived at a different size than listed — they carry "size_mismatch".` : "")
+    + (noPath ? ` ${noPath} listed file(s) had no path and were skipped — counted in "no_path".` : "");
+  return { text, warn: Boolean(failedChats || mismatched || noPath) };
 }
 
 // the script's own name: the UTC date, not the local one — an evening save and its

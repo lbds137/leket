@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 // a red line under every test, like claude-sessions.test.js: an un-injected fetch is a bug
 globalThis.fetch = async () => { throw new Error("no network in tests: inject a fetch stand-in"); };
 
-const { parseChats, isText, asText, toBase64, readOrgPath, absolutizeOrgPath, collectChats, outputsName }
+const { parseChats, isText, asText, toBase64, readOrgPath, absolutizeOrgPath, collectChats, outputsName, doneLine }
   = await import("../src/modules/claude-chat/outputs.js");
 
 const CHAT = "1234e567-89ab-4cde-8f01-234556789abc";
@@ -465,4 +465,58 @@ test("page.js saves with conflictAction overwrite: a same-day re-save replaces t
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/modules/claude-chat/page.js", import.meta.url), "utf8");
   assert.match(src, /trackDownload\(chrome\.downloads, \{ url: blobUrl, filename, conflictAction: "overwrite" \}/);
+});
+
+// --- timeouts, odd listing entries, the end line
+
+test("a hung wiggle fetch times out per fetch, naming the step: the chat fails, later chats still run", async () => {
+  const other = "bbbb2222-2222-4333-8444-555555555555";
+  const signals = [];
+  const fetch = async (url, opts = {}) => {
+    signals.push(opts.signal);
+    if (url.includes(CHAT)) {
+      return new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(opts.signal.reason)));
+    }
+    return { ok: true, status: 200, json: async () => ({ files_metadata: [] }) };
+  };
+  const done = await collectChats([[CHAT, "n", "s"], [other, "n2", "s2"]], { fetch, orgPath: ORG, timeoutMs: 20 });
+  assert.ok(signals.every((s) => s instanceof AbortSignal), "every fetch carries a timeout signal");
+  assert.equal(done.results[0].error, "list-files timed out after 0.02 s");
+  assert.equal(done.results[1].error, undefined, "the next chat still runs");
+  assert.equal(done.failed, 1);
+});
+
+test("a listed file with no string path is skipped and counted, and the chat's other files still arrive", async () => {
+  const { fetch } = wiggleFetch({
+    [`${ORG}conversations/${CHAT}/wiggle/list-files?prefix=`]: () => listing([
+      { size: 3, content_type: "text/markdown" },
+      null,
+      { path: 42, size: 1 },
+      { path: "/mnt/user-data/outputs/a.md", size: 1, content_type: "text/markdown" },
+    ]),
+    [`${ORG}conversations/${CHAT}/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2Fa.md`]: () => md("a"),
+  });
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG });
+  const entry = done.results[0];
+  assert.equal(entry.error, undefined, "not a failure");
+  assert.equal(entry.no_path, 3, "the three pathless entries are counted on the entry");
+  assert.deepEqual(entry.files.map((f) => f.path), ["/mnt/user-data/outputs/a.md"]);
+});
+
+test("doneLine: a clean run is the plain green Done", () => {
+  const results = [{ chat: CHAT, files: [{ path: "p" }] }];
+  assert.deepEqual(doneLine({ chats: 1, fileCount: 1, results, filename: "f.json" }),
+    { text: "Done: 1 chats, 1 files saved to f.json.", warn: false });
+});
+
+test("doneLine: size mismatches and pathless entries warn, each named", () => {
+  const results = [
+    { chat: CHAT, files: [{ path: "a", size_mismatch: 2 }, { path: "b" }], no_path: 1 },
+    { chat: "x", files: [{ path: "c", size_mismatch: 0 }], error: "boom" },
+  ];
+  const { text, warn } = doneLine({ chats: 2, fileCount: 3, results, filename: "f.json" });
+  assert.equal(warn, true);
+  assert.equal(text, 'Done: 2 chats, 3 files saved to f.json. 1 chat(s) failed — their entries carry an "error".'
+    + ' 2 file(s) arrived at a different size than listed — they carry "size_mismatch".'
+    + ' 1 listed file(s) had no path and were skipped — counted in "no_path".');
 });
