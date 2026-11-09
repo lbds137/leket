@@ -136,6 +136,7 @@ const PREFIX = new RegExp(`^${MARKERS}`);
 const FENCE_OPEN = new RegExp(`^(${MARKERS}[ ]{0,3})` + "(`{3,}|~{3,})(.*)$");
 const FENCE_CLOSE = new RegExp(`^(${MARKERS}[ ]*)` + "(`{3,}|~{3,})\\s*$");
 const LIST_ITEM = /^ *(?:[-*+]|\d{1,9}[.)]) +/;
+const EMPTY_ITEM = /^( *)([-*+]|\d{1,9}[.)])[ \t]*$/;
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 // a thematic break or a setext underline: a line of its own that ends any paragraph
 const RULE = /^ {0,3}(?:([-*_])(?:[ \t]*\1){2,}|=+|-+)[ \t]*$/;
@@ -208,6 +209,19 @@ export function safeBody(text) {
     }
     // a line outside the open items, not a lazy paragraph continuation, closes them
     if (!blank && !para.length) closeListsPast(indent);
+    // an empty list item ("-", "1.") opens its item too: its content column is the marker
+    // plus one space. Right after a paragraph line in the same container, a lone "-" is a
+    // setext underline instead; left of the list's content column it can't underline
+    // that paragraph, so it is a new item
+    const empty = (!para.length || indent < listCol()) && indent < listCol() + 4 ? line.match(EMPTY_ITEM) : null;
+    if (empty) {
+      flushPara();
+      closeListsPast(indent);
+      lists.push(empty[1].length + empty[2].length + 1);
+      inIndentedCode = false;
+      out.push(escapeLine(line));
+      continue;
+    }
     if (!blank && RULE.test(line)) {
       flushPara();
       closeListsPast(indent);
