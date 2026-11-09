@@ -1,7 +1,9 @@
 // The paste boxes' shared strip. Deck's generators write `window.<NAME> = <json>;` as the
 // first line, then the console script after it, and Lila may paste the whole file, just
 // that line, or just the JSON. This returns the JSON text in all three cases; the caller
-// parses it and words its own error.
+// parses it and words its own error. The assignment is found on any line (the `m` flag),
+// so a comment or "use strict"; above it still strips; JSON can't hold a raw
+// newline in a string, so no line inside a bare-JSON paste starts with `window.`.
 //
 // The capture stops at the first `;` that ends a line: JSON can't hold a raw newline
 // inside a string, and a `;` outside one isn't JSON, so that `;` closes the assignment
@@ -13,9 +15,9 @@
 // `name` is regex-escaped: callers pass constants, but a variable name stays literal.
 export function assignedJson(text, name) {
   let t = String(text ?? "").trim();
-  const head = `^window\\.${String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*`;
-  const m = new RegExp(`${head}([\\s\\S]*?);[ \\t]*(?:\\r?\\n|$)`).exec(t)
-    || new RegExp(`${head}([\\s\\S]*)$`).exec(t);
+  const head = `^[ \\t]*window\\.${String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*`;
+  const m = new RegExp(`${head}([\\s\\S]*?);[ \\t]*(?:\\r?\\n|$)`, "m").exec(t)
+    || new RegExp(`${head}([\\s\\S]*)$`, "m").exec(t);
   if (m) t = m[1].trim();
   return t.replace(/;\s*$/, "");
 }

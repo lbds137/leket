@@ -56,7 +56,10 @@ const offscreenOpen = async () => {
   if (chrome.runtime.getContexts) {
     return (await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] })).length > 0;
   }
-  return (await self.clients.matchAll()).some((c) => c.url === url);
+  // includeUncontrolled: the page's snippet leaves it false, which lists the document only
+  // if this worker controls it, and nothing has shown that below 116. True adds only the
+  // extension's own other pages; the exact-URL match still picks the one document.
+  return (await self.clients.matchAll({ includeUncontrolled: true })).some((c) => c.url === url);
 };
 let creatingOffscreen = null;
 const ensureOffscreen = async () => {
