@@ -52,12 +52,23 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
           failedImages.push({ n: row.n, why: (r && r.error) || "no answer" });
           continue;
         }
-        const imgSaved = await trackDownload(
-          downloads,
-          { url: r.url, filename: `${images.folder}/${r.name}`, saveAs: false, conflictAction: "overwrite" },
-          { timeout },
-        );
-        if (imgSaved !== null && onSettled) onSettled({ url: r.url, name: r.name });
+        const entry = { url: r.url, name: r.name };
+        let imgSaved;
+        try {
+          // a download still going at the timeout stays watched, so a late end still frees
+          // its blob (an image can be 50 MB; the json and md blobs are small)
+          imgSaved = await trackDownload(
+            downloads,
+            { url: r.url, filename: `${images.folder}/${r.name}`, saveAs: false, conflictAction: "overwrite" },
+            { timeout, onLate: () => { if (onSettled) onSettled(entry); } },
+          );
+        } catch {
+          // Chrome refused to start it: nothing reads the blob, and the save goes on
+          if (onSettled) onSettled(entry);
+          failedImages.push({ n: row.n, why: "Chrome refused the download" });
+          continue;
+        }
+        if (imgSaved !== null && onSettled) onSettled(entry);
         if (imgSaved === true) {
           savedImages[row.n] = r.name;
         } else if (imgSaved === false) {

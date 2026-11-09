@@ -908,3 +908,83 @@ test("the worker relay sends image, md and done messages, and sends done even wh
   assert.equal(failedReply.ok, false);
   assert.deepEqual(donesSent, [{ type: "leket:reddit-save-done", token: "tok-2" }], "done is sent even when the download throws");
 });
+
+// --- review round 1: an image Chrome refuses outright, a late image, a refused body, a text post
+
+// a downloads stub whose download() can throw synchronously and whose events the test fires
+const scriptedDownloads = ({ throwFor = () => false, stateFor = () => "complete" } = {}) => {
+  const dl = {
+    calls: [],
+    listeners: new Set(),
+    download(opts) {
+      if (throwFor(opts.filename)) throw new Error("Invalid filename");
+      dl.calls.push(opts);
+      return Promise.resolve(dl.calls.length);
+    },
+    search: async ({ id }) => [{ state: stateFor(dl.calls[id - 1].filename) }],
+    onChanged: {
+      addListener: (fn) => dl.listeners.add(fn),
+      removeListener: (fn) => dl.listeners.delete(fn),
+    },
+    fire: (id, state) => { for (const fn of [...dl.listeners]) fn({ id, state: { current: state } }); },
+  };
+  return dl;
+};
+
+test("an image whose download Chrome refuses to start is noted and freed, and the save goes on", async () => {
+  const dl = scriptedDownloads({ throwFor: (f) => f.endsWith("/02.png") });
+  const freed = [];
+  const rendered = [];
+  const done = await downloadPrepared(dl, twoFiles, {
+    onSettled: (f) => freed.push(f.url),
+    images: {
+      list: [{ n: 1 }, { n: 2 }, { n: 3 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async (n) => ({ ok: true, url: `blob:img${n}`, name: `0${n}.png` }),
+      renderMd: async (saved) => { rendered.push(saved); return { url: "blob:md-new", name: "reddit-abc123.md" }; },
+    },
+  });
+  assert.deepEqual(dl.calls.map((c) => c.filename),
+    ["reddit-abc123.json", "reddit-abc123-images/01.png", "reddit-abc123-images/03.png", "reddit-abc123.md"]);
+  assert.deepEqual(rendered, [{ 1: "01.png", 3: "03.png" }]);
+  assert.ok(freed.includes("blob:img2"), `the refused image's blob is freed (${freed})`);
+  assert.equal(freed.filter((u) => u === "blob:img2").length, 1);
+  assert.match(done.message, /2 of 3 images saved in reddit-abc123-images; the \.md links the rest on reddit \(image 2: Chrome refused the download\)\./);
+});
+
+test("an image with no word at the timeout is freed when it ends later", async () => {
+  const dl = scriptedDownloads({ stateFor: (f) => (f.includes("-images/") ? "in_progress" : "complete") });
+  const freed = [];
+  const done = await downloadPrepared(dl, twoFiles, {
+    timeout: 5,
+    onSettled: (f) => freed.push(f.url),
+    images: {
+      list: [{ n: 1 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async () => ({ ok: true, url: "blob:img1", name: "01.png" }),
+      renderMd: async () => { throw new Error("not called: nothing saved"); },
+    },
+  });
+  assert.match(done.message, /The post's image wasn't saved; the \.md links it on reddit \(image 1: no word from Chrome yet\)\./);
+  assert.ok(!freed.includes("blob:img1"), "a download still going keeps its blob");
+  dl.fire(2, "complete");
+  assert.deepEqual(freed.filter((u) => u === "blob:img1"), ["blob:img1"], "its late end frees it, once");
+});
+
+test("fetchImage cancels the unread body of a response it refuses", async () => {
+  for (const [status, type] of [[404, "image/png"], [200, "text/html"]]) {
+    let cancelled = 0;
+    await assert.rejects(fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => ({ ok: status === 200, status, headers: headersOf({ "content-type": type }), body: { cancel: async () => { cancelled += 1; } } }),
+    }));
+    assert.equal(cancelled, 1, `status ${status} ${type}: the body is cancelled`);
+  }
+});
+
+test("a text post keeps the two-file save: no image, md or done message", async () => {
+  reset();
+  relayReply = { ok: true, id: "abc123", images: [], url: "blob:json", name: "reddit-abc123.json", mdUrl: "blob:md", mdName: "reddit-abc123.md" };
+  const reply = await handled({ type: "leket:reddit-save", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  assert.equal(reply.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
+  assert.deepEqual([imageRequests.length, mdRequests.length, donesSent.length], [0, 0, 0]);
+});

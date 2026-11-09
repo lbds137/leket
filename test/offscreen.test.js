@@ -209,3 +209,11 @@ test("image, md and done handlers: token lookup, saved-name filter, folderRel ch
   assert.deepEqual(await handled({ type: "leket:reddit-save-md", token: run.token, saved: { 1: "01.png" }, folderRel: "reddit-abc123-images" }),
     { ok: false, error: "that save is over" });
 });
+
+test("a post with no images answers without a token and keeps nothing", async () => {
+  fetchBody = okBody;
+  const run = await handled({ type: "leket:reddit-save-run", tabUrl: "https://www.reddit.com/r/x/comments/abc123/t/" });
+  assert.ok(run && run.ok, JSON.stringify(run));
+  assert.deepEqual(run.images, []);
+  assert.equal("token" in run, false);
+});

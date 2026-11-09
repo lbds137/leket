@@ -124,7 +124,7 @@ Layout:
   - `export.html`, `export.js`: the export tab. With `src/lib/`, it fetches the attachments, writes `index.html` and builds the zip.
 - `src/modules/reddit/`: the Reddit module.
   - `json.js`: its command; it hands the save to the worker.
-  - `offscreen.html`, `offscreen.js`, `prepare.js`: the offscreen document, which fetches the post's JSON and prepares both files, so the save outlives the popup.
+  - `offscreen.html`, `offscreen.js`, `prepare.js`: the offscreen document, which fetches the post's JSON and images and renders the .md (again once the images are saved, so it links them), so the save outlives the popup.
   - `md.js`: the post-to-Markdown converter (pure).
   - `download.js`: the worker's half, which downloads the json, the post's images and the .md, overwriting an earlier save.
 - `src/modules/etsy/`: the Etsy module. `page.html`, `page.js`: its page; `messages.js`: paging through each conversation (no extension APIs); `redact.js`: the optional name redaction.
