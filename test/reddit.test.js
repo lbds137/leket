@@ -351,6 +351,7 @@ test("fetchImage fetches with credentials omit and returns a typed blob URL and 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://i.redd.it/pic");
   assert.equal(calls[0].opts.credentials, "omit");
+  assert.equal(calls[0].opts.redirect, "manual", "a redirect's next hop is never requested");
   assert.ok(calls[0].opts.signal instanceof AbortSignal);
   assert.equal(got.name, "02.png");
   assert.match(got.url, /^blob:/);
@@ -422,6 +423,13 @@ test("fetchImage refuses non-image content types, HTTP errors, oversized respons
   );
   assert.equal(cancelled, true, "the reader was cancelled when the stream passed 50 MiB");
   assert.equal(reads, 2, "stopped on the chunk that crossed the cap");
+  // a redirect (redirect: "manual" hands back an opaque one) is refused, not followed
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => ({ type: "opaqueredirect", ok: false, status: 0, headers: headersOf({}), body: null }),
+    }),
+    /^Error: not fetched: it redirects to another address$/,
+  );
   // fetch throw
   await assert.rejects(
     fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
@@ -481,6 +489,20 @@ test("isPrivateHost classifies normalized WHATWG URL hostnames", () => {
     ["https://[fd00::1]/", true],
     ["https://localhost./", true],
     ["https://x.localhost/", true],
+    ["https://a../", true],
+    ["https://localhost.localdomain/", true],
+    ["https://192.0.0.1/", true],
+    ["https://192.0.2.1/", true],
+    ["https://198.18.0.1/", true],
+    ["https://198.19.255.255/", true],
+    ["https://198.51.100.1/", true],
+    ["https://203.0.113.1/", true],
+    ["https://[2002:7f00:1::]/", true],
+    ["https://[2001::1]/", true],
+    ["https://192.0.1.1/", false],
+    ["https://198.20.0.1/", false],
+    ["https://[2001:db8::1]/", false],
+    ["https://notlocaldomain.com/", false],
   ]) {
     assert.equal(isPrivateHost(new URL(u).hostname), expected, u);
   }
@@ -789,6 +811,20 @@ test("downloadPrepared with images: a json refusal fetches no image; image downl
     "blob:md is freed only after its own download");
   assert.equal(fallbackDone.message,
     "Saved reddit-abc123.json and reddit-abc123.md to Downloads. The post's image is in reddit-abc123-images. The .md couldn't be rewritten to link the saved images, so it links every image where it's hosted.");
+  workerDownloads.calls.length = 0;
+
+  // some saved and the re-render failed: the partial sentence leaves the linking to the
+  // fallback sentence, so the two don't say different things
+  const partialFallback = await downloadPrepared(workerDownloads, twoFiles, {
+    images: {
+      list: [{ n: 1 }, { n: 2 }],
+      folder: "reddit-abc123-images",
+      fetchImage: async (n) => (n === 1 ? { ok: true, url: "blob:img1", name: "01.png" } : { ok: false, error: "the server answered 404" }),
+      renderMd: async () => { throw new Error("render threw"); },
+    },
+  });
+  assert.equal(partialFallback.message,
+    "Saved reddit-abc123.json and reddit-abc123.md to Downloads. 1 of 2 images saved in reddit-abc123-images (image 2: the server answered 404). The .md couldn't be rewritten to link the saved images, so it links every image where it's hosted.");
   workerDownloads.calls.length = 0;
 
   // renderMd fallback whose .md download is then interrupted while the json had no word
