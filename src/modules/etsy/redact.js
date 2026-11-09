@@ -22,7 +22,9 @@
     const EXACT = new RegExp(NAME_RE, "gi");
     const SHORT_RE = new RegExp(SHORT, "gi");
     // the short form glued to the word before it, read only where a capital starts it
-    // ("HiJane", "JaneSmith"): case-sensitive, so ORGANELLE and organelle stay whole
+    // ("HiJane", "JaneSmith"): case-sensitive, so ORGANELLE and organelle stay whole. A
+    // short form that is also a common word ending reaches camel-case keys too ("id" takes
+    // the Id of userId)
     const GLUED = new RegExp(`(?<![A-Z])[${firstSounds.toUpperCase()}]${short.slice(1)}(?![a-z])`, "g");
     const REDACTED_EMAIL = /[A-Za-z0-9._%+-]*\[redacted\][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+/g;
     const WORD = /(?:(?<=\\)(?:([nrtbf])|u[0-9a-fA-F]{4}))?([\p{L}\p{Nl}\p{No}]+)/dgu;

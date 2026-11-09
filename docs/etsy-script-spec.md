@@ -190,5 +190,8 @@ predate this list.
   A hit there redacts the whole spelling in the file. A tag never crosses an
   unescaped quote, so the reading stays inside one JSON string. The short form glued
   to the word before it is caught where a capital starts it (`HiJane`, `JaneSmith`),
-  case-sensitively, so `ORGANELLE` stays whole. A same-size export takes about 1.3 to
-  1.6 times as long to redact.
+  case-sensitively, so `ORGANELLE` stays whole. The cost of that: a short form that is
+  also a common word ending reaches into camel-case words and keys too (short `id`
+  turns `userId` into `user[redacted]`). A same-size export takes about 1.3 to 2 times as
+  long to redact, and text dense with entities or `%XX` escapes far longer (up to
+  about 10 times on small samples).
