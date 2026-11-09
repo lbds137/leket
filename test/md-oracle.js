@@ -65,20 +65,35 @@ export function rawHtml(cm, md) {
   return hits;
 }
 
-// the literal of every code block CommonMark finds in md, each line of it as the reader
-// sees it: quoting (comments) should change none of them. The one accepted difference is
-// a closer-shaped line with a tab in its indent, whose indent quote() expands so it can't
-// close the fence two columns over (see md.js scanBlocks), so that indent is dropped here.
-export function codeText(cm, md) {
-  const walker = new cm.Parser().parse(md).walker();
-  const blocks = [];
+// What the reader gets from md, quoted `depth` deep: every node (blocks and inlines, a
+// soft or hard break included) with its literal, inside the depth outer quotes, which are
+// peeled off; quoting (comments) should change none of it. The one accepted difference
+// is a closer-shaped code line with a tab in its indent, whose indent quote() expands so
+// it can't close the fence two columns over (see md.js scanBlocks): a code block's
+// closer-shaped lines are compared without their indent.
+export function reading(cm, md, depth = 0) {
+  let root = new cm.Parser().parse(md);
+  for (let d = 0; d < depth; d++) {
+    const q = root.firstChild;
+    if (!q || q.type !== "block_quote" || q.next) return `not ${depth} quotes deep`;
+    root = q;
+  }
+  const walker = root.walker();
+  const out = [];
   let e;
   while ((e = walker.next())) {
-    if (e.entering && e.node.type === "code_block") {
-      blocks.push(e.node.literal.split("\n").map((l) => (/^ *\t[ \t]*(`{3,}|~{3,})/.test(l) || /^ +(`{3,}|~{3,})/.test(l) ? l.trimStart() : l)));
+    const n = e.node;
+    if (n === root || !e.entering) {
+      if (n !== root && n.isContainer) out.push("/");
+      continue;
     }
+    let lit = n.literal;
+    if (n.type === "code_block") {
+      lit = lit.split("\n").map((l) => (/^[ \t]*(`{3,}|~{3,})/.test(l) ? l.trimStart() : l)).join("\n");
+    }
+    out.push([n.type, lit, n.info, n.level, n.listData && JSON.stringify(n.listData), n.destination]);
   }
-  return blocks;
+  return JSON.stringify(out);
 }
 
 // safeBody's other promise: every input line comes back, `<` turned into `&lt;` at most

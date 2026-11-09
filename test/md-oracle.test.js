@@ -1,31 +1,49 @@
 // safeBody against a real CommonMark parser (test/md-oracle.js): no raw HTML survives,
-// every input line is kept, and quoting keeps code blocks as written. Fixed cases pin
+// every input line is kept, and quoting changes nothing the reader gets. Fixed cases pin
 // each leak class a review found; the seeded fuzz looks for new ones. LEKET_FUZZ_N and
 // LEKET_FUZZ_SEED widen or move it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { safeBody, quoteBody, render } from "../src/modules/reddit/md.js";
-import { loadCommonmark, rawHtml, codeText, linesKept, prng, generate } from "./md-oracle.js";
+import { safeBody, quote, quoteBody, render } from "../src/modules/reddit/md.js";
+import { loadCommonmark, rawHtml, reading, linesKept, prng, generate } from "./md-oracle.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const cm = loadCommonmark();
 const F = "```";
 
-// a body on its own (a post) and quoted one and two deep (comments, as comments() writes
-// them): no raw HTML, every line kept, and quoting leaves each code block's text as it was
-const check = (input) => {
+// a body on its own (a post) and quoted one to three deep (comments, as comments() writes
+// them; an odd depth shifts tabs, an even one doesn't): no raw HTML, every line kept, and
+// each quoted parse, its quotes peeled off, the same as the body's own
+const check = (input, q = quoteBody) => {
   const out = safeBody(input);
-  const quoted = [quoteBody(input, 1), quoteBody(input, 2)];
-  const html = [out, ...quoted].flatMap((md) => rawHtml(cm, md));
+  const quoted = [1, 2, 3].map((d) => [d, q(input, d)]);
+  const html = [out, ...quoted.map(([, md]) => md)].flatMap((md) => rawHtml(cm, md));
   const kept = linesKept(input, out);
-  const code = JSON.stringify(codeText(cm, out));
-  const moved = quoted.find((md) => JSON.stringify(codeText(cm, md)) !== code);
-  return html.length || !kept || moved !== undefined ? { input, out, html, kept, moved } : null;
+  const own = reading(cm, out);
+  const moved = quoted.find(([d, md]) => reading(cm, md, d) !== own);
+  return html.length || !kept || moved ? { input, out, html, kept, moved } : null;
 };
 const show = (f) => `input ${JSON.stringify(f.input)}\n  safeBody ${JSON.stringify(f.out)}\n  `
   + (f.html.length ? `raw HTML ${JSON.stringify(f.html)}`
-    : !f.kept ? "a line was lost or changed" : `quoting changed a code block: ${JSON.stringify(f.moved)}`);
+    : !f.kept ? "a line was lost or changed"
+      : `quoting ${f.moved[0]} deep changed what the reader gets: ${JSON.stringify(f.moved[1])}`);
+
+test("quoting changes nothing the reader gets, and the oracle sees it when it does", () => {
+  const cases = [
+    `${F}\n\tx\n${F}`, // fence content keeps its tab
+    "\t\tx", // indented code
+    "```x`\n\t- \t\n  [a]", // a trailing tab ends a text line: still a soft break
+    "  x\n1.  \t\n2. \t\t<b>",
+    "> 2. > <b>```\n\t>  \t2. ```", // a tab inside a code span on a continuation line
+    `  ${F}\n\tx\n  ${F}`, // a tab the fence's indent half uses: expanded, as it must be
+    "a  \nb", // a hard break
+  ];
+  for (const input of cases) assert.equal(check(input), null, input);
+  // expanding each line's whole lead (quote() without content starts) changes the first five
+  const whole = (s, d) => quote(safeBody(s), d);
+  for (const input of cases.slice(0, 5)) assert.ok(check(input, whole)?.moved, input);
+});
 
 test("the oracle sees a raw tag that safeBody's input would leak", () => {
   assert.deepEqual(rawHtml(cm, "a <b> c"), ["<b>"]);
@@ -70,7 +88,7 @@ test("each leak class a review found leaves no raw HTML", () => {
     "```\r",
     "~~~\n\r",
   ];
-  const fails = cases.map(check).filter(Boolean);
+  const fails = cases.map((c) => check(c)).filter(Boolean);
   assert.equal(fails.length, 0, fails.map(show).join("\n"));
 });
 
@@ -100,7 +118,7 @@ test("render: no JSON field written into the file carries raw HTML", () => {
   assert.match(link, /Links to: .*&lt;x>/);
 });
 
-test("seeded fuzz: no raw HTML, every line kept", () => {
+test("seeded fuzz: no raw HTML, every line kept, quoting changes nothing the reader gets", () => {
   const n = Number(process.env.LEKET_FUZZ_N) || 20000;
   const seed = Number(process.env.LEKET_FUZZ_SEED) || 0x1e4e7;
   const rand = prng(seed);
