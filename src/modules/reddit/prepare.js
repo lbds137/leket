@@ -73,15 +73,16 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
 }
 
 export function isPrivateHost(hostname) {
-  const h = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+  const h = hostname.replace(/\.+$/, "");
   if (h.startsWith("[")) {
-    const first = h.slice(1, -1).split(":")[0];
-    const g = first === "" ? 0 : parseInt(first, 16);
-    return !(g >= 0x2000 && g < 0x4000);
+    // public only in global unicast (2000::/3), minus 6to4 (2002::/16) and Teredo
+    // (2001:0::/32), which carry an IPv4 address that could be a private one
+    const [g0, g1] = h.slice(1, -1).split(":").map((g) => (g === "" ? 0 : parseInt(g, 16)));
+    return !(g0 >= 0x2000 && g0 < 0x4000) || g0 === 0x2002 || (g0 === 0x2001 && g1 === 0);
   }
   const ipv4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    const [a, b, c] = [Number(ipv4[1]), Number(ipv4[2]), Number(ipv4[3])];
     return a === 0
       || a === 10
       || (a === 100 && b >= 64 && b <= 127)
@@ -89,16 +90,22 @@ export function isPrivateHost(hostname) {
       || (a === 169 && b === 254)
       || (a === 172 && b >= 16 && b <= 31)
       || (a === 192 && b === 168)
+      || (a === 192 && b === 0 && (c === 0 || c === 2))
+      || (a === 198 && (b === 18 || b === 19))
+      || (a === 198 && b === 51 && c === 100)
+      || (a === 203 && b === 0 && c === 113)
       || a >= 224;
   }
-  return !h.includes(".") || /\.(localhost|local|internal|home\.arpa|lan)$/.test(h);
+  return !h.includes(".") || /(^|\.)(localhost|localdomain)$|\.(local|internal|home\.arpa|lan)$/.test(h);
 }
 
 export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
   // The post author picks the image URL: a GET to a non-https or private host leaks the
   // saver's IP and pokes their network even though CORS hides the reply. Known limit: a
   // public name that resolves by DNS to a private address is not caught (an extension
-  // can't resolve names before fetching).
+  // can't resolve names before fetching). Redirects are not followed: the next hop could be
+  // any scheme or host, and fetch can't show it before sending the request, so an image
+  // behind a redirect keeps its remote link.
   let parsed;
   try {
     parsed = new URL(u);
@@ -114,10 +121,11 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
   const unreachable = (e) => new Error(`couldn't reach it (${(e && e.message) || e})`);
   let r;
   try {
-    r = await doFetch(u, { credentials: "omit", signal: AbortSignal.timeout(60_000) });
+    r = await doFetch(u, { credentials: "omit", redirect: "manual", signal: AbortSignal.timeout(60_000) });
   } catch (e) {
     throw unreachable(e);
   }
+  if (r.type === "opaqueredirect") throw new Error("not fetched: it redirects to another address");
   // a refused response's unread body is cancelled, so its connection closes now rather
   // than at the timeout
   const refuse = (why) => {

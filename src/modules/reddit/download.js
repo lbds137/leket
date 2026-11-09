@@ -85,7 +85,10 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
         let md;
         try {
           md = await images.renderMd(savedImages);
-        } catch {
+        } catch (e) {
+          // the reason stays out of the popup (one is a whole sentence of its own) but not
+          // out of reach: the worker's console keeps it
+          console.warn("leket: the .md re-render failed; saving the prepared .md", e);
           renderFailed = true;
         }
         if (!renderFailed) {
@@ -116,7 +119,8 @@ export async function downloadPrepared(downloads, files, { timeout, onSettled, n
     if (k === m) {
       message += ` The post's ${m === 1 ? "image is" : `${m} images are`} in ${images.folder}.`;
     } else if (k > 0) {
-      message += ` ${k} of ${m} images saved in ${images.folder}; the .md links the rest where they're hosted (${why}).`;
+      // with renderFailed, the sentence below says where the .md links them all
+      message += ` ${k} of ${m} images saved in ${images.folder}${renderFailed ? "" : "; the .md links the rest where they're hosted"} (${why}).`;
     } else {
       message += ` The post's ${m === 1 ? "image wasn't" : "images weren't"} saved; the .md links ${m === 1 ? "it where it's" : "them where they're"} hosted (${why}).`;
     }
