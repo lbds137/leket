@@ -114,23 +114,23 @@ test("notFetched sums nested more counts and count-0 cuts, and render() writes t
   ]);
   assert.deepEqual(notFetched(tree), { count: 8, atLeast: true }, "a cut counts 1 and makes the count a floor");
   const md = render(tree);
-  const note = "*(This save holds the comments reddit sent in one page; reddit counts at least 8 more that were not fetched — the links below open them on reddit.)*";
+  const note = "*(This save holds the comments reddit sent in one page; at least 8 more comments were not fetched — the links below open them on reddit.)*";
   assert.ok(md.includes(`## Comments\n\n${note}\n\n> **u/alice**`), md);
   assert.equal(md.split("This save holds the comments reddit sent in one page").length - 1, 1);
 
   const singleCut = postPage({}, [{ kind: "more", data: { count: 0, parent_id: "t1_abc9" } }]);
   assert.deepEqual(notFetched(singleCut), { count: 1, atLeast: true });
-  assert.ok(render(singleCut).includes("reddit counts at least 1 more that was not fetched — the links below open them on reddit."), render(singleCut));
+  assert.ok(render(singleCut).includes("in one page; at least 1 more comment was not fetched — the links below open them on reddit."), render(singleCut));
 
   // no cut: the count is reddit's own, said without "at least"
   const countsOnly = postPage({}, [{ kind: "more", data: { count: 7, parent_id: "t1_abc9" } }]);
   assert.deepEqual(notFetched(countsOnly), { count: 7, atLeast: false });
-  assert.ok(render(countsOnly).includes("reddit counts 7 more that were not fetched — the links"), render(countsOnly));
+  assert.ok(render(countsOnly).includes("in one page; 7 more comments were not fetched — the links"), render(countsOnly));
 
   const complete = postPage({}, [comment()]);
   assert.deepEqual(notFetched(complete), { count: 0, atLeast: false });
   assert.ok(!render(complete).includes("not fetched"), render(complete));
-  assert.ok(render(complete, {}, "", { count: 3, atLeast: false }).includes("reddit counts 3 more that were not fetched"));
+  assert.ok(render(complete, {}, "", { count: 3, atLeast: false }).includes("in one page; 3 more comments were not fetched"));
 });
 
 // --- the "Links to:" line ---
