@@ -48,9 +48,11 @@ export async function preparePostJson(tabUrl, { fetch: doFetch = fetch } = {}) {
   // the .md is rendered here, before anything downloads: a 200 that parses but isn't a
   // post page used to land as junk json — now the save refuses with the CLI-voiced
   // wrapper (md.js's own message inside), so Chrome never writes a file that can't be read
-  const nf = notFetched(data);
-  let mdText;
+  // the count is taken inside the try too: an odd shape (children not a list) is the
+  // same not-this-post's-data refusal, not a bare TypeError
+  let mdText, nf;
   try {
+    nf = notFetched(data);
     mdText = render(data, {}, "", nf);
   } catch (e) {
     throw new Error(`reddit answered with something that isn't this post's data — try again from old.reddit.com/comments/${id[1]} (${e && e.message || e})`);
