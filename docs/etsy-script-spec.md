@@ -161,6 +161,8 @@ predate this list.
 
 - **Per-request timeout** (`AbortSignal.timeout`, 60 s). A stalled request or body
   read ends its conversation as "timed out after N s at offset X", not as a sign-out.
+  Only that timeout reads as timed out (0.3.24): any other abort ends it as
+  "stopped at offset X".
 - **The payload names its redact state** (`redact: "on"` or the reason it's off).
   `serializePayload` refuses a state that contradicts the guard it was handed
   (0.3.16).
@@ -172,4 +174,7 @@ predate this list.
   `truncated: true`; the key is absent otherwise, so an uncapped file keeps the
   script's shape. It warns and is listed.
 - **Empty answers warn** (0.3.16). An id that returns no messages and no error says
-  "wrong id?" instead of ending green.
+  "wrong id?" instead of ending green. Since 0.3.24 the file says so too, with
+  `empty: true` (absent otherwise, like `truncated`).
+- **The page cap must be at least 1** (0.3.24). `maxPages` below one page throws
+  before any fetch, instead of marking every conversation both empty and capped.

@@ -98,17 +98,24 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
       failures(failureLines(conversations));
       say(done.text, done.cls);
     };
-    const saved = await trackDownload(chrome.downloads, {
-      url: blobUrl,
-      filename,
-      saveAs: false,
-      conflictAction: conflictActionFor(sound),
-    }, {
-      // a save with no word in 15 minutes may still be reading the blob URL: free it
-      // only once the download truly ends; finishMessage drops a stale run's late end
-      // (stale run → null) so a second run keeps the line
-      onLate: (ok) => { URL.revokeObjectURL(blobUrl); finish(ok); },
-    });
+    let saved;
+    try {
+      saved = await trackDownload(chrome.downloads, {
+        url: blobUrl,
+        filename,
+        saveAs: false,
+        conflictAction: conflictActionFor(sound),
+      }, {
+        // a save with no word in 15 minutes may still be reading the blob URL: free it
+        // only once the download truly ends; finishMessage drops a stale run's late end
+        // (stale run → null) so a second run keeps the line
+        onLate: (ok) => { URL.revokeObjectURL(blobUrl); finish(ok); },
+      });
+    } catch (err) {
+      // a refused download started nothing and watches nothing: the URL is freed here
+      URL.revokeObjectURL(blobUrl);
+      throw err;
+    }
     if (saved !== null) URL.revokeObjectURL(blobUrl);
     finish(saved);
   } catch (err) {

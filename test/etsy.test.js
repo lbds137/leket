@@ -173,6 +173,27 @@ test("a body read the timeout aborts is a timeout, not a sign-out", async () => 
   assert.equal(convos[0].error, "timed out after 0.001 s at offset 0");
 });
 
+test("an AbortError the page's timeout caused reads as timed out; any other abort reads as stopped", async () => {
+  // a read the timeout signal ended, surfacing as a plain AbortError (older engines)
+  const late = (u, opts) => new Promise((_, reject) => {
+    opts.signal.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+  });
+  let convos = await collectConversations(["111"], { fetch: late, sleep: async () => {}, timeoutMs: 1 });
+  assert.equal(convos[0].error, "timed out after 0.001 s at offset 0");
+  // an abort while the page's own signal is still live is not a timeout: it says stopped
+  const stopped = async (u) => {
+    if (!u.includes("offset=0&")) throw new DOMException("The operation was aborted.", "AbortError");
+    return { ok: true, status: 200, json: async () => [msg(1), msg(2)] };
+  };
+  convos = await collectConversations(["111"], { fetch: stopped, sleep: async () => {} });
+  assert.equal(convos[0].error, "stopped at offset 2");
+  assert.equal(convos[0].messages.length, 2);
+  // the same in the body read: a live signal, an AbortError, a stop and not a sign-out
+  const body = async () => ({ ok: true, status: 200, json: async () => { throw new DOMException("aborted", "AbortError"); } });
+  convos = await collectConversations(["111"], { fetch: body, sleep: async () => {} });
+  assert.equal(convos[0].error, "stopped at offset 0");
+});
+
 test("a !ok page marks its conversation with the HTTP error; the next id still runs", async () => {
   const fetch = async (u) => {
     if (u.includes("/111/")) return { ok: false, status: 403, json: async () => ({}) };
@@ -229,6 +250,27 @@ test("a walk that ends on its own is never truncated, even on the cap's last pag
   assert.equal(convos[0].pages, 3);
   assert.equal(convos[0].truncated, undefined);
   assert.ok(!("truncated" in convos[0]), "the field is absent, so an uncapped file keeps the script's shape");
+});
+
+test("a cap below one page is refused before any fetch", async () => {
+  for (const maxPages of [0, -1, 0.5, NaN, "3"]) {
+    const fetch = standIn({ [url("111")]: () => [msg(1)] });
+    await assert.rejects(collectConversations(["111"], { fetch, sleep: async () => {}, maxPages }), RangeError, String(maxPages));
+    assert.equal(fetch.calls.length, 0);
+  }
+});
+
+test("an answer with no messages and no error is marked empty in the file; others carry no empty field", async () => {
+  const fetch = async (u) => {
+    if (u.includes("/111/")) return { ok: true, status: 200, json: async () => [] };
+    if (u.includes("/222/")) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => (u.includes("offset=0&") ? [msg(9)] : []) };
+  };
+  const convos = await collectConversations(["111", "222", "333"], { fetch, sleep: async () => {} });
+  assert.equal(convos[0].empty, true);
+  assert.ok(!("empty" in convos[1]), "an error explains the missing messages: no empty marker");
+  assert.ok(!("empty" in convos[2]), "a conversation with messages keeps the script's shape");
+  assert.equal(JSON.parse(serializePayload(convos)).conversations[0].empty, true);
 });
 
 test("sleeps: one per continuing page attempt, none on the break, one trailing per conversation", async () => {
@@ -463,6 +505,7 @@ test("redactionCollisions: a name one edit from Etsy's own words or payload keys
     "create_date",
     "message_order",
     "truncated",
+    "empty",
   ]);
 });
 
@@ -617,6 +660,8 @@ test("page.js wires the pure decisions: finishMessage and conflictActionFor are 
   assert.equal([...code.matchAll(/redactLine\.hidden = true;/g)].length, 2);
   assert.match(code, /const seq = \+\+runSeq;\s*failures\(\[\]\);\s*redactLine\.hidden = true;/, "cleared as the run starts");
   assert.match(code, /\} catch \(err\) \{\s*redactLine\.hidden = true;/, "cleared first thing in the run's catch");
+  // a download Chrome refuses outright frees its blob URL before the run's catch narrates it
+  assert.match(code, /saved = await trackDownload\([\s\S]*?\} catch \(err\) \{\s*URL\.revokeObjectURL\(blobUrl\);\s*throw err;\s*\}/);
 });
 
 test("finishMessage + failureLines: an empty answer and a capped walk warn and are listed", () => {

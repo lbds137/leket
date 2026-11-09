@@ -29,25 +29,31 @@ const collectConversations = async (ids, {
   timeoutMs = 60_000,
   onProgress,
 } = {}) => {
+  // a cap below one page would mark every conversation both empty and truncated
+  if (!(Number.isInteger(maxPages) && maxPages >= 1)) throw new RangeError(`maxPages must be a whole number of at least 1, got ${maxPages}`);
   const conversations = [];
   for (const [i, id] of ids.entries()) {
     const seen = new Map();
     const convo = { id, url: `https://www.etsy.com/messages/${id}`, pages: 0, messages: [] };
     let offset = 0;
     let stale = 0;
+    let signal;
     try {
       for (;;) {
         // the cap ends the walk without an error, but never silently: the file and the
-        // page both say older messages may be missing
+        // page both say older messages may be missing. A conversation whose last page is
+        // exactly the cap's is marked too, on purpose: telling the two apart takes one
+        // more fetch, and the wording only says "may be missing"
         if (convo.pages >= maxPages) {
           convo.truncated = true;
           break;
         }
         if (onProgress) onProgress(i + 1, ids.length, id, seen.size);
+        signal = AbortSignal.timeout(timeoutMs);
         const r = await fetch(
           `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list` +
             `?offset=${offset}&fetch_older=true&load_shop_convos=false`,
-          { credentials: "include", headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) },
+          { credentials: "include", headers: { accept: "application/json" }, signal },
         );
         if (!r.ok) throw new Error(`HTTP ${r.status} at offset ${offset}`);
         let data;
@@ -75,8 +81,13 @@ const collectConversations = async (ids, {
         await sleep(pauseMs);
       }
     } catch (e) {
-      if (e && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      // only the page's own timeout reads as timed out: a TimeoutError, or an AbortError
+      // from a read the timeout signal ended. Any other abort is a stop, not a slow Etsy
+      const timedOut = e && (e.name === "TimeoutError" || (e.name === "AbortError" && signal?.reason?.name === "TimeoutError"));
+      if (timedOut) {
         convo.error = `timed out after ${timeoutMs / 1000} s at offset ${offset}`;
+      } else if (e && e.name === "AbortError") {
+        convo.error = `stopped at offset ${offset}`;
       } else {
         convo.error = String((e && e.message) || e);
       }
@@ -84,6 +95,9 @@ const collectConversations = async (ids, {
     convo.messages = [...seen.values()].sort(
       (a, b) => (a.create_date || 0) - (b.create_date || 0) || (a.message_order || 0) - (b.message_order || 0),
     );
+    // an answer with no messages and no error says so in the file too, not only on the
+    // page; absent otherwise, so a normal conversation keeps the script's shape
+    if (!convo.error && !convo.messages.length) convo.empty = true;
     conversations.push(convo);
     await sleep(pauseMs);
   }
@@ -123,6 +137,7 @@ const PROBES = [
   "create_date",
   "message_order",
   "truncated",
+  "empty",
 ];
 const redactionCollisions = (redact) => PROBES.filter((s) => redact(s) !== s);
 

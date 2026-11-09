@@ -62,7 +62,7 @@ If you only want the messages, untick **save attachments too** before clicking S
 3. Put the conversation ids in the box, separated by commas or spaces. The Etsy notification emails carry them (the number in an `etsy.com/messages/<id>` link). If you opened Leket on a conversation, its id is already filled in, and an empty box falls back to it.
 4. Click **Save conversations** and keep the tab open. It pages through each conversation with a short pause between pages, then saves `etsy-conversations-<date>.json` to your Downloads folder (the date is UTC, so it can be a day off from yours near midnight). Saving again on the same date replaces that file — unless the new file fails Leket's own check that it reads back as JSON: then it is saved beside the old one, and the page says not to share it.
 
-The JSON holds each conversation's messages as Etsy's own messages page receives them: both sides, the text, the time, who sent it, and links to any images (the images themselves aren't downloaded). A conversation that failed, came back empty (usually a mistyped id), or stopped at the 400-page cap is listed under the button. In the file, a failure carries an `error` and a capped one `truncated: true`; an empty one just has no messages.
+The JSON holds each conversation's messages as Etsy's own messages page receives them: both sides, the text, the time, who sent it, and links to any images (the images themselves aren't downloaded). A conversation that failed, came back empty (usually a mistyped id), or stopped at the 400-page cap is listed under the button. In the file, a failure carries an `error`, a capped one `truncated: true` and an empty one `empty: true`.
 
 ### Hiding a name in the export (optional)
 
