@@ -135,8 +135,20 @@ const MARKERS = String.raw`(?: {0,3}(?:>[ ]?|[-*+][ ]+|\d{1,9}[.)][ ]+))*`;
 const PREFIX = new RegExp(`^${MARKERS}`);
 const FENCE_OPEN = new RegExp(`^(${MARKERS}[ ]{0,3})` + "(`{3,}|~{3,})(.*)$");
 const FENCE_CLOSE = new RegExp(`^(${MARKERS}[ ]*)` + "(`{3,}|~{3,})\\s*$");
-const LIST_ITEM = /^ *(?:[-*+]|\d{1,9}[.)]) +/;
+const LIST_ITEM = /^( *(?:[-*+]|\d{1,9}[.)]))([ \t]+)/;
 const EMPTY_ITEM = /^( *)([-*+]|\d{1,9}[.)])[ \t]*$/;
+// the column after a run of text, a tab moving to the next multiple of 4 (CommonMark)
+const columnAfter = (s, col = 0) => {
+  for (const ch of s) col = ch === "\t" ? col + 4 - (col % 4) : col + 1;
+  return col;
+};
+// a list item's content column: after the marker and its gap, but a gap of 5 or more
+// columns is one space plus indented code, so the content starts one past the marker
+const contentColumn = (m) => {
+  const marker = columnAfter(m[1]);
+  const content = columnAfter(m[2], marker);
+  return content - marker >= 5 ? marker + 1 : content;
+};
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 // a thematic break or a setext underline: a line of its own that ends any paragraph
 const RULE = /^ {0,3}(?:([-*_])(?:[ \t]*\1){2,}|=+|-+)[ \t]*$/;
@@ -158,8 +170,10 @@ export function safeBody(text) {
   // (at the start, after a blank line, after an ATX heading, or after another
   // indented-code line) and its indent reaches the active list item's content column + 4.
   // Consecutive paragraph lines are buffered and escaped together so multi-line code
-  // spans match across line breaks; any line that starts a new block flushes the buffer
-  // first, so a span never reaches past a block boundary (flushing only escapes more).
+  // spans match across line breaks; a line that starts a new block in the OUTPUT flushes
+  // the buffer first, so a span never reaches past a block boundary. Spans pair the way
+  // the escaped output will render, so a line whose escaping changes its block (an HTML
+  // block start, which escaped is plain text) joins the paragraph instead.
   let para = [];
   let paraQuotes = 0;
   let inIndentedCode = false;
@@ -180,7 +194,7 @@ export function safeBody(text) {
   };
   for (const line of lines) {
     const blank = /^\s*$/.test(line);
-    const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, "    ").length;
+    const indent = columnAfter(line.match(/^[ \t]*/)[0]);
     if (fenceLen) {
       // a fence ends when its container ends (fewer > markers for a quote, or a
       // non-blank line indented less than its list item's content column), with no
@@ -234,7 +248,7 @@ export function safeBody(text) {
     if (list) {
       flushPara();
       closeListsPast(indent);
-      lists.push(list[0].length);
+      lists.push(contentColumn(list));
     }
     const open = line.match(FENCE_OPEN);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
@@ -261,17 +275,25 @@ export function safeBody(text) {
       continue;
     }
     inIndentedCode = false;
-    if (ATX_HEADING.test(line) || HTML_BLOCK.test(line)) {
+    if (ATX_HEADING.test(line)) {
       // a block of its own: escaped alone, never joined to a paragraph's spans
       flushPara();
       out.push(escapeLine(line));
       continue;
     }
+    // an HTML block start is escaped up front, whatever span it may sit in (inside one
+    // the &lt; only over-escapes, which is harmless): escaped, it is no block at all
+    // but paragraph text, so it joins the paragraph and its backticks pair with the
+    // lines around it as they will in the output
+    // (checked after any quote or list markers: a block can start inside a container)
+    const markers = line.match(PREFIX)[0];
+    const body = line.slice(markers.length);
+    const lineText = HTML_BLOCK.test(body) ? markers + body.replace("<", "&lt;") : line;
     // a deeper blockquote starts a new paragraph; a line with fewer > is a lazy continuation
     const q = quotesOf(line);
     if (para.length && q > paraQuotes) flushPara();
     if (!para.length) paraQuotes = q;
-    para.push(line);
+    para.push(lineText);
   }
   flushPara();
   if (fenceLen) out.push(fencePrefix + fenceChar.repeat(fenceLen));
