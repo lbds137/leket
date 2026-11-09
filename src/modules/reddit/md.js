@@ -705,7 +705,7 @@ export function render(data, saved = {}, folderRel = "", nf = notFetched(data)) 
   out.push("", p.selftext ? safeBody(p.selftext) : "*(no body text)*", "", "---", "", "## Comments", "");
   const { count, atLeast } = nf;
   if (count > 0) {
-    out.push(`*(This save holds the comments reddit sent in one page; reddit counts ${atLeast ? "at least " : ""}${count} more that ${count === 1 ? "was" : "were"} not fetched — the links below open them on reddit.)*`, "");
+    out.push(`*(This save holds the comments reddit sent in one page; ${atLeast ? "at least " : ""}${count} more ${count === 1 ? "comment was" : "comments were"} not fetched — the links below open them on reddit.)*`, "");
   }
   const before = out.length;
   comments(data[1] && data[1].data && data[1].data.children, 1, p.permalink ?? "", out);
