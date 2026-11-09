@@ -139,7 +139,25 @@ test("sessions seen under one status are not listed twice under another", async 
   assert.ok(sessions.has("shared-id"), "the shared id is in the map once (the script's Map.set: a later status overwrites, the id never duplicates)");
 });
 
+test("a listing page without a data array stops the walk naming the shape, never a green empty list", async () => {
+  // an error body, a renamed field or null data would otherwise read as "0 sessions"
+  for (const body of [{}, { data: null }, { error: { type: "x" } }, { sessions: [session("a", "t")] }, { data: "nope" }]) {
+    const { fetch } = apiFetch([["GET", "/v1/code/sessions", () => ({ json: body })]]);
+    await assert.rejects(listSessions({ fetch }), /active.*API shape changed|API shape changed.*active/,
+      JSON.stringify(body));
+  }
+});
+
 // --- rename.js: parsing, id normalization, ordering, the run
+
+test("parseRenames refuses an id listed twice, cse_ and session_ forms counting as the same session", () => {
+  for (const pair of [["cse_abc", "cse_abc"], ["cse_abc", "session_abc"], ["abc", "session_abc"]]) {
+    assert.throws(() => parseRenames(JSON.stringify([[pair[0], "One"], ["cse_other", "x"], [pair[1], "Two"]])),
+      (e) => e.message.includes(pair[1]) && /twice|more than once/.test(e.message), pair.join(" / "));
+  }
+  // positive control: distinct ids still parse
+  assert.equal(parseRenames('[["cse_abc","One"],["cse_abd","Two"]]').length, 2);
+});
 
 test("parseRenames takes the bare JSON array", () => {
   const list = parseRenames('[["cse_abc","New title"],["session_def","Other"]]');

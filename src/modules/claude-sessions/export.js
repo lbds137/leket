@@ -203,11 +203,14 @@ export async function exportSessions(sessions, opts = {}) {
           if (err?.name === "TimeoutError") throw new Error(`events page ${page} timed out after ${timeoutMs / 1000} s`);
           throw err;
         }
-        for (const e of j.data || []) {
+        // no data array must fail the session: read as empty, it would save as 0 events
+        // and be promoted into the skip list, never fetched again
+        if (!Array.isArray(j?.data)) throw new Error(`events page ${page}: no data list (the API shape changed)`);
+        for (const e of j.data) {
           lines.push(JSON.stringify({ ...e.payload, _session: s.id, _title: s.title, _event_type: e.event_type, _created_at: e.created_at, _seq: e.sequence_num }) + "\n");
         }
         // the listing's rule: an empty page ends the walk whatever cursor came with it
-        cursor = (j.data || []).length ? j.next_cursor : null;
+        cursor = j.data.length ? j.next_cursor : null;
       } while (cursor);
       for (const line of lines) {
         buffer.push(line);

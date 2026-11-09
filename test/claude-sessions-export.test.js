@@ -603,3 +603,18 @@ test("a skipped session is never fetched, still counted in progress and _titles"
   assert.equal(result.parts, 1);
   assert.deepEqual(progress, [[1, 2, 0, 0], [2, 2, 1, 0]], "done counts the skipped session too");
 });
+
+test("an events page without a data array fails that session naming the shape, so it is not saved as empty", async () => {
+  // a green 0-event session would be promoted into the skip list and never re-fetched
+  for (const body of [{}, { data: null }, { error: { type: "x" } }]) {
+    const b = oneEventSession("B", "tB", 200);
+    const fetch = standIn({
+      "https://claude.ai/v1/code/sessions/A/events?limit=500": () => body,
+      ...routesOneEvent([b]),
+    });
+    const { result } = await collect(sessionsOf(listed("A", "tA"), b), { fetch, threshold: 1000 });
+    assert.equal(result.failed.length, 1, JSON.stringify(body));
+    assert.match(result.failed[0], /^A: .*API shape changed/, JSON.stringify(body));
+    assert.deepEqual(result.savedIds, ["B"], "the failed session isn't promoted");
+  }
+});
