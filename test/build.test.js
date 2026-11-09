@@ -836,8 +836,9 @@ test("a Discord notice with nothing to show says what it is instead of an empty 
   e.messages = [{ ...e.messages[0], id: "900", text: "", attachments: [], embeds: [], edited: false, type: 7 }];
   const html = render(e, [], { timeZone: "UTC" });
   assert.match(html, /<div class="text"><em>a Discord notice \(type 7\): its wording isn't saved<\/em><\/div>/);
-  // an ordinary empty message (type 0) and a reply (19) get no notice
-  for (const type of [0, 19, undefined]) {
+  // an ordinary empty message (0), a reply (19), a bot's command reply (20, 23) and a
+  // thread starter (21) get no notice
+  for (const type of [0, 19, 20, 21, 23, undefined]) {
     e.messages = [{ ...e.messages[0], text: "", attachments: [], embeds: [], type }];
     assert.doesNotMatch(render(e, [], { timeZone: "UTC" }), /a Discord notice/, String(type));
   }

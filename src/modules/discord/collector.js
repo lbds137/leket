@@ -33,9 +33,11 @@
   // The tab title is "(3) Discord | @name" while there are unread messages; it names the
   // downloaded file. An unread mark before it ("• Discord | …") would otherwise keep
   // "Discord" in the name.
-  const NAME = (document.title.replace(/^\(\d+\)\s*/, "").replace(/^[^\p{L}\p{N}]*Discord\s*\|\s*/u, "")
+  // At most 50 characters (200 bytes at 4 a character): a long CJK thread name would
+  // otherwise push the file name past the 255 bytes a file system allows.
+  const NAME = [...(document.title.replace(/^\(\d+\)\s*/, "").replace(/^[^\p{L}\p{N}]*Discord\s*\|\s*/u, "")
     .replace(/^@/, "").trim() || "dm")
-    .replace(/[^\p{L}\p{N}._-]+/gu, "_");
+    .replace(/[^\p{L}\p{N}._-]+/gu, "_")].slice(0, 50).join("");
   const OUT = `discord-${NAME}-${CHANNEL}.json`;
   const DISCORD_EPOCH = 1420070400000n;
   const seen = new Map();
@@ -363,9 +365,17 @@
     return !!m && m.id === id;
   };
   // an element's text less its message rows' (an opened group's rows may sit in the bar)
+  // Later rows first, each cut at its LAST occurrence: rows follow the bar's label or the
+  // channel header in document order, so a row whose text also appears in that label (a
+  // short "Welcome") cuts the row, never the label.
   const ownText = (e) => {
     let t = e.textContent || "";
-    for (const r of e.querySelectorAll ? e.querySelectorAll(ROW) : []) t = t.replace(r.textContent || "", " ");
+    const rows = e.querySelectorAll ? [...e.querySelectorAll(ROW)] : [];
+    for (const r of rows.reverse()) {
+      const rt = r.textContent || "";
+      const k = rt ? t.lastIndexOf(rt) : -1;
+      if (k >= 0) t = t.slice(0, k) + " " + t.slice(k + rt.length);
+    }
     return t;
   };
   const BUTTONS = '[role="button"], button, [class*="blockedAction"], [class*="ignoredAction"]';
