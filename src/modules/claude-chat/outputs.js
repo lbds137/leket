@@ -92,15 +92,42 @@ export const absolutizeOrgPath = (tabUrl, orgPath) => new URL(tabUrl).origin + o
 // A chat's failure is recorded on its entry (partial files kept) and the walk moves
 // on; onProgress(done, total, fileCount) fires after each chat.
 export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onProgress, timeoutMs = 60_000 } = {}) {
-  // a fresh signal per fetch, as in every other module: a hung request fails its chat
-  // instead of holding the run, and its button, forever. The signal covers the body
-  // read too; `step` names where a timeout landed (the engine's wording says neither).
+  // A fresh signal per request: a hung request fails its chat instead of holding the
+  // run, and its button, forever. The timeout is an idle one: every body chunk re-arms
+  // it, so a large file on a slow link finishes as long as bytes keep coming, and only
+  // timeoutMs with no data at all ends it. `step` names where a timeout landed,
+  // including the file's path (the engine's wording says neither).
   let step = "";
-  const get = async (url) => {
-    step = (url.split("/wiggle/")[1] || url).replace(/\?.*$/, "");
-    const r = await doFetch(url, { credentials: "include", signal: AbortSignal.timeout(timeoutMs) });
-    if (!r.ok) throw new Error(`${r.status} ${url.split("/wiggle/")[1] || url}`);
-    return r;
+  const request = async (url, label, read) => {
+    step = label;
+    const ctl = new AbortController();
+    let timer;
+    const touch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => ctl.abort(new DOMException(`${label} timed out`, "TimeoutError")), timeoutMs);
+    };
+    touch();
+    try {
+      const r = await doFetch(url, { credentials: "include", signal: ctl.signal });
+      if (!r.ok) throw new Error(`${r.status} ${url.split("/wiggle/")[1] || url}`);
+      touch();
+      return await read(r, touch);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  // the body chunk by chunk, re-arming the idle timer on each; a response with no
+  // readable body (an empty one) falls back to blob()
+  const readBlob = async (r, touch) => {
+    if (!r.body?.getReader) return r.blob();
+    const reader = r.body.getReader();
+    const chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return new Blob(chunks);
+      chunks.push(value);
+      touch();
+    }
   };
   const results = [];
   let fileCount = 0, failed = 0;
@@ -108,7 +135,7 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
     const base = orgPath + "conversations/" + chat + "/wiggle/";
     const entry = { chat, name, source, files: [] };
     try {
-      const listing = await (await get(base + "list-files?prefix=")).json();
+      const listing = await request(base + "list-files?prefix=", "list-files", (r) => r.json());
       if (!Array.isArray(listing?.files_metadata)) {
         throw new Error("list-files: no files_metadata (the API shape changed)");
       }
@@ -117,17 +144,23 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
         // entry, rather than let it end the chat with a TypeError
         if (typeof meta?.path !== "string") { entry.no_path = (entry.no_path || 0) + 1; continue; }
         if (!meta.path.startsWith("/mnt/user-data/outputs/")) continue;
-        const blob = await (await get(base + "download-file?path=" + encodeURIComponent(meta.path))).blob();
+        const blob = await request(base + "download-file?path=" + encodeURIComponent(meta.path),
+          `download-file ${meta.path}`, readBlob);
         const file = { path: meta.path, size: meta.size, created_at: meta.created_at, content_type: meta.content_type };
         const text = isText(meta.path, meta.content_type) ? await asText(blob) : null;
         if (text !== null) file.text = text;
         else file.base64 = await toBase64(blob);
-        if (blob.size !== meta.size) file.size_mismatch = blob.size;
+        // the listed size is checked only when the listing gives one: a number, or a
+        // string of digits. A missing or odd size can't be compared, and flagging it
+        // would turn every clean run yellow; file.size keeps the listing's raw value.
+        const listed = typeof meta.size === "number" ? meta.size
+          : typeof meta.size === "string" && /^\d+$/.test(meta.size) ? Number(meta.size) : null;
+        if (listed !== null && blob.size !== listed) file.size_mismatch = blob.size;
         entry.files.push(file);
         fileCount++;
       }
     } catch (err) {
-      entry.error = err?.name === "TimeoutError" ? `${step} timed out after ${timeoutMs / 1000} s` : err.message;
+      entry.error = err?.name === "TimeoutError" ? `${step} timed out: no data for ${timeoutMs / 1000} s` : err.message;
       failed++;
     }
     results.push(entry);
