@@ -157,7 +157,7 @@ const counted = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 // class needs no conversation errors, empty answers or capped walks. When seq and
 // runSeq are given (the late-finish path), a stale run's end returns null so a later
 // run keeps the status line.
-const finishMessage =({ saved, conversations = [], filename, seq, runSeq }) => {
+const finishMessage = ({ saved, conversations = [], filename, seq, runSeq }) => {
   if (seq !== undefined && runSeq !== undefined && seq !== runSeq) return null;
   const failed = conversations.filter((c) => c.error).length;
   const empty = conversations.filter(isEmpty).length;
