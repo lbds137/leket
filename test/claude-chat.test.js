@@ -487,17 +487,19 @@ test("a hung wiggle fetch times out per fetch, naming the step: the chat fails, 
 });
 
 // a download whose body is a real stream: `chunks` are sent `gapMs` apart, then the
-// body either ends or (stall: true) goes silent until the request's signal aborts it
+// body either ends or (stall: true) goes silent. As in Chrome, aborting the request's
+// signal at any point errors the body with the signal's reason.
 const streamFetch = (files, { gapMs = 0, stall = false } = {}) => async (url, opts = {}) => {
   if (url.includes("list-files")) return { ok: true, json: async () => ({ files_metadata: files }) };
   const f = files.find((x) => url.endsWith(encodeURIComponent(x.path)));
-  let i = 0;
+  let i = 0, aborted = false;
   const body = new ReadableStream({
+    start: (c) => opts.signal.addEventListener("abort", () => { aborted = true; c.error(opts.signal.reason); }),
     pull: (c) => new Promise((resolve) => {
       if (i < f.chunks.length) {
-        setTimeout(() => { c.enqueue(new TextEncoder().encode(f.chunks[i++])); resolve(); }, gapMs);
+        setTimeout(() => { if (!aborted) c.enqueue(new TextEncoder().encode(f.chunks[i++])); resolve(); }, gapMs);
       } else if (stall) {
-        opts.signal.addEventListener("abort", () => { c.error(opts.signal.reason); resolve(); });
+        opts.signal.addEventListener("abort", resolve);
       } else { c.close(); resolve(); }
     }),
   });
@@ -527,10 +529,10 @@ test("a body that stops sending mid-download times out on the idle timer", async
 });
 
 test("a slow download that keeps sending outlives the timeout: only silence ends it", async () => {
-  // 6 chunks 15 ms apart = ~90 ms in all, three times the 30 ms budget, yet no gap reaches it
-  const chunks = ["ab", "cd", "ef", "gh", "ij", "kl"];
+  // 12 chunks 10 ms apart = ~120 ms in all, twice the 60 ms budget, yet no gap comes near it
+  const chunks = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
   const files = [{ path: "/mnt/user-data/outputs/slow.md", size: 12, content_type: "text/markdown", chunks }];
-  const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files, { gapMs: 15 }), orgPath: ORG, timeoutMs: 30 });
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files, { gapMs: 10 }), orgPath: ORG, timeoutMs: 60 });
   assert.equal(done.results[0].error, undefined);
   assert.equal(done.results[0].files[0].text, "abcdefghijkl");
   assert.equal(done.results[0].files[0].size_mismatch, undefined);
