@@ -20,7 +20,8 @@ logic gets here goes back to Jackalope as a diff, same as the Discord collector.
 ## The script
 
 L1-28 and L137-213 verbatim, with the two flagged spots marked inline. The guard
-block sits where the marker is.
+block sits where the marker is. Where the script says the deadname is redacted,
+that is the script's own guard: Leket's file is unredacted since 0.3.38.
 
 ```js
 // Etsy conversation collector: paste into Chrome DevTools (F12 > Console) on any etsy.com
@@ -173,4 +174,7 @@ predate this list.
 - **Pasted links count as ids** (0.3.36). An `etsy.com/messages/<id>` link (with or
   without the scheme and host, wrapping punctuation trimmed) reads as its id, and a
   repeated id saves once. A token that is neither stops the run before any fetch,
-  naming it, instead of being dropped while the rest save green.
+  naming it, instead of being dropped while the rest save green. Since 0.3.38 curly
+  quotes are trimmed too, and only an empty box falls back to the open tab's
+  conversation: a box of junk alone yields no ids (in the console copy, that is
+  the case where it would otherwise export the open tab).

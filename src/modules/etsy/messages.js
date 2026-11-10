@@ -19,15 +19,17 @@ const messagesIn = (node, out = []) => {
 // /messages/<id>, any query or fragment); the first of each id is kept, so a repeat is
 // not exported twice. Tokens split on whitespace; commas split a token unless the whole
 // token is one link, so a comma in a link's query can't split off a stray id. A pasted
-// sentence's wrapping punctuation — (link). <link> "77"; — is trimmed first.
-const unwrap = (t) => t.replace(/^[(<"'[]+/, "").replace(/[.,;:)>"'\]]+$/, "");
-const tokensOf = (text) => (text || "").split(/\s+/).map(unwrap)
-  .flatMap((t) => t.includes("/") && idOf(t) ? [t] : t.split(",").map(unwrap)).filter(Boolean);
+// sentence's wrapping punctuation — (link). <link> "77"; and curly quotes — is trimmed
+// first. Only an empty box falls back to the tab's conversation: a box of junk alone
+// never exports the open tab (the page refuses the junk by name before this runs).
+const unwrap = (t) => t.replace(/^[(<"'“‘[]+/, "").replace(/[.,;:)>"'”’\]]+$/, "");
 const idOf = (token) => /^\d+$/.test(token) ? token
   : (token.match(/^(?:(?:https?:\/\/)?(?:[\w-]+\.)*etsy\.com)?\/messages\/(\d+)(?:[/?#]|$)/i) || [])[1] || null;
+const tokensOf = (text) => (text || "").split(/\s+/).map(unwrap)
+  .flatMap((t) => t.includes("/") && idOf(t) ? [t] : t.split(",").map(unwrap)).filter(Boolean);
 const parseIds = (text, pathname = "") => {
-  const ids = [...new Set(tokensOf(text).map(idOf).filter(Boolean))];
-  if (ids.length) return ids;
+  const tokens = tokensOf(text);
+  if (tokens.length) return [...new Set(tokens.map(idOf).filter(Boolean))];
   const m = pathname.match(/\/messages\/(\d+)/);
   return m ? [m[1]] : [];
 };
@@ -138,11 +140,6 @@ const serializePayload = (conversations, { extractedAt = new Date().toISOString(
 
 const outputName = (date = new Date()) => `etsy-conversations-${date.toISOString().slice(0, 10)}.json`;
 
-// what the page says when a download settles (in time or late): a download Chrome
-// interrupted or refused is not a Saved, however green the collection was; the ok
-// class needs no conversation errors, empty answers or capped walks. When seq and
-// runSeq are given (the late-finish path), a stale run's end returns null so a later
-// run keeps the status line.
 // an id that answered with nothing, and no error to say why: almost always a wrong id
 const isEmpty = (c) => !c.error && !(c.messages && c.messages.length);
 
@@ -154,7 +151,12 @@ const failureLines = (conversations = []) => conversations.flatMap((c) => [
   ...(c.truncated ? [`${c.id}: stopped at the page cap — older messages may be missing`] : []),
 ]);
 const counted = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const finishMessage = ({ saved, conversations = [], filename, seq, runSeq }) => {
+// what the page says when a download settles (in time or late): a download Chrome
+// interrupted or refused is not a Saved, however green the collection was; the ok
+// class needs no conversation errors, empty answers or capped walks. When seq and
+// runSeq are given (the late-finish path), a stale run's end returns null so a later
+// run keeps the status line.
+const finishMessage =({ saved, conversations = [], filename, seq, runSeq }) => {
   if (seq !== undefined && runSeq !== undefined && seq !== runSeq) return null;
   const failed = conversations.filter((c) => c.error).length;
   const empty = conversations.filter(isEmpty).length;
