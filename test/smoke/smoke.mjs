@@ -16,9 +16,9 @@
 // lists and downloads a synthetic chat's outputs and names a second chat that fails,
 // then runs again and must replace that day's file, not add a renamed copy.
 // The Etsy page, prefilled from the tab, pages a synthetic message-list endpoint and
-// saves four times over one file: redact on with a colliding name, then again, then
-// with no config from an emptied box (the tab's conversation), then with a second id
-// that fails. Each scenario runs on its own: a throw fails it and the next one starts.
+// saves four times over one file: twice from the prefilled box, then from an emptied
+// box (the tab's conversation), then with a second id that fails. Each scenario runs on
+// its own: a throw fails it and the next one starts.
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
 //
@@ -36,7 +36,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { postPage } from "../fixtures/reddit.js";
 import { NO_WORD_MS } from "../../src/lib/download.js";
-import { redactSetup } from "../../src/modules/etsy/messages.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -126,14 +125,12 @@ const REPORT_PATH = "/mnt/user-data/outputs/report.md";
 const REPORT = "# a report\n\nan output's text\n";
 const chatPage = `<!doctype html><html><head><title>a claude chat</title></head><body><p>a claude chat</p>`
   + `<script>fetch(${JSON.stringify(`/api/organizations/${ORG}/ping`)})</script></body></html>`;
-// etsy: a conversation page for the popup to match and prefill from, its message-list
-// pages, and a redact config whose name (the unit tests' synthetic one) also catches
-// "etsy" — so the page's redact line carries the collision warning
+// etsy: a conversation page for the popup to match and prefill from, and its
+// message-list pages
 const ETSY_ID = "424242";
 const ETSY_CONVO = `https://www.etsy.com/messages/${ETSY_ID}`;
 const ETSY_GONE = "999999";
 const etsyPage = (offset, id = ETSY_ID) => `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list?offset=${offset}&fetch_older=true&load_shop_convos=false`;
-const ETSY_REDACT = { name: "betsy", short: "bpt", firstSounds: "bpt" };
 const WEB = new Map([
   [REDDIT_POST, { type: "text/html", body: html("a reddit post") }],
   [REDDIT_JSON, { type: "application/json", body: redditBody }],
@@ -704,12 +701,10 @@ async function scenarios(cdp, downloads) {
   });
 
   // ---- etsy: popup -> the module's page, prefilled from the tab, which pages the synthetic
-  // message-list endpoint under a stored redact config whose name collides with Etsy's own
-  // words, and saves over one file four times: redact on twice, then off from an emptied
-  // box, then with a second id that fails ----
+  // message-list endpoint and saves over one file four times: twice from the prefilled
+  // box, then from an emptied box, then with a second id that fails ----
   await scenario("etsy", async () => {
     console.log("smoke: etsy save");
-    await extEval(`chrome.storage.local.set({ etsyRedact: ${JSON.stringify(ETSY_REDACT)} }).then(() => true)`);
     await open(ETSY_CONVO);
     await clickPopup("Save conversations");
     const etsyPageTarget = await target((s) => s.type === "page" && /\/src\/modules\/etsy\/page\.html\?tab=\d+$/.test(s.url), "the Etsy page (with its tab id)");
@@ -718,8 +713,8 @@ async function scenarios(cdp, downloads) {
     const prefilled = await waitFor(() => evalIn(ep, `document.getElementById("ids").value`), "the ids box to prefill from the tab")
       .catch(soft((e) => e.message));
     check(prefilled === ETSY_ID, `etsy: the ids box prefills from the tab's address (${prefilled})`);
-    const etsyState = `(() => { const s = document.getElementById("etsy-status"), r = document.getElementById("etsy-redact"), b = document.getElementById("etsy-bar");
-      return { t: s.hidden ? "" : s.textContent, cls: s.className, rt: r.hidden ? "" : r.textContent, rcls: r.className,
+    const etsyState = `(() => { const s = document.getElementById("etsy-status"), b = document.getElementById("etsy-bar");
+      return { t: s.hidden ? "" : s.textContent, cls: s.className,
         bar: b.hidden ? null : [b.value, b.max], fails: [...document.getElementById("etsy-fails").children].map((li) => li.textContent) }; })()`;
     // one save: the box set to ids (null leaves it as it is), the lines blanked with the
     // click — a round's "Saved" stays up until the next run's first progress line, and
@@ -727,7 +722,7 @@ async function scenarios(cdp, downloads) {
     // the file on disk
     const first = {}; // round 1's file name and extracted_at
     const save = async (round, ids) => {
-      await evalIn(ep, `(() => { for (const id of ["etsy-status", "etsy-redact"]) { const p = document.getElementById(id); p.textContent = ""; p.className = ""; }
+      await evalIn(ep, `(() => { const p = document.getElementById("etsy-status"); p.textContent = ""; p.className = "";
         ${ids === null ? "" : `document.getElementById("ids").value = ${JSON.stringify(ids)};`}
         document.getElementById("etsy-run").click(); return true; })()`);
       // progress lines ("Conversation 1/1 …", "Saving…") carry no class, so any warn line is an end
@@ -776,45 +771,32 @@ async function scenarios(cdp, downloads) {
     await evalIn(ep, `(() => { const s = document.getElementById("etsy-status"); s.textContent = ""; s.className = "";
       document.getElementById("ids").value = ${JSON.stringify(ETSY_ID)}; return true; })()`);
 
-    // rounds 1 and 2: redact on, with a name that also catches "etsy"
-    const expectedRedact = redactSetup(ETSY_REDACT).line;
+    // rounds 1 and 2: the prefilled box, a clean save, the messages as Etsy returned them
     for (const round of [1, 2]) {
-      const { end, saved, text } = await save(round, null);
-      check(end.t === "Saved 1 conversation, 2 messages. Redact: on." && end.cls === "ok",
+      const { end, saved } = await save(round, null);
+      check(end.t === "Saved 1 conversation, 2 messages." && end.cls === "ok",
         `etsy save ${round}: the page reports a clean save (it said: ${end.t} [${end.cls}])`);
-      // the collision warning, spelled out here as well as compared: the page's line is the
-      // pure chain's line (which a change to that chain moves too), and that line names
-      // the colliding words, each on its own, with the warn class
-      check(end.rt === expectedRedact.text && end.rcls === expectedRedact.cls,
-        `etsy save ${round}: the redact line is the config's line (it said: ${end.rt} [${end.rcls}])`);
-      const named = /\(([^)]*)\) — those read \[redacted\]/.exec(end.rt || "")?.[1].split(", ") || [];
-      check(named.includes("etsy") && named.includes("www.etsy.com") && end.rcls === "warn",
-        `etsy save ${round}: the redact line warns of the collision with Etsy's own words (named: ${named.join(", ") || "none"})`);
       check(JSON.stringify(end.bar) === "[1,1]" && end.fails.length === 0, `etsy save ${round}: the bar is full and nothing failed (bar ${JSON.stringify(end.bar)}, ${end.fails.length} failures)`);
       if (saved) {
-        check(saved.redact === "on" && saved.conversations?.[0]?.messages?.length === 2,
-          `etsy save ${round}: the file says redact on and holds the conversation's 2 messages`);
-        check(!/betsy/i.test(text) && text.includes("[redacted]"), `etsy save ${round}: the configured name is redacted in the file`);
+        check(saved.conversations?.[0]?.messages?.length === 2 && saved.conversations[0].messages[0].message === "hello from betsy",
+          `etsy save ${round}: the file holds the conversation's 2 messages, text as Etsy returned it`);
+        check(!("redact" in saved), `etsy save ${round}: the file carries no redact field (keys: ${Object.keys(saved).join(", ")})`);
       }
     }
 
-    // round 3: no config, and an emptied box — the click falls back to the tab's
-    // conversation, and the off state is loud on both lines and in the file
-    await extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`);
+    // round 3: an emptied box — the click falls back to the tab's conversation
     {
-      const { end, saved, text } = await save(3, "");
-      check(end.t === "Saved 1 conversation, 2 messages. Redact: off (no etsyRedact config)." && end.cls === "warn",
-        `etsy save 3: an emptied box saves the tab's conversation, and an unredacted save warns (it said: ${end.t} [${end.cls}])`);
-      check(end.rt === "Redact: off — no etsyRedact config; the export is unredacted." && end.rcls === "warn",
-        `etsy save 3: the redact line says it is off (it said: ${end.rt} [${end.rcls}])`);
-      if (saved) check(saved.redact === "off (no etsyRedact config)" && /betsy/i.test(text), `etsy save 3: the file says redact off and is unredacted (${saved.redact})`);
+      const { end, saved } = await save(3, "");
+      check(end.t === "Saved 1 conversation, 2 messages." && end.cls === "ok",
+        `etsy save 3: an emptied box saves the tab's conversation (it said: ${end.t} [${end.cls}])`);
+      if (saved) check(saved.conversations?.[0]?.id === ETSY_ID, `etsy save 3: the file is the tab's conversation (${saved.conversations?.[0]?.id})`);
     }
 
     // round 4: a second id whose first page fails — named on the end line, in the
     // failure list and in the file
     {
       const { end, saved } = await save(4, `${ETSY_ID}, ${ETSY_GONE}`);
-      check(end.t === "Saved 2 conversations, 2 messages, 1 with errors (listed in the file). Redact: off (no etsyRedact config)." && end.cls === "warn",
+      check(end.t === "Saved 2 conversations, 2 messages, 1 with errors (listed in the file)." && end.cls === "warn",
         `etsy save 4: the failed conversation reaches the end line (it said: ${end.t} [${end.cls}])`);
       check(JSON.stringify(end.fails) === JSON.stringify([`${ETSY_GONE}: HTTP 500 at offset 0`]), `etsy save 4: the failure list names it (${JSON.stringify(end.fails)})`);
       if (saved) check(saved.conversations?.[1]?.id === ETSY_GONE && saved.conversations[1].error === "HTTP 500 at offset 0",
@@ -825,15 +807,12 @@ async function scenarios(cdp, downloads) {
     // check does) and by a rejected promise. The page's own downloads.download is
     // replaced for these rounds; the tab closes with the scenario. Nothing will ever read
     // the blob, so the page must free its URL: the browser's fetch of it then fails.
-    // A refusal at the call ends the run with no export, so the redact line is hidden; a
-    // rejected promise ends it through the normal finish, which keeps the line.
     const refusals = [
-      [5, "() => { throw new Error('smoke: refused at the call'); }", "smoke: refused at the call", ""],
+      [5, "() => { throw new Error('smoke: refused at the call'); }", "smoke: refused at the call"],
       [6, "() => Promise.reject(new Error('smoke: refused by Chrome'))",
-        "The download didn't finish — Chrome interrupted or refused it, and ",
-        "Redact: off — no etsyRedact config; the export is unredacted."],
+        "The download didn't finish — Chrome interrupted or refused it, and "],
     ];
-    for (const [round, stub, said, redactSaid] of refusals) {
+    for (const [round, stub, said] of refusals) {
       await evalIn(ep, `(() => {
         if (!window.smokeBlobs) {
           window.smokeBlobs = [];
@@ -842,20 +821,17 @@ async function scenarios(cdp, downloads) {
         }
         window.smokeBlobs.length = 0;
         chrome.downloads.download = ${stub};
-        for (const id of ["etsy-status", "etsy-redact"]) { const p = document.getElementById(id); p.textContent = ""; p.className = ""; }
+        const p = document.getElementById("etsy-status"); p.textContent = ""; p.className = "";
         document.getElementById("ids").value = ${JSON.stringify(ETSY_ID)};
         document.getElementById("etsy-run").click(); return true; })()`);
       const end = await waitFor(() => evalIn(ep, etsyState).then((s) => s.cls === "warn" && s),
         `etsy save ${round}'s end line`, 20000).catch(soft((e) => ({ t: e.message, fails: [] })));
       check(end.t.startsWith(said), `etsy save ${round}: the refusal reaches the end line (it said: ${end.t})`);
-      check(end.rt === redactSaid && (redactSaid === "" || end.rcls === "warn") && end.fails.length === 0,
-        `etsy save ${round}: the redact line is ${redactSaid ? "the off line, warned" : "hidden"} and nothing is listed as failed (it said: ${end.rt} [${end.rcls}]; ${end.fails.length} failures)`);
+      check(end.fails.length === 0, `etsy save ${round}: nothing is listed as failed (${end.fails.length} failures)`);
       const blobs = await evalIn(ep, `Promise.all(window.smokeBlobs.map((u) => fetch(u).then(() => "readable", () => "freed")))`);
       check(JSON.stringify(blobs) === '["freed"]', `etsy save ${round}: the page made one blob and freed its URL (${JSON.stringify(blobs)})`);
     }
-  },
-  // the cleanup: the stored config never reaches a later scenario (scenario() closes the tabs)
-  () => extEval(`chrome.storage.local.remove("etsyRedact").then(() => true)`));
+  });
 
   if (blocked.length) console.log(`smoke: blocked ${blocked.length} request(s) the synthetic web doesn't serve:\n  ${[...new Set(blocked)].join("\n  ")}`);
   console.log(failures.length ? `smoke: ${failures.length} FAILED` : "smoke: all passed");

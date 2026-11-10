@@ -60,30 +60,11 @@ If you only want the messages, untick **save attachments too** before clicking S
 1. Sign in to [etsy.com](https://www.etsy.com) in Chrome and open any Etsy page — ideally the conversation you want, at `etsy.com/messages/<id>`.
 2. Click the **Leket** button in the toolbar, then **Save conversations**. Leket's Etsy page opens in a new tab.
 3. Put the conversation ids in the box, separated by commas or spaces. The Etsy notification emails carry them (the number in an `etsy.com/messages/<id>` link). If you opened Leket on a conversation, its id is already filled in, and an empty box falls back to it.
-4. Click **Save conversations** and keep the tab open. It pages through each conversation with a short pause between pages, then saves `etsy-conversations-<date>.json` to your Downloads folder (the date is UTC, so it can be a day off from yours near midnight). Saving again on the same date replaces that file — unless the new file fails Leket's own check that it reads back as JSON: then it is saved beside the old one, and the page says not to share it.
+4. Click **Save conversations** and keep the tab open. It pages through each conversation with a short pause between pages, then saves `etsy-conversations-<date>.json` to your Downloads folder (the date is UTC, so it can be a day off from yours near midnight). Saving again on the same date replaces that file.
 
 The JSON holds each conversation's messages as Etsy's own messages page receives them: both sides, the text, the time, who sent it, and links to any images (the images themselves aren't downloaded). A conversation that failed, came back empty (usually a mistyped id), or stopped at the 400-page cap is listed under the button. In the file, a failure carries an `error`, a capped one `truncated: true` and an empty one `empty: true`.
 
-### Hiding a name in the export (optional)
-
-Leket can replace one person's name with `[redacted]` throughout the Etsy export: the full name, its short form, and the misspellings speech-to-text tends to make of them, including where the message's HTML spells them with entities, splits them with a tag or glues the short form onto the word before it. An email address that contains either becomes `[email redacted]`. It's off until you set it up, and the page says which way it is on every save (**Redact: on**, or **Redact: off** and why). The `redact` field in the file records the same thing.
-
-The name never goes into this repo. It lives in Chrome's storage for this extension, on your computer only. To set it:
-
-1. Open Leket's Etsy page (step 2 above).
-2. Right-click the page, choose **Inspect**, and open the **Console** tab. It has to be the console of this page: the extension's storage can't be reached from an etsy.com tab.
-3. Paste this, with your own values, and press Enter:
-
-   ```js
-   chrome.storage.local.set({ etsyRedact: { name: "janedoe", short: "jane", firstSounds: "jgy" } })
-   ```
-
-   - `name`: the full name, lowercase letters a–z only, no spaces.
-   - `short`: the short form, also lowercase a–z, starting with the same letter as `name`.
-   - `firstSounds`: lowercase a–z letters a speech-to-text tool might hear in place of the first letter, starting with `name`'s own first letter (`"jgy"`: J, sometimes heard as G or Y).
-4. Click **Save conversations**. The page should say **Redact: on.** If it says the config is invalid, check the three rules above.
-
-If the page warns that the name also matches Etsy's own words or the file's field names, those words read `[redacted]` in the export too. That's expected, but the file's shape changes where a field name is hit. To turn redaction off again, run `chrome.storage.local.remove("etsyRedact")` in the same console.
+The file holds the messages exactly as Etsy sent them; Leket hides nothing in them. If a name needs hiding, whoever reads the file does that.
 
 ## Save a Reddit post
 
@@ -109,7 +90,7 @@ These two pages are bulk tools for claude.ai. Their input lists come from script
 
 `npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies.
 
-`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons, one isolated scenario per module (a failure fails that module and the rest still run): a reddit save (twice: the second must overwrite, not add a renamed copy), and a reddit image save; a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it; a claude.ai sessions export whose download reports late; a claude.ai chat-outputs run, twice (the second must overwrite); and Etsy saves with and without the redact config. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does). On Linux it finds a Playwright Chromium in `~/.cache/ms-playwright`, or in `PLAYWRIGHT_BROWSERS_PATH` when that is set (`npx playwright install chromium`). On other systems, or to pick a browser, set `LEKET_CHROME` to one. Without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. CI runs the smoke on every pull request, in the Chromium build pinned in `.github/workflows/ci.yml`. The unit tests stub `chrome.*`, so run the smoke locally too before pushing any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
+`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons, one isolated scenario per module (a failure fails that module and the rest still run): a reddit save (twice: the second must overwrite, not add a renamed copy), and a reddit image save; a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it; a claude.ai sessions export whose download reports late; a claude.ai chat-outputs run, twice (the second must overwrite); and Etsy saves, four over one file, then two the harness makes Chrome refuse. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does). On Linux it finds a Playwright Chromium in `~/.cache/ms-playwright`, or in `PLAYWRIGHT_BROWSERS_PATH` when that is set (`npx playwright install chromium`). On other systems, or to pick a browser, set `LEKET_CHROME` to one. Without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. CI runs the smoke on every pull request, in the Chromium build pinned in `.github/workflows/ci.yml`. The unit tests stub `chrome.*`, so run the smoke locally too before pushing any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
 
 Layout:
 
@@ -127,7 +108,7 @@ Layout:
   - `offscreen.html`, `offscreen.js`, `prepare.js`: the offscreen document, which fetches the post's JSON and images and renders the .md (again once the images are saved, so it links them), so the save outlives the popup.
   - `md.js`: the post-to-Markdown converter (pure).
   - `download.js`: the worker's half, which downloads the json, the post's images and the .md, overwriting an earlier save.
-- `src/modules/etsy/`: the Etsy module. `page.html`, `page.js`: its page; `messages.js`: paging through each conversation (no extension APIs); `redact.js`: the optional name redaction.
+- `src/modules/etsy/`: the Etsy module. `page.html`, `page.js`: its page; `messages.js`: paging through each conversation (no extension APIs).
 - `src/modules/claude-sessions/`: the claude.ai sessions module. `page.html`, `page.js`: its page; `listing.js`: lists every session; `export.js`, `save.js`, `narration.js`: the export, its downloads, and what the page says about the export, rename and delete; `rename.js`, `delete.js`: rename and delete, each read back.
 - `src/modules/claude-chat/`: the claude.ai chat-outputs module. `page.html`, `page.js`: its page; `outputs.js`: lists and fetches each chat's delivered files (no extension APIs).
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.

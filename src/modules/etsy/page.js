@@ -3,18 +3,13 @@
 // the failure list. The page fetches Etsy itself with the login (credentials: include)
 // riding the manifest's etsy.com host permission; the popup passes the matched tab's id
 // as a query, so the ids box can prefill from the open /messages/<id> tab.
-import { parseIds, ignoredTokens, ignoredLine, collectConversations, serializePayload, outputName, redactSetup, parsesAsJson, finishMessage, failureLines, conflictActionFor, counted } from "./messages.js";
+import { parseIds, ignoredTokens, ignoredLine, collectConversations, serializePayload, outputName, finishMessage, failureLines, counted } from "./messages.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
 
 const line = $("etsy-status"), bar = $("etsy-bar"), fails = $("etsy-fails");
-const redactLine = $("etsy-redact");
 const say = (text, cls = "") => { line.textContent = text; line.className = cls; line.hidden = false; };
-// the redact state's own line: it persists through the progress narration, so the state
-// and its collision note stay visible for the whole run no matter what the status line
-// is saying at the moment
-const sayRedact = (text, cls = "") => { redactLine.textContent = text; redactLine.className = cls; redactLine.hidden = false; };
 const progress = (done, total) => { bar.max = total || 1; bar.value = done; bar.hidden = !total; };
 const failures = (items) => fails.replaceChildren(...items.map((t) => {
   const li = document.createElement("li");
@@ -57,9 +52,6 @@ let runSeq = 0;
 $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
   const seq = ++runSeq;
   failures([]);
-  // a new run starts with no redact line: an earlier run's line never sits beside this
-  // run's error
-  redactLine.hidden = true;
   // read every input once, before any await — an empty box falls back to the conversation
   // the popup was opened on
   const ignored = ignoredTokens($("ids").value);
@@ -75,13 +67,6 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     return;
   }
   try {
-    // the redaction config, read once before any fetch: the pure decision hands back on,
-    // or one of the two loud off states — neither off state is silent (an unguarded
-    // export must never pass for a guarded one)
-    const stored = (await chrome.storage.local.get("etsyRedact")).etsyRedact;
-    const { redactState, redact, line: redactNote } = redactSetup(stored);
-    sayRedact(redactNote.text, redactNote.cls);
-
     progress(0, ids.length);
     const conversations = await collectConversations(ids, {
       onProgress: (i, total, id, seenSize) => {
@@ -91,16 +76,11 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     });
     progress(ids.length, ids.length);
     say("Saving…");
-    // whole-blob redaction: up to 8 passes on the main thread — a large export sits on "Saving…" a while
-    const json = serializePayload(conversations, { redact, redactState });
-    // the redacted output is checked before success is claimed: a file that would not
-    // parse never rides a green line or overwrites a same-day good export, though the
-    // download itself still runs
-    const sound = parsesAsJson(json);
+    const json = serializePayload(conversations);
     const blobUrl = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     const filename = outputName();
     const finish = (saved) => {
-      const done = finishMessage({ saved, conversations, filename, redactState, sound, seq, runSeq });
+      const done = finishMessage({ saved, conversations, filename, seq, runSeq });
       if (!done) return;
       failures(failureLines(conversations));
       say(done.text, done.cls);
@@ -111,7 +91,8 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
         url: blobUrl,
         filename,
         saveAs: false,
-        conflictAction: conflictActionFor(sound),
+        // a same-day save replaces the earlier file of the day
+        conflictAction: "overwrite",
       }, {
         // a save with no word in 15 minutes may still be reading the blob URL: free it
         // only once the download truly ends; finishMessage drops a stale run's late end
@@ -126,8 +107,6 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
     if (saved !== null) URL.revokeObjectURL(blobUrl);
     finish(saved);
   } catch (err) {
-    // no export came of this run, so there is nothing for a redact line to describe
-    redactLine.hidden = true;
     say((err && err.message) || String(err), "warn");
   }
 }));

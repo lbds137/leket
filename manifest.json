@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Leket",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "minimum_chrome_version": "109",
   "description": "Save Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "action": {
@@ -11,7 +11,7 @@
   },
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "background": { "service_worker": "src/background.js", "type": "module" },
-  "permissions": ["scripting", "downloads", "offscreen", "storage"],
+  "permissions": ["scripting", "downloads", "offscreen"],
   "host_permissions": [
     "https://discord.com/*",
     "https://cdn.discordapp.com/*",
