@@ -13,20 +13,21 @@ const messagesIn = (node, out = []) => {
   return out;
 };
 
-// ids from the box, else the open conversation's address (etsy.com/messages/<id>), else
-// nothing — the caller narrates the stop (the console's prompt, then alert)
 // A token is a bare id or a conversation link (an etsy.com host, or none, then
-// /messages/<id>, any query or fragment); the first of each id is kept, so a repeat is
-// not exported twice. Tokens split on whitespace; commas split a token unless the whole
-// token is one link, so a comma in a link's query can't split off a stray id. A pasted
-// sentence's wrapping punctuation — (link). <link> "77"; and curly quotes — is trimmed
-// first. Only an empty box falls back to the tab's conversation: a box of junk alone
-// never exports the open tab (the page refuses the junk by name before this runs).
+// /messages/<id>, any query or fragment). Tokens split on whitespace; commas split a
+// token unless the whole token is one link, so a comma in a link's query can't split off
+// a stray id. A pasted sentence's wrapping punctuation — (link). <link> "77"; and curly
+// quotes — is trimmed first, so a box of punctuation alone holds no tokens.
 const unwrap = (t) => t.replace(/^[(<"'“‘[]+/, "").replace(/[.,;:)>"'”’\]]+$/, "");
 const idOf = (token) => /^\d+$/.test(token) ? token
   : (token.match(/^(?:(?:https?:\/\/)?(?:[\w-]+\.)*etsy\.com)?\/messages\/(\d+)(?:[/?#]|$)/i) || [])[1] || null;
 const tokensOf = (text) => (text || "").split(/\s+/).map(unwrap)
   .flatMap((t) => t.includes("/") && idOf(t) ? [t] : t.split(",").map(unwrap)).filter(Boolean);
+// ids from the box, else the open conversation's address (etsy.com/messages/<id>), else
+// nothing — the caller narrates the stop (the console's prompt, then alert). The first
+// of each id is kept, so a repeat is not exported twice. Only a box with no tokens
+// (empty, whitespace, bare commas or punctuation) falls back to the tab: a box of junk
+// alone never exports the open tab (the page refuses the junk by name before this runs).
 const parseIds = (text, pathname = "") => {
   const tokens = tokensOf(text);
   if (tokens.length) return [...new Set(tokens.map(idOf).filter(Boolean))];

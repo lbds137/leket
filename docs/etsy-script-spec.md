@@ -175,6 +175,7 @@ predate this list.
   without the scheme and host, wrapping punctuation trimmed) reads as its id, and a
   repeated id saves once. A token that is neither stops the run before any fetch,
   naming it, instead of being dropped while the rest save green. Since 0.3.38 curly
-  quotes are trimmed too, and only an empty box falls back to the open tab's
-  conversation: a box of junk alone yields no ids (in the console copy, that is
+  quotes are trimmed too, and only a box with no tokens (empty, whitespace, bare
+  commas or punctuation) falls back to the open tab's conversation: a box of junk
+  alone yields no ids (in the console copy, that is
   the case where it would otherwise export the open tab).

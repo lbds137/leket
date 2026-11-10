@@ -67,12 +67,15 @@ test("parseIds falls back to the /messages/ pathname, and text beats pathname", 
   assert.deepEqual(parseIds("", "/shop/thing"), []);
   assert.deepEqual(parseIds("", ""), []);
   assert.deepEqual(parseIds("9", "/messages/123"), ["9"]);
-  // only an empty box falls back: junk alone never exports the open tab's conversation
-  // (a box of whitespace or bare commas is empty)
+  // only a box with no tokens falls back: junk alone never exports the open tab's
+  // conversation (whitespace, bare commas and punctuation alone hold no tokens, and the
+  // page refuses none of them)
   assert.deepEqual(parseIds("junk", "/messages/123"), []);
   assert.deepEqual(parseIds("12a, x", "/messages/123"), []);
-  assert.deepEqual(parseIds(" \n ", "/messages/123"), ["123"]);
-  assert.deepEqual(parseIds(", ,", "/messages/123"), ["123"]);
+  for (const box of [" \n ", ", ,", "...", "();", '""']) {
+    assert.deepEqual(parseIds(box, "/messages/123"), ["123"], JSON.stringify(box));
+    assert.deepEqual(ignoredTokens(box), [], JSON.stringify(box));
+  }
 });
 
 test("parseIds takes the id out of a pasted conversation link, in any of its forms", () => {
