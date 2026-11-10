@@ -54,14 +54,15 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
   failures([]);
   // read every input once, before any await — an empty box falls back to the conversation
   // the popup was opened on
-  const ignored = ignoredTokens($("ids").value);
+  const box = $("ids").value;
+  const ignored = ignoredTokens(box);
   if (ignored.length) {
     // a typo'd or foreign token stops the run: dropped silently, the rest would save
     // under a green line that never mentions the conversation that was meant
     say(ignoredLine(ignored), "warn");
     return;
   }
-  const ids = parseIds($("ids").value, tabPathname);
+  const ids = parseIds(box, tabPathname);
   if (!ids.length) {
     say("No conversation ids given.", "warn");
     return;

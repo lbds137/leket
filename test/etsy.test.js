@@ -67,6 +67,12 @@ test("parseIds falls back to the /messages/ pathname, and text beats pathname", 
   assert.deepEqual(parseIds("", "/shop/thing"), []);
   assert.deepEqual(parseIds("", ""), []);
   assert.deepEqual(parseIds("9", "/messages/123"), ["9"]);
+  // only an empty box falls back: junk alone never exports the open tab's conversation
+  // (a box of whitespace or bare commas is empty)
+  assert.deepEqual(parseIds("junk", "/messages/123"), []);
+  assert.deepEqual(parseIds("12a, x", "/messages/123"), []);
+  assert.deepEqual(parseIds(" \n ", "/messages/123"), ["123"]);
+  assert.deepEqual(parseIds(", ,", "/messages/123"), ["123"]);
 });
 
 test("parseIds takes the id out of a pasted conversation link, in any of its forms", () => {
@@ -92,6 +98,12 @@ test("a pasted sentence's wrapping punctuation doesn't hide an id or a link", ()
   assert.deepEqual(parseIds("(https://www.etsy.com/messages/123). <https://etsy.com/messages/9> \"77\"; 88."),
     ["123", "9", "77", "88"]);
   assert.deepEqual(ignoredTokens("(https://www.etsy.com/messages/123). <https://etsy.com/messages/9> \"77\"; 88."), []);
+  // curly quotes, as an email or a document pastes them, built from code points so the
+  // source carries no escape to mis-transcribe
+  const [ldq, rdq, lsq, rsq] = [0x201c, 0x201d, 0x2018, 0x2019].map((c) => String.fromCharCode(c));
+  const curly = `${ldq}77${rdq}, ${lsq}88${rsq}. ${ldq}https://www.etsy.com/messages/5${rdq}`;
+  assert.deepEqual(parseIds(curly), ["77", "88", "5"]);
+  assert.deepEqual(ignoredTokens(curly), []);
 });
 
 test("a comma inside a link doesn't split off a stray id", () => {
@@ -462,6 +474,10 @@ test("page.js wires the pure decisions, and no redact remnant is left on the pag
   // finishMessage is what drops a stale run's late end, so both names are pinned
   assert.match(src, /finishMessage\(\{[^}]*\bseq\b[^}]*\}\)/);
   assert.match(src, /finishMessage\(\{[^}]*\brunSeq\b[^}]*\}\)/);
+  // the click reads the ids box once, and both checks see that one reading
+  assert.equal([...src.matchAll(/\$\("ids"\)\.value(?!\s*=[^=])/g)].length, 1, "one read of the ids box");
+  assert.match(src, /ignoredTokens\(box\)/);
+  assert.match(src, /parseIds\(box, tabPathname\)/);
   // the failure list comes from the pure helper, not an inline copy
   assert.match(src, /failures\(failureLines\(conversations\)\)/);
   // the page serializes plainly and reads no config: whoever reads the file hides names

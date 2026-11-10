@@ -112,7 +112,7 @@ The headline: **the CLI tools change nothing.**
 | `reddit-<post id>.json` | `reddit-export --from-json` |
 | `reddit-<post id>.md` | opens directly |
 | `claude-chat-outputs-<date>.json` | read directly (no tool wired yet) |
-| `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical; an export that fails the JSON check never overwrites — beside a same-day file it lands as `etsy-conversations-<date> (1).json`, the file NOT to ingest) |
+| `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical; a same-day save overwrites it; unredacted, so the reader's guard hides any name) |
 
 `chrome.downloads.download` with `saveAs: false` lands in ~/Downloads under the given
 filename — the same place the scripts' Blob-plus-click put it. (Chrome's own
@@ -149,8 +149,8 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
   **Done:** Deck's half landed first (the repo is lbds137/leket, the folder ~/Projects/leket);
   the in-repo half shipped in 0.3.17 (names, message types, panel id, docs).
 - **Etsy script text** — received from Jackalope 11-04 (its repo is personal-data; never
-  read from this session). Its deadname-guard literals stay out of Leket; the guard ships
-  as the pluggable hook described under the module.
+  read from this session). Its deadname guard stays out of Leket entirely since 0.3.38:
+  the reader redacts (see the module paragraph).
 - **Out of scope by spec**: youtube-extractor-guide.md stays a guide, not a module — noted
   here so it isn't lost; promoting it is Lila's call.
 - **Release note at the rename (PR7)**: this fold-in adds `www`/`old.reddit.com` host
