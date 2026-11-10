@@ -96,28 +96,42 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
   // run, and its button, forever. The timeout is an idle one: every body chunk re-arms
   // it, so a large file on a slow link finishes as long as bytes keep coming, and only
   // timeoutMs with no data at all ends it. `step` names where a timeout landed,
-  // including the file's path (the engine's wording says neither).
+  // including the file's path (the engine's wording says neither). Whether the timer
+  // fired is kept in a flag, not read back from the error: an engine that errors the
+  // body with a plain AbortError instead of the abort's reason still reports a timeout.
   let step = "";
   const request = async (url, label, read) => {
     step = label;
     const ctl = new AbortController();
-    let timer;
+    let timer, timedOut = false;
     const touch = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => ctl.abort(new DOMException(`${label} timed out`, "TimeoutError")), timeoutMs);
+      timer = setTimeout(() => {
+        timedOut = true;
+        ctl.abort(new DOMException(`${label} timed out`, "TimeoutError"));
+      }, timeoutMs);
     };
     touch();
     try {
       const r = await doFetch(url, { credentials: "include", signal: ctl.signal });
-      if (!r.ok) throw new Error(`${r.status} ${url.split("/wiggle/")[1] || url}`);
+      if (!r.ok) {
+        // the error body is never read: cancel it so it doesn't hold the connection
+        r.body?.cancel?.().catch(() => {});
+        throw new Error(`${r.status} ${url.split("/wiggle/")[1] || url}`);
+      }
       touch();
       return await read(r, touch);
+    } catch (err) {
+      if (timedOut) throw new DOMException(`${label} timed out`, "TimeoutError");
+      throw err;
     } finally {
       clearTimeout(timer);
     }
   };
   // the body chunk by chunk, re-arming the idle timer on each; a response with no
-  // readable body (an empty one) falls back to blob()
+  // readable body (a null-body one) falls back to blob() or json()
+  const readJson = async (r, touch) =>
+    r.body?.getReader ? JSON.parse(await (await readBlob(r, touch)).text()) : r.json();
   const readBlob = async (r, touch) => {
     if (!r.body?.getReader) return r.blob();
     const reader = r.body.getReader();
@@ -135,7 +149,7 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
     const base = orgPath + "conversations/" + chat + "/wiggle/";
     const entry = { chat, name, source, files: [] };
     try {
-      const listing = await request(base + "list-files?prefix=", "list-files", (r) => r.json());
+      const listing = await request(base + "list-files?prefix=", "list-files", readJson);
       if (!Array.isArray(listing?.files_metadata)) {
         throw new Error("list-files: no files_metadata (the API shape changed)");
       }
@@ -150,11 +164,12 @@ export async function collectChats(chats, { fetch: doFetch = fetch, orgPath, onP
         const text = isText(meta.path, meta.content_type) ? await asText(blob) : null;
         if (text !== null) file.text = text;
         else file.base64 = await toBase64(blob);
-        // the listed size is checked only when the listing gives one: a number, or a
-        // string of digits. A missing or odd size can't be compared, and flagging it
-        // would turn every clean run yellow; file.size keeps the listing's raw value.
-        const listed = typeof meta.size === "number" ? meta.size
-          : typeof meta.size === "string" && /^\d+$/.test(meta.size) ? Number(meta.size) : null;
+        // the listed size is checked only when the listing gives one: a whole byte
+        // count, as a number or a string of digits. A missing or odd size (null, "3 B",
+        // 3.5, -1) can't be compared, and flagging it would turn every clean run
+        // yellow; file.size keeps the listing's raw value.
+        const n = typeof meta.size === "string" && /^\d+$/.test(meta.size) ? Number(meta.size) : meta.size;
+        const listed = Number.isSafeInteger(n) && n >= 0 ? n : null;
         if (listed !== null && blob.size !== listed) file.size_mismatch = blob.size;
         entry.files.push(file);
         fileCount++;

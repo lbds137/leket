@@ -479,31 +479,44 @@ test("a hung wiggle fetch times out per fetch, naming the step: the chat fails, 
     }
     return { ok: true, status: 200, json: async () => ({ files_metadata: [] }) };
   };
-  const done = await collectChats([[CHAT, "n", "s"], [other, "n2", "s2"]], { fetch, orgPath: ORG, timeoutMs: 20 });
+  const done = await collectChats([[CHAT, "n", "s"], [other, "n2", "s2"]], { fetch, orgPath: ORG, timeoutMs: 100 });
   assert.ok(signals.every((s) => s instanceof AbortSignal), "every fetch carries a timeout signal");
-  assert.equal(done.results[0].error, "list-files timed out: no data for 0.02 s");
+  assert.equal(done.results[0].error, "list-files timed out: no data for 0.1 s");
   assert.equal(done.results[1].error, undefined, "the next chat still runs");
   assert.equal(done.failed, 1);
 });
 
-// a download whose body is a real stream: `chunks` are sent `gapMs` apart, then the
-// body either ends or (stall: true) goes silent. As in Chrome, aborting the request's
-// signal at any point errors the body with the signal's reason.
-const streamFetch = (files, { gapMs = 0, stall = false } = {}) => async (url, opts = {}) => {
-  if (url.includes("list-files")) return { ok: true, json: async () => ({ files_metadata: files }) };
-  const f = files.find((x) => url.endsWith(encodeURIComponent(x.path)));
+// a real stream body: `chunks` are sent `gapMs` apart, then the body either ends or
+// (stall: true) goes silent. As in Chrome, aborting the request's signal at any point
+// errors the body with the signal's reason; plainAbort: true errors it with a generic
+// AbortError instead, as an engine that drops the reason would.
+const streamBody = (chunks, signal, { gapMs = 0, stall = false, plainAbort = false } = {}) => {
   let i = 0, aborted = false;
-  const body = new ReadableStream({
-    start: (c) => opts.signal.addEventListener("abort", () => { aborted = true; c.error(opts.signal.reason); }),
+  return new ReadableStream({
+    start: (c) => signal.addEventListener("abort", () => {
+      aborted = true;
+      c.error(plainAbort ? new DOMException("The operation was aborted.", "AbortError") : signal.reason);
+    }),
     pull: (c) => new Promise((resolve) => {
-      if (i < f.chunks.length) {
-        setTimeout(() => { if (!aborted) c.enqueue(new TextEncoder().encode(f.chunks[i++])); resolve(); }, gapMs);
+      if (i < chunks.length) {
+        setTimeout(() => { if (!aborted) c.enqueue(new TextEncoder().encode(chunks[i++])); resolve(); }, gapMs);
       } else if (stall) {
-        opts.signal.addEventListener("abort", resolve);
+        signal.addEventListener("abort", resolve);
       } else { c.close(); resolve(); }
     }),
   });
-  return { ok: true, status: 200, body, blob: async () => { throw new Error("the stream path must be used"); } };
+};
+const noBlob = async () => { throw new Error("the stream path must be used"); };
+// downloads stream their `chunks`; the listing streams `listingChunks` when given,
+// else answers through json() alone
+const streamFetch = (files, { listingChunks, ...how } = {}) => async (url, opts = {}) => {
+  if (url.includes("list-files")) {
+    return listingChunks
+      ? { ok: true, status: 200, body: streamBody(listingChunks, opts.signal, how), json: noBlob }
+      : { ok: true, json: async () => ({ files_metadata: files }) };
+  }
+  const f = files.find((x) => url.endsWith(encodeURIComponent(x.path)));
+  return { ok: true, status: 200, body: streamBody(f.chunks, opts.signal, how), blob: noBlob };
 };
 
 test("a download-file timeout names the file's path; files before it are kept", async () => {
@@ -515,27 +528,65 @@ test("a download-file timeout names the file's path; files before it are kept", 
   const fetch = (url, opts) => url.includes("big%20file")
     ? new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(opts.signal.reason)))
     : base(url, opts);
-  const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG, timeoutMs: 20 });
-  assert.equal(done.results[0].error, "download-file /mnt/user-data/outputs/big file.png timed out: no data for 0.02 s",
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG, timeoutMs: 100 });
+  assert.equal(done.results[0].error, "download-file /mnt/user-data/outputs/big file.png timed out: no data for 0.1 s",
     "the decoded path, not the stripped step");
   assert.deepEqual(done.results[0].files.map((f) => f.path), ["/mnt/user-data/outputs/a.md"]);
 });
 
 test("a body that stops sending mid-download times out on the idle timer", async () => {
   const files = [{ path: "/mnt/user-data/outputs/half.md", size: 9, content_type: "text/markdown", chunks: ["half"] }];
-  const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files, { stall: true }), orgPath: ORG, timeoutMs: 30 });
-  assert.equal(done.results[0].error, "download-file /mnt/user-data/outputs/half.md timed out: no data for 0.03 s");
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files, { stall: true }), orgPath: ORG, timeoutMs: 100 });
+  assert.equal(done.results[0].error, "download-file /mnt/user-data/outputs/half.md timed out: no data for 0.1 s");
   assert.deepEqual(done.results[0].files, [], "a half-read file isn't saved");
 });
 
+test("a stall still reads as a timeout when the engine errors the body with a plain AbortError", async () => {
+  const files = [{ path: "/mnt/user-data/outputs/half.md", size: 9, content_type: "text/markdown", chunks: ["half"] }];
+  const done = await collectChats([[CHAT, "n", "s"]], {
+    fetch: streamFetch(files, { stall: true, plainAbort: true }), orgPath: ORG, timeoutMs: 100,
+  });
+  assert.equal(done.results[0].error, "download-file /mnt/user-data/outputs/half.md timed out: no data for 0.1 s",
+    "the timer's own flag decides, not the error the engine chose");
+});
+
+// 30 chunks 5 ms apart = ~150 ms in all, past the 100 ms budget, yet no gap comes near it
+const slowChunks = (s) => s.match(/.{1,2}/g);
+
 test("a slow download that keeps sending outlives the timeout: only silence ends it", async () => {
-  // 12 chunks 10 ms apart = ~120 ms in all, twice the 60 ms budget, yet no gap comes near it
-  const chunks = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
-  const files = [{ path: "/mnt/user-data/outputs/slow.md", size: 12, content_type: "text/markdown", chunks }];
-  const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files, { gapMs: 10 }), orgPath: ORG, timeoutMs: 60 });
+  const text = "abcdefghij".repeat(6);
+  const files = [{ path: "/mnt/user-data/outputs/slow.md", size: 60, content_type: "text/markdown", chunks: slowChunks(text) }];
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files, { gapMs: 5 }), orgPath: ORG, timeoutMs: 100 });
   assert.equal(done.results[0].error, undefined);
-  assert.equal(done.results[0].files[0].text, "abcdefghijkl");
+  assert.equal(done.results[0].files[0].text, text);
   assert.equal(done.results[0].files[0].size_mismatch, undefined);
+});
+
+test("a slow listing that keeps sending outlives the timeout too", async () => {
+  const json = JSON.stringify({ files_metadata: [] }) + " ".repeat(60 - 21);
+  assert.equal(json.length, 60);
+  const done = await collectChats([[CHAT, "n", "s"]], {
+    fetch: streamFetch([], { listingChunks: slowChunks(json), gapMs: 5 }), orgPath: ORG, timeoutMs: 100,
+  });
+  assert.equal(done.results[0].error, undefined, "the listing is read chunk by chunk, re-arming the timer");
+  assert.deepEqual(done.results[0].files, []);
+});
+
+test("a listing body that isn't JSON still fails its chat with the parse error", async () => {
+  const done = await collectChats([[CHAT, "n", "s"]], {
+    fetch: streamFetch([], { listingChunks: ["<html>signed out</html>"] }), orgPath: ORG,
+  });
+  assert.match(done.results[0].error, /JSON/);
+  assert.equal(done.failed, 1);
+});
+
+test("a failed response's unread body is cancelled", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({ cancel: () => { cancelled = true; } });
+  const fetch = async () => ({ ok: false, status: 503, body });
+  const done = await collectChats([[CHAT, "n", "s"]], { fetch, orgPath: ORG });
+  assert.equal(done.results[0].error, "503 list-files?prefix=");
+  assert.ok(cancelled, "the error body was cancelled, not left to hold the connection");
 });
 
 test("size_mismatch compares only a listed size: missing or odd sizes stay clean, a digit string is compared", async () => {
@@ -543,18 +594,20 @@ test("size_mismatch compares only a listed size: missing or odd sizes stay clean
     { path: "/mnt/user-data/outputs/none.md", content_type: "text/markdown", chunks: ["abc"] },
     { path: "/mnt/user-data/outputs/null.md", size: null, content_type: "text/markdown", chunks: ["abc"] },
     { path: "/mnt/user-data/outputs/odd.md", size: "3 B", content_type: "text/markdown", chunks: ["abc"] },
+    { path: "/mnt/user-data/outputs/frac.md", size: 3.5, content_type: "text/markdown", chunks: ["abc"] },
+    { path: "/mnt/user-data/outputs/neg.md", size: -1, content_type: "text/markdown", chunks: ["abc"] },
     { path: "/mnt/user-data/outputs/same.md", size: "3", content_type: "text/markdown", chunks: ["abc"] },
     { path: "/mnt/user-data/outputs/short.md", size: "500", content_type: "text/markdown", chunks: ["abc"] },
   ];
   const done = await collectChats([[CHAT, "n", "s"]], { fetch: streamFetch(files), orgPath: ORG });
   const got = Object.fromEntries(done.results[0].files.map((f) => [f.path.split("/").pop(), f]));
-  for (const n of ["none.md", "null.md", "odd.md", "same.md"]) {
+  for (const n of ["none.md", "null.md", "odd.md", "frac.md", "neg.md", "same.md"]) {
     assert.equal(got[n].size_mismatch, undefined, `${n} is not a mismatch`);
   }
   assert.equal(got["short.md"].size_mismatch, 3, "a digit-string size that disagrees still flags");
   assert.equal(got["odd.md"].size, "3 B", "the listing's raw size is kept as-is");
-  const line = doneLine({ chats: 1, fileCount: 5, results: done.results, filename: "f.json" });
-  assert.equal(line.text, 'Done: 1 chats, 5 files saved to f.json. 1 file(s) arrived at a different size than listed — they carry "size_mismatch".');
+  const line = doneLine({ chats: 1, fileCount: 7, results: done.results, filename: "f.json" });
+  assert.equal(line.text, 'Done: 1 chats, 7 files saved to f.json. 1 file(s) arrived at a different size than listed — they carry "size_mismatch".');
 });
 
 test("a listed file with no string path is skipped and counted, and the chat's other files still arrive", async () => {
