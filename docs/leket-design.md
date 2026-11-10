@@ -86,12 +86,9 @@ evidence.
   consecutive pages bring nothing new (offset pages overlap), keeps the script's flat
   400 ms pause between pages, and downloads one `etsy-conversations-<date>.json`.
   Conversation ids come from a popup input, else the open `/messages/<id>` address.
-  Redaction is a pluggable `redact(text)` hook: the configured name, short form and
-  mishearing set build one regex that runs over the whole serialized JSON — which is why
-  it must also catch `\n` and `\uXXXX` escapes; an empty config redacts nothing.
-  The guard's escape handling also redacts a name starting with n, r, t, b or f where it
-  follows a backslash escape letter, so such names over-redact (e.g. short "nan" takes a
-  line-initial "an" after `\n`); accepted and pinned in test/etsy-redact.test.js.
+  No redaction: the file holds the messages as Etsy returned them, and hiding a name is
+  the reader's job (Lila 2026-11-09: it belongs on the consumer, not the producer; the
+  redact hook landed with the Etsy module, 8d275bd, and was removed in 0.3.38).
   Script received from Jackalope 11-04 with its personal-data literals flagged out;
   changes to the Etsy logic go back to Jackalope as a diff, same as collector.js.
 

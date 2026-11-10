@@ -12,19 +12,10 @@ logic gets here goes back to Jackalope as a diff, same as the Discord collector.
   Dropped; the header now says the notification emails carry the ids.
 - **L29-136**, the deadname guard block — not included. Its `NAME`/`SHORT`
   literals and its first-letter mishearing set belong to one person, and this repo
-  carries no personal data. Leket ships the guard as the pluggable `redact(text)`
-  hook described below; L50-125 of the block (the heard/misheard/split/
-  visibleSpans/spans/once machinery) is generic once those are parameters.
+  carries no personal data. Since 0.3.38 Leket carries no guard at all: hiding a
+  name is the reader's job, not the export's (Lila 2026-11-09). The script's own
+  copy of the guard stays the script's.
 - **L194**, the method string, named the other repo and its runner; genericized below.
-
-## The redact(text) hook
-
-Runs over the whole serialized JSON, not per field — which is why it must also
-catch `\n` and `\uXXXX` escapes, not just bare text. Config: a name (lowercase),
-a short form with its first-letter class, and a mishearing set (first-letter
-mishearings, plus a fold of letter variants to i); the three build one regex.
-Empty config: `redact` is the identity, nothing is redacted. The literals stay
-out of this repo; they are wired per install, outside it.
 
 ## The script
 
@@ -61,7 +52,7 @@ block sits where the marker is.
   const say = (t) => (panel.textContent = t);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // [L29-136: the deadname guard block, `const redactDeadname = (() => { … })();` —
-  //  elided here; in Leket it is the redact(text) hook above]
+  //  elided here; Leket has no counterpart since 0.3.38]
 
   // Every object carrying a conversation_message_id, wherever Etsy nests it.
   const messagesIn = (node, out = []) => {
@@ -128,7 +119,7 @@ block sits where the marker is.
     null,
     1,
   );
-  json = redactDeadname(json); // in Leket: the redact(text) hook, identity when unconfigured
+  json = redactDeadname(json); // not in Leket since 0.3.38: the reader redacts
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
   a.download = `etsy-conversations-${new Date().toISOString().slice(0, 10)}.json`;
@@ -145,7 +136,8 @@ block sits where the marker is.
 ## Jackalope's notes for the port
 
 1. The redaction runs over the whole serialized JSON, so the hook must handle JSON
-   escapes (`\n`, `\uXXXX`), not just bare text.
+   escapes (`\n`, `\uXXXX`), not just bare text. (Moot for Leket since 0.3.38, which
+   has no hook.)
 2. This script calls Etsy's endpoint directly with `fetch`; the Discord collector
    only reads what the page has already loaded. The Etsy module is the one module
    with its own API calls, and its pacing is the script's flat 400 ms pause — older
@@ -163,13 +155,11 @@ predate this list.
   read ends its conversation as "timed out after N s at offset X", not as a sign-out.
   Only that timeout reads as timed out (0.3.24): any other abort ends it as
   "stopped at offset X".
-- **The payload names its redact state** (`redact: "on"` or the reason it's off).
-  `serializePayload` refuses a state that contradicts the guard it was handed
-  (0.3.16).
-- **The redacted output must parse** before success is claimed. An unsound file
-  lands beside the day's earlier export, not over it.
-- **A collision warning** when the configured name also matches Etsy's own words or
-  the export's field names.
+- **No redaction** (0.3.38). The port's redact hook is gone, with what came with it:
+  the payload's `redact` field, the check that the redacted file still parses (a
+  same-day save now always overwrites), the collision warning and the page's
+  Redact line. The file holds the messages as Etsy returned them, as the script's
+  would without its guard; a reader that needs a name hidden runs its own guard.
 - **Capped walks are marked** (0.3.16). A conversation the 400-page cap stopped gets
   `truncated: true`; the key is absent otherwise, so an uncapped file keeps the
   script's shape. It warns and is listed.
@@ -184,14 +174,3 @@ predate this list.
   without the scheme and host, wrapping punctuation trimmed) reads as its id, and a
   repeated id saves once. A token that is neither stops the run before any fetch,
   naming it, instead of being dropped while the rest save green.
-- **The guard reads through markup** (0.3.37). Etsy message bodies are HTML, so the
-  name is also matched with numeric and common named entities and `%XX` escapes read
-  as their characters and tags read as nothing, layer by layer (`&amp;#97;` is an a).
-  A hit there redacts the whole spelling in the file. A tag never crosses an
-  unescaped quote, so the reading stays inside one JSON string. The short form glued
-  to the word before it is caught where a capital starts it (`HiJane`, `JaneSmith`),
-  case-sensitively, so `ORGANELLE` stays whole. The cost of that: a short form that is
-  also a common word ending reaches into camel-case words and keys too (short `id`
-  turns `userId` into `user[redacted]`). A same-size export takes about 1.3 to 2 times as
-  long to redact, and text dense with entities or `%XX` escapes far longer (up to
-  about 10 times on small samples).
