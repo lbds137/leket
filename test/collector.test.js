@@ -230,6 +230,12 @@ test("a message quoting the start header's wording doesn't end the climb as the 
   // a row that is a piece of the header ("Welcome") is cut from the row, not the header
   const short = runPage("auto", [], { AUTO_QUOTE: "short" });
   assert.match(short.status, /reached the start of the channel/);
+  // a later row opening with an earlier row's piece ("Welcome to" after "Welcome"): rows
+  // cut later-first, so the "Welcome" cut takes the later row's copy and the "Welcome to"
+  // cut still finds its row — first-to-last would leave the cut the header's copy instead
+  const nested = runPage("auto", [], { AUTO_QUOTE: "nested" });
+  assert.match(nested.status, /reached the start of the channel/);
+  assert.equal(nested.loads, 25);
 });
 
 test("auto-scroll climbs at a paced 2-4 s a step, with a 30-60 s rest every 20 steps", () => {
