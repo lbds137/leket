@@ -249,7 +249,7 @@ class Node {
 }
 const list = new Node({ tag: "ol" });
 const hiddenId = (n, k) => String(BigInt(snowflake(n)) + BigInt(k));
-const rowNode = (m) => new Node({ tag: "li", id: `chat-messages-${CHANNEL}-${m.id}`,
+const rowNode = (m, text) => new Node({ tag: "li", id: `chat-messages-${CHANNEL}-${m.id}`, text: text || "",
   "__reactFiber$x": { memoizedProps: { message: m }, return: null } });
 // a bar folding `rows` (none rendered until it opens); one that `sticks` never opens.
 // guild-hidden-inside: each bar is itself a list item with a message-like id but no
@@ -262,7 +262,10 @@ const bar = (label, rows, sticks) => {
   button.onClick = () => {
     if (sticks || button.text.startsWith("Hide")) return;
     button.text = "Hide messages";
-    if (INSIDE) return rows.forEach((m) => b.add(rowNode(m)));
+    // INSIDE rows render their content (real DOM rows do), so the bar's textContent holds
+    // the label and the rows' text together; ownText cuts the rows back out — the top bar
+    // pins that the cut takes the row's copy, not the label's
+    if (INSIDE) return rows.forEach((m) => b.add(rowNode(m, m.content)));
     const at = list.children.indexOf(b) + 1;
     rows.forEach((m, i) => list.add(rowNode(m), at + i));
   };
@@ -271,8 +274,13 @@ const bar = (label, rows, sticks) => {
 let growing = null, returning = null, redraw = null;
 if (scenario.startsWith("guild-hidden")) {
   const blocked = { id: "7", username: "blocked_u", globalName: "Blocked" };
-  // one at the top of the loaded range, with no message above it yet
-  list.add(bar("1 blocked message", [{ id: hiddenId(1, -5), author: blocked, content: "top hidden" }]));
+  // one at the top of the loaded range, with no message above it yet. Its row is a piece
+  // of the bar's label ("message" in "1 blocked message"): ownText cuts each row at its
+  // LAST occurrence, so the row's own copy is cut and the label survives — a
+  // first-occurrence cut would take the label's copy and the opened bar would stop
+  // matching (this pins the occurrence half on the bar path; the later-first order is
+  // pinned on the start path, by the auto scenario's nested-quote test)
+  list.add(bar("1 blocked message", [{ id: hiddenId(1, -5), author: blocked, content: "message" }]));
   msgs.slice(0, 3).forEach((m) => list.add(rowNode(m)));
   // first seen while its group was still loading: "1 blocked message", then 2 by the save
   growing = list.add(bar("1 blocked message", [1, 2].map((k) => ({ id: hiddenId(3, k), author: blocked, content: `blocked ${k}` }))));
