@@ -262,9 +262,8 @@ const bar = (label, rows, sticks) => {
   button.onClick = () => {
     if (sticks || button.text.startsWith("Hide")) return;
     button.text = "Hide messages";
-    // INSIDE rows render their content (real DOM rows do), so the bar's textContent holds
-    // the label and the rows' text together; ownText cuts the rows back out — the top bar
-    // pins that the cut takes the row's copy, not the label's
+    // INSIDE rows render their content (real DOM rows do), so ownText cuts them back out
+    // of the bar's text — the top bar below carries the full pin comment
     if (INSIDE) return rows.forEach((m) => b.add(rowNode(m, m.content)));
     const at = list.children.indexOf(b) + 1;
     rows.forEach((m, i) => list.add(rowNode(m), at + i));
