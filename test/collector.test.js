@@ -125,7 +125,7 @@ test("a DM has no member data", () => {
 test("blocked and ignored bars are opened and their messages kept", () => {
   const page = runPage("guild-hidden");
   const d = page.export;
-  assert.deepEqual(d.messages.filter((m) => m.author_id === "7").map((m) => m.text), ["top hidden", "blocked 1", "blocked 2", "ignored 1"]);
+  assert.deepEqual(d.messages.filter((m) => m.author_id === "7").map((m) => m.text), ["message", "blocked 1", "blocked 2", "ignored 1"]);
   assert.equal(d.messages.length, 11);
   assert.deepEqual([d.hidden_groups.opened, d.hidden_groups.not_opened], [3, 1]);
   assert.match(page.status, /1 WOULD NOT OPEN: their messages are missing \(scroll back to: blocked bar after 2021-01-06 00:00 UTC "six"\)/);
@@ -136,6 +136,11 @@ test("a bar scrolled out and back is clicked again; a bar that is a list item wi
   assert.ok(runPage("guild-hidden-returns").export.messages.some((m) => m.text === "came back"));
   const d = runPage("guild-hidden-inside").export;
   assert.deepEqual([d.hidden_groups.opened, d.hidden_groups.not_opened], [3, 1]);
+  // the top bar's row is a piece of its label ("message" in "1 blocked message"): rows cut
+  // at their LAST occurrence, so the label survives and the bar keeps matching — a
+  // first-occurrence cut would take the label's copy, the opened bar would stop matching
+  // (opened 2, not opened 2), and it would count as an unrecognized button
+  assert.equal(d.hidden_groups.unrecognized_buttons, 1);
 });
 
 test("an error opening bars is reported and the harvest goes on", () => {
