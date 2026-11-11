@@ -125,6 +125,8 @@ test("a DM has no member data", () => {
 test("blocked and ignored bars are opened and their messages kept", () => {
   const page = runPage("guild-hidden");
   const d = page.export;
+  // "message" is the top bar's row: its text is a piece of its bar's label (why, in the
+  // fixture's pin comment)
   assert.deepEqual(d.messages.filter((m) => m.author_id === "7").map((m) => m.text), ["message", "blocked 1", "blocked 2", "ignored 1"]);
   assert.equal(d.messages.length, 11);
   assert.deepEqual([d.hidden_groups.opened, d.hidden_groups.not_opened], [3, 1]);
@@ -136,10 +138,9 @@ test("a bar scrolled out and back is clicked again; a bar that is a list item wi
   assert.ok(runPage("guild-hidden-returns").export.messages.some((m) => m.text === "came back"));
   const d = runPage("guild-hidden-inside").export;
   assert.deepEqual([d.hidden_groups.opened, d.hidden_groups.not_opened], [3, 1]);
-  // the top bar's row is a piece of its label ("message" in "1 blocked message"): rows cut
-  // at their LAST occurrence, so the label survives and the bar keeps matching — a
-  // first-occurrence cut would take the label's copy, the opened bar would stop matching
-  // (opened 2, not opened 2), and it would count as an unrecognized button
+  // the top bar's row is a piece of its label ("message" in "1 blocked message") — the
+  // fixture's pin comment has the why: a first-occurrence cut flips the opened bar to
+  // not-opened + unrecognized, which the two assertions below catch
   assert.equal(d.hidden_groups.unrecognized_buttons, 1);
 });
 
