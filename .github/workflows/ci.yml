@@ -23,9 +23,16 @@ jobs:
   # keeps no dependencies; 1.64.1 ships Chromium revision 1248, the one the smoke was
   # written against, and the step after the install fails unless that is the build present
   # (the smoke itself takes the newest chromium-* in ~/.cache/ms-playwright).
-  # Pinned to 24.04: the ubuntu-latest pool migrated to Ubuntu 26 (runner-images#14748)
-  # and smoke's `install --with-deps` died in apt on it twice (DNS loss for the Ubuntu
-  # mirrors); the workflow below was written and validated on 24.04.
+  # Pinned to 24.04, the image this workflow was written and validated on (the AppArmor
+  # step below names it). Smoke's apt-DNS deaths of 11-11 (runs 43035325935, 43040899423:
+  # five failed attempts, 14:06-16:42 UTC; azure.archive.ubuntu.com resolver failures and
+  # archive.ubuntu.com fetches Ign'd, `install --with-deps` dying in apt) fit a runner-side
+  # time window, not the image or the checkout: a mid-window run (43040110449) on an
+  # AWS-EC2 mirror (us-east-2.ec2.archive.ubuntu.com) passed, and one of the failing runs
+  # (43040899423), rerun unchanged, passed on an Azure mirror 2h40m after its last failure.
+  # First attributed to the ubuntu-latest Ubuntu-26 migration (runner-images#14748);
+  # disproven — the same apt phase failed on 24.04 minutes after passing there. On a red
+  # apt phase, rerun the failed jobs before changing anything.
   smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
