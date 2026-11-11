@@ -23,8 +23,11 @@ jobs:
   # keeps no dependencies; 1.64.1 ships Chromium revision 1248, the one the smoke was
   # written against, and the step after the install fails unless that is the build present
   # (the smoke itself takes the newest chromium-* in ~/.cache/ms-playwright).
+  # Pinned to 24.04: the ubuntu-latest pool migrated to Ubuntu 26 (runner-images#14748)
+  # and smoke's `install --with-deps` died in apt on it twice (DNS loss for the Ubuntu
+  # mirrors); the workflow below was written and validated on 24.04.
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
