@@ -160,16 +160,25 @@ const paces = [], restNotes = [], restLoads = [];
 // rows carry their text inside the scroller as Discord's do, and the loader stalls after
 // the last load without ever showing the header — the climb must say STALLED.
 // AUTO_QUOTE=short: the third older message is just "Welcome", a piece of the header that
-// does show at the end — cutting the row's text must not cut the header's
-const QUOTE = process.env.AUTO_QUOTE === "1" || process.env.AUTO_QUOTE === "short";
-const STALL = process.env.AUTO_QUOTE === "1";
+// does show at the end — cutting the row's text must not cut the header's.
+// AUTO_QUOTE=nested: the fourth older message is "Welcome to", which opens with the third
+// one's "Welcome" — cutting rows first-to-last would take the "Welcome" inside the later
+// row, and the "Welcome to" cut would then fall back to the header's own wording.
+// (The fake appends loads in load order, so "Welcome to" sits after "Welcome" in the
+// scroller's text; real Discord prepends older rows, which would reverse them — the pin
+// rides on this fake's order.)
+const AUTO_QUOTE = process.env.AUTO_QUOTE;
+const QUOTE = AUTO_QUOTE === "1" || AUTO_QUOTE === "short" || AUTO_QUOTE === "nested";
+const STALL = AUTO_QUOTE === "1";
 let header = "";
 const scrollEl = el({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0,
   querySelectorAll(sel) { return QUOTE && sel === `li[id^="chat-messages-${CHANNEL}-"]` ? lis.filter((li) => li.parentElement === this) : []; },
   dispatchEvent() {
     if (loads === AUTO_LOADS) return void (header = STALL ? "" : "Welcome to #general!");
     const m = { id: String(BigInt(snowflake(1)) - BigInt(++loads)), author: users.alice,
-      content: QUOTE && loads === 3 ? (STALL ? "hey all, Welcome to #rules" : "Welcome") : `older ${loads}` };
+      content: QUOTE && loads === 3 ? (STALL ? "hey all, Welcome to #rules" : "Welcome")
+        : AUTO_QUOTE === "nested" && loads === 4 ? "Welcome to"
+        : `older ${loads}` };
     lis.push(el({ id: `chat-messages-${CHANNEL}-${m.id}`, parentElement: this, textContent: m.content,
       "__reactFiber$x": { memoizedProps: { message: m }, return: null } }));
   } });
