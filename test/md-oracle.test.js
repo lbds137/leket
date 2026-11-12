@@ -1,33 +1,17 @@
 // safeBody against a real CommonMark parser (test/md-oracle.js): no raw HTML survives,
 // every input line is kept, and quoting changes nothing the reader gets. Fixed cases pin
-// each leak class a review found; the seeded fuzz looks for new ones. LEKET_FUZZ_N and
-// LEKET_FUZZ_SEED widen or move it.
+// each leak class a review found; the seeded fuzz (test/md-oracle-fuzz-{0..3}.test.js, one
+// shard a process) looks for new ones — LEKET_FUZZ_N and LEKET_FUZZ_SEED widen or move it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { safeBody, quote, quoteBody, render } from "../src/modules/reddit/md.js";
-import { loadCommonmark, rawHtml, reading, linesKept, prng, generate } from "./md-oracle.js";
+import { safeBody, quote, render } from "../src/modules/reddit/md.js";
+import { loadCommonmark, rawHtml } from "./md-oracle.js";
+import { check, show } from "./md-oracle-fuzz-shard.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const cm = loadCommonmark();
 const F = "```";
-
-// a body on its own (a post) and quoted one to three deep (comments, as comments() writes
-// them; an odd depth shifts tabs, an even one doesn't): no raw HTML, every line kept, and
-// each quoted parse, its quotes peeled off, the same as the body's own
-const check = (input, q = quoteBody) => {
-  const out = safeBody(input);
-  const quoted = [1, 2, 3].map((d) => [d, q(input, d)]);
-  const html = [out, ...quoted.map(([, md]) => md)].flatMap((md) => rawHtml(cm, md));
-  const kept = linesKept(input, out);
-  const own = reading(cm, out);
-  const moved = quoted.find(([d, md]) => reading(cm, md, d) !== own);
-  return html.length || !kept || moved ? { input, out, html, kept, moved } : null;
-};
-const show = (f) => `input ${JSON.stringify(f.input)}\n  safeBody ${JSON.stringify(f.out)}\n  `
-  + (f.html.length ? `raw HTML ${JSON.stringify(f.html)}`
-    : !f.kept ? "a line was lost or changed"
-      : `quoting ${f.moved[0]} deep changed what the reader gets: ${JSON.stringify(f.moved[1])}`);
 
 test("quoting changes nothing the reader gets, and the oracle sees it when it does", () => {
   // whole-lead expansion (quote() without content starts) changes what the reader gets
@@ -144,16 +128,3 @@ test("render: a saved image's folderRel and name are angle-encoded on one line w
   assert.match(out, /^!\[image 1\]\(<[^\n]+>\)$/m);
 });
 
-test("seeded fuzz: no raw HTML, every line kept, quoting changes nothing the reader gets", () => {
-  const n = Number(process.env.LEKET_FUZZ_N) || 20000;
-  const seed = Number(process.env.LEKET_FUZZ_SEED) || 0x1e4e7;
-  const rand = prng(seed);
-  const fails = [];
-  for (let i = 0; i < n; i++) {
-    const f = check(generate(rand));
-    if (f) fails.push(f);
-  }
-  fails.sort((a, b) => a.input.length - b.input.length);
-  assert.equal(fails.length, 0, `${fails.length} of ${n} cases failed (seed ${seed}); the shortest:\n`
-    + fails.slice(0, 5).map(show).join("\n"));
-});
