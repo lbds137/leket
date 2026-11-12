@@ -7,9 +7,9 @@ import assert from "node:assert/strict";
 import { safeBody, quoteBody } from "../src/modules/reddit/md.js";
 import { loadCommonmark, rawHtml, reading, linesKept, prng, generate } from "./md-oracle.js";
 
-// each shard process builds its own; the oracle cache it loads from is machine-fixed and
-// warm, so the four shard processes share it safely
-const cm = loadCommonmark();
+// each shard process builds its own; the loader installs single-flight (test/md-oracle.js),
+// so a cold cache shared by the four shard processes is safe too
+export const cm = loadCommonmark();
 
 // a body on its own (a post) and quoted one to three deep (comments, as comments() writes
 // them; an odd depth shifts tabs, an even one doesn't): no raw HTML, every line kept, and

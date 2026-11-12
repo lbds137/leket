@@ -6,11 +6,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { safeBody, quote, render } from "../src/modules/reddit/md.js";
-import { loadCommonmark, rawHtml } from "./md-oracle.js";
-import { check, show } from "./md-oracle-fuzz-shard.js";
+import { rawHtml } from "./md-oracle.js";
+import { cm, check, show } from "./md-oracle-fuzz-shard.js";
 import { postPage } from "./fixtures/reddit.js";
 
-const cm = loadCommonmark();
 const F = "```";
 
 test("quoting changes nothing the reader gets, and the oracle sees it when it does", () => {

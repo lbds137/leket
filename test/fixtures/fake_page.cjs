@@ -334,9 +334,14 @@ const listeners = [];
 const observed = [];
 // The sandbox's timers, scaled: the collector's real waits (its 300 ms debounce, the 1 s
 // Save wait, the 5 s ack timeout) all run inside the sandbox, so they take ~SCALE real
-// time and the suite spends its wall on node startups, not sleeps. The bridge ack above
-// stays on node's bare 10 ms setTimeout at module scope — the racer the scaled 5 s must
-// still lose to — and AUTO keeps its virtual clock, which paces the auto scenarios.
+// time and the suite spends its wall on node startups, not sleeps. The bridge ack fires
+// from postMessage below on node's bare 10 ms setTimeout and wins by expiry order (a
+// 10 ms timer is due before a 250 ms scaled one), so an edit that raises the ack's delay
+// above the scaled 5 s timeout, or scales the bare timer, breaks the BRIDGE:1 test.
+// Date is NOT scaled: Date.now()-based thresholds (e.g. the 1.5 s re-click throttle at
+// collector.js:449) run on the real clock against scaled timers, so a fixture relying on
+// their ratio would pin a mix the real page never produces. AUTO keeps its virtual
+// clock, which paces the auto scenarios.
 const SCALE = 1 / 20;
 const sandbox = {
   location: { pathname: `/channels/${IS_DM ? "@me" : GUILD}/${CHANNEL}`, origin: "https://discord.com" },

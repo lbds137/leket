@@ -4,7 +4,7 @@
 // came from the input. The repo keeps no dependencies, so the parser is installed once
 // into a cache outside the tree, the way CI fetches the smoke's pinned Playwright.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -40,13 +40,25 @@ function unmet(dir) {
 export function loadCommonmark() {
   const dir = process.env.LEKET_ORACLE_CACHE || join(homedir(), ".cache", "leket-oracle", COMMONMARK);
   if (unmet(dir).length) {
-    mkdirSync(dir, { recursive: true });
+    // npm is not same-prefix safe: with the fuzz shards up to five test processes reach
+    // this install on a cold cache at once, and two npm's in one prefix corrupt it. Each
+    // loader builds its own tmp prefix and the first rename wins; a rename within a
+    // parent directory is atomic, so the cache is never seen half-written.
+    const tmp = `${dir}.tmp-${process.pid}-${Date.now()}`;
+    mkdirSync(tmp, { recursive: true });
     try {
-      execFileSync("npm", [...INSTALL, "--prefix", dir, ...PINS], { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
-    } catch (e) {
-      throw new Error(`the CommonMark oracle needs ${COMMONMARK} and npm couldn't install it into ${dir} `
-        + `(network down?). Run: npm ${INSTALL.join(" ")} --prefix "${dir}" ${PINS.join(" ")} — `
-        + `or set LEKET_ORACLE_CACHE to a directory that has it. npm said: ${e.stderr || e.message}`);
+      try {
+        execFileSync("npm", [...INSTALL, "--prefix", tmp, ...PINS], { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
+      } catch (e) {
+        throw new Error(`the CommonMark oracle needs ${COMMONMARK} and npm couldn't install it into ${dir} `
+          + `(network down?). Run: npm ${INSTALL.join(" ")} --prefix "${dir}" ${PINS.join(" ")} — `
+          + `or set LEKET_ORACLE_CACHE to a directory that has it. npm said: ${e.stderr || e.message}`);
+      }
+      try {
+        renameSync(tmp, dir);
+      } catch { /* another loader's rename landed first; the pins are theirs */ }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
     const left = unmet(dir);
     if (left.length) throw new Error(`npm reported success but ${dir} still doesn't resolve ${left.join(", ")}`);
