@@ -282,7 +282,19 @@ if (scenario.startsWith("guild-hidden")) {
   list.add(bar("1 blocked message", [{ id: hiddenId(1, -5), author: blocked, content: "message" }]));
   msgs.slice(0, 3).forEach((m) => list.add(rowNode(m)));
   // first seen while its group was still loading: "1 blocked message", then 2 by the save
-  growing = list.add(bar("1 blocked message", [1, 2].map((k) => ({ id: hiddenId(3, k), author: blocked, content: `blocked ${k}` }))));
+  // the growing bar's INSIDE rows nest for the bar-path pin of ownText's later-first
+  // order: the earlier row "message" sits inside the later row "blocked message" as its
+  // tail, and both are pieces of the label — first-to-last, the earlier row's cut lands
+  // inside the later row, and the later row's cut then falls back to the label's own
+  // copy ("blocked message" in "2 blocked messages", the label the bar carries once its
+  // rows are in), which flips the opened bar to not-opened + unrecognized (the inside
+  // test's counts catch it). Outside the INSIDE scenario the rows leave the bar when it
+  // opens, so the cut order never matters there and the texts stay put
+  const growingRows = INSIDE
+    ? [{ id: hiddenId(3, 1), author: blocked, content: "message" },
+       { id: hiddenId(3, 2), author: blocked, content: "blocked message" }]
+    : [1, 2].map((k) => ({ id: hiddenId(3, k), author: blocked, content: `blocked ${k}` }));
+  growing = list.add(bar("1 blocked message", growingRows));
   msgs.slice(3, 5).forEach((m) => list.add(rowNode(m)));
   list.add(bar("1 Ignored Message", [{ id: hiddenId(5, 1), author: blocked, content: "ignored 1" }]));
   list.add(rowNode(msgs[5]));
