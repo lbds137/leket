@@ -6,16 +6,21 @@ import { fileURLToPath } from "node:url";
 
 const RUN = fileURLToPath(new URL("./fixtures/fake_page.cjs", import.meta.url));
 // One page per (scenario, args, env): the same key always prints the same JSON, so each
-// run is memoised and concurrent callers await one in-flight spawn. WARM lists every key
-// the file asks for and is warmed through a small pool at startup; the last test guards
-// that list against a call site added without its WARM entry.
+// run is memoised and concurrent callers await one in-flight spawn; each caller gets its
+// own structuredClone of the parsed page, so no test's in-place edit can reach another
+// test's input. WARM lists every key the file asks for and is warmed through a small pool
+// at startup; the last test guards that list both ways — a call site without its WARM
+// entry, and a WARM entry no test asks for.
 const keyOf = (scenario, args = [], env = {}) => JSON.stringify([scenario, args, env]);
 const pages = new Map();
-const asked = new Set();
-const runPage = async (scenario, args = [], env = {}) => {
+// every call records its origin, warmed or not — the pool's load-time warm-ups own the
+// memo, so a first-request-only record would never name the tests' keys
+const askedByTests = new Set();
+const askedByWarm = new Set();
+const runPage = async (scenario, args = [], env = {}, origin = "test") => {
   const key = keyOf(scenario, args, env);
+  (origin === "warm" ? askedByWarm : askedByTests).add(key);
   if (!pages.has(key)) {
-    asked.add(key);
     const run = new Promise((resolve, reject) => {
       execFile("node", [RUN, scenario, ...args], { env: { ...process.env, ...env }, encoding: "utf8" },
         (e, stdout) => {
@@ -29,7 +34,8 @@ const runPage = async (scenario, args = [], env = {}) => {
     run.catch(() => {}); // a warm-up nobody has awaited yet must not read as an unhandled rejection
     pages.set(key, run);
   }
-  return pages.get(key);
+  const page = await pages.get(key);
+  return structuredClone(page);
 };
 const exportOf = async (scenario, ...args) => {
   const d = (await runPage(scenario, args)).export;
@@ -80,7 +86,7 @@ for (let i = 0; i < POOL && warmQueue.length; i++) {
   (async () => {
     while (warmQueue.length) {
       const [s, a, e] = warmQueue.shift();
-      await runPage(s, a, e).catch(() => {}); // a failed warm-up surfaces in the test that asks for it
+      await runPage(s, a, e, "warm").catch(() => {}); // a failed warm-up surfaces in the test that asks for it
     }
   })();
 }
@@ -397,6 +403,8 @@ test("Stop and Auto-scroll again during the long rest wait out the rest", async 
 
 test("every page the tests ask for is in WARM", () => {
   const warmKeys = new Set(WARM.map(([s, a = [], e = {}]) => keyOf(s, a, e)));
-  assert.deepEqual([...asked].filter((k) => !warmKeys.has(k)), [],
+  assert.deepEqual([...askedByTests].filter((k) => !warmKeys.has(k)), [],
     "a runPage call site is missing from WARM; add its [scenario, args, env] entry");
+  assert.deepEqual([...warmKeys].filter((k) => !askedByTests.has(k)), [],
+    "a WARM entry no test asks for; remove it or fix its key");
 });

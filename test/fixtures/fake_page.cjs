@@ -340,7 +340,10 @@ const observed = [];
 // above the scaled 5 s timeout, or scales the bare timer, breaks the BRIDGE:1 test.
 // Date is NOT scaled: Date.now()-based thresholds (e.g. the 1.5 s re-click throttle at
 // collector.js:449) run on the real clock against scaled timers, so a fixture relying on
-// their ratio would pin a mix the real page never produces. AUTO keeps its virtual
+// their ratio would pin a mix the real page never produces — the throttle's 1.5 s re-click
+// retry is therefore unreachable from non-AUTO scenarios (a full scaled run is ~70 ms of
+// real time, under the throttle), and a future fixture that wants that path needs a Date
+// shim scaled by SCALE, not a bigger timer number. AUTO keeps its virtual
 // clock, which paces the auto scenarios.
 const SCALE = 1 / 20;
 const sandbox = {
