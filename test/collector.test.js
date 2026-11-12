@@ -217,7 +217,10 @@ test("a bar scrolled out and back is clicked again; a bar that is a list item wi
   const d = (await runPage("guild-hidden-inside")).export;
   // the top bar's row is a piece of its label ("message" in "1 blocked message") — the
   // fixture's pin comment has the why: a first-occurrence cut would flip the opened bar
-  // to not-opened + unrecognized, which both assertions below catch
+  // to not-opened + unrecognized, which both assertions below catch. The growing bar's
+  // INSIDE rows pin the later-first half the same way ("message" sits inside "blocked
+  // message"): without the reverse, its cut lands inside the later row and the bar
+  // flips the same way
   assert.deepEqual([d.hidden_groups.opened, d.hidden_groups.not_opened], [3, 1]);
   assert.equal(d.hidden_groups.unrecognized_buttons, 1);
 });
