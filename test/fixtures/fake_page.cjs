@@ -332,6 +332,12 @@ const document = {
 let posted = null;
 const listeners = [];
 const observed = [];
+// The sandbox's timers, scaled: the collector's real waits (its 300 ms debounce, the 1 s
+// Save wait, the 5 s ack timeout) all run inside the sandbox, so they take ~SCALE real
+// time and the suite spends its wall on node startups, not sleeps. The bridge ack above
+// stays on node's bare 10 ms setTimeout at module scope — the racer the scaled 5 s must
+// still lose to — and AUTO keeps its virtual clock, which paces the auto scenarios.
+const SCALE = 1 / 20;
 const sandbox = {
   location: { pathname: `/channels/${IS_DM ? "@me" : GUILD}/${CHANNEL}`, origin: "https://discord.com" },
   // the bridge's side: it answers a handoff unless BRIDGE_ACK=0 (an extension reloaded since)
@@ -349,7 +355,9 @@ const sandbox = {
   console,
   getComputedStyle: (e) => ({ overflowY: AUTO && e === scrollEl ? "auto" : "visible" }),
   requestAnimationFrame: (f) => f(),
-  setTimeout: AUTO ? virtualSetTimeout : setTimeout, clearTimeout,
+  setTimeout: AUTO ? virtualSetTimeout
+    : (f, ms, ...rest) => setTimeout(f, Math.max(1, Math.round(ms * SCALE)), ...rest),
+  clearTimeout,
   // the page's changes are announced by hand (mutated()), as Discord's DOM would
   MutationObserver: class { constructor(cb) { observed.push(cb); } observe() {} disconnect() {} },
   Blob: class { constructor(parts) { this.parts = parts; } },
@@ -395,8 +403,10 @@ vm.runInNewContext(src, sandbox);
 lateLoaded = true;
 if (growing) growing.text = "2 blocked messages";
 const save = created.find((e) => e.tag === "button" && e.textContent === "Save");
-// a change to the page, then the collector's 300 ms debounce
-const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r) => setTimeout(r, 350)); };
+// a change to the page, then the collector's 300 ms debounce (scaled like every sandbox
+// timer, to 15 ms at 1/20): this wait is on node's real clock, so it scales the same way
+// and adds an absolute 20 ms slack — a bare 350*SCALE would leave only 2.5 ms of margin
+const mutated = () => { observed.forEach((cb) => cb([])); return new Promise((r) => setTimeout(r, 300 * SCALE + 20)); };
 (async () => {
   if (AUTO) {
     const auto = autoButton();
