@@ -7,8 +7,9 @@ import assert from "node:assert/strict";
 import { safeBody, quoteBody } from "../src/modules/reddit/md.js";
 import { loadCommonmark, rawHtml, reading, linesKept, prng, generate } from "./md-oracle.js";
 
-// each shard process builds its own; the loader installs single-flight (test/md-oracle.js),
-// so a cold cache shared by the four shard processes is safe too
+// each shard process builds its own; each loader installs into its own tmp prefix and
+// the first rename wins (test/md-oracle.js), so a cold cache shared by the four shard
+// processes is safe too
 export const cm = loadCommonmark();
 
 // a body on its own (a post) and quoted one to three deep (comments, as comments() writes
@@ -28,12 +29,15 @@ export const show = (f) => `input ${JSON.stringify(f.input)}\n  safeBody ${JSON.
     : !f.kept ? "a line was lost or changed"
       : `quoting ${f.moved[0]} deep changed what the reader gets: ${JSON.stringify(f.moved[1])}`);
 
-export const seedOf = (shard) => (Number(process.env.LEKET_FUZZ_SEED) || 0x1e4e7) + shard;
+// a stride, not +shard: master*4+shard keeps consecutive master seeds' shard streams
+// disjoint (master+1's shards are master*4+4+shard — no overlap), so sweeping seeds
+// doesn't repeat three quarters of the work
+export const seedOf = (shard) => (Number(process.env.LEKET_FUZZ_SEED) || 0x1e4e7) * 4 + shard;
 // a quarter each, rounded up: the four shards' n always sum to at least LEKET_FUZZ_N
 // (Math.ceil arithmetic), never less than a single-process run of the same N
 const nOf = () => Math.ceil((Number(process.env.LEKET_FUZZ_N) || 20000) / 4);
 
-// shard i of 4: its own prng from its own seed (master seed + shard), its own n cases
+// shard i of 4: its own prng from its own seed (master seed * 4 + shard), its own n cases
 export function runShard(shard) {
   const n = nOf();
   const seed = seedOf(shard);

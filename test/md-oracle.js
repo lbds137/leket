@@ -4,10 +4,10 @@
 // came from the input. The repo keeps no dependencies, so the parser is installed once
 // into a cache outside the tree, the way CI fetches the smoke's pinned Playwright.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export const COMMONMARK = "commonmark@0.31.2";
 // its dependencies, pinned too (it asks for ~ ranges), so a later release of one can't
@@ -38,12 +38,38 @@ function unmet(dir) {
 }
 
 export function loadCommonmark() {
-  const dir = process.env.LEKET_ORACLE_CACHE || join(homedir(), ".cache", "leket-oracle", COMMONMARK);
+  // resolve() also normalizes a trailing slash on LEKET_ORACLE_CACHE once, so a tmp
+  // sibling can't land inside dir (a rename onto its own ancestor's path fails)
+  const dir = resolve(process.env.LEKET_ORACLE_CACHE || join(homedir(), ".cache", "leket-oracle", COMMONMARK));
   if (unmet(dir).length) {
     // npm is not same-prefix safe: with the fuzz shards up to five test processes reach
     // this install on a cold cache at once, and two npm's in one prefix corrupt it. Each
     // loader builds its own tmp prefix and the first rename wins; a rename within a
-    // parent directory is atomic, so the cache is never seen half-written.
+    // parent directory is atomic, so the cache is never seen half-written. A dir that
+    // exists but doesn't meet the pins (a DEPS pin bump — the cache path is keyed on
+    // COMMONMARK only — a half-written cache, a hand-filled LEKET_ORACLE_CACHE) is
+    // stale, not a winner's cache: it is moved aside and the loader's rename retried.
+    // Two loaders can race that repair: the first's aside-rename wins and its rename
+    // lands; the second's aside-rename fails ENOENT and its retry hits ENOTEMPTY
+    // against the winner's cache — the unmet re-check inside takes the benign path.
+    const parent = dirname(dir);
+    // a loader killed mid-install leaves its tmp prefix behind forever (its finally
+    // never runs): sweep any older than an hour — the floor keeps a concurrently-running
+    // loader's live tmp safe, since its npm install can outlast it
+    try {
+      for (const entry of readdirSync(parent)) {
+        if (!entry.startsWith(`${basename(dir)}.tmp-`)) continue;
+        try {
+          const at = join(parent, entry);
+          if (Date.now() - statSync(at).mtimeMs > 60 * 60 * 1000) rmSync(at, { recursive: true, force: true });
+        } catch { /* a racing loader's finally removed it mid-sweep */ }
+      }
+    } catch (e) {
+      if (e.code !== "ENOENT") { // a parent yet to be created is mkdirSync's job below
+        throw new Error(`the CommonMark oracle needs ${COMMONMARK} but its cache parent ${parent} can't be `
+          + `read (${e.message}); fix it, or set LEKET_ORACLE_CACHE to a writable directory`);
+      }
+    }
     const tmp = `${dir}.tmp-${process.pid}-${Date.now()}`;
     mkdirSync(tmp, { recursive: true });
     try {
@@ -56,7 +82,31 @@ export function loadCommonmark() {
       }
       try {
         renameSync(tmp, dir);
-      } catch { /* another loader's rename landed first; the pins are theirs */ }
+      } catch {
+        // a rename onto a non-empty dir fails: either another loader's fresh cache
+        // landed first (its pins are theirs, nothing to repair) or the dir is stale
+        if (unmet(dir).length) {
+          const stale = `${dir}.stale-${process.pid}-${Date.now()}`;
+          let aside = false;
+          try {
+            renameSync(dir, stale);
+            aside = true;
+          } catch { /* a racing loader moved the stale dir aside first */ }
+          try {
+            renameSync(tmp, dir);
+          } catch (e2) {
+            const still = unmet(dir);
+            if (still.length) {
+              throw new Error(`${dir} doesn't resolve ${still.join(", ")} and replacing it failed (${e2.message}); `
+                + `delete ${dir} by hand and rerun — Run: rm -rf "${dir}" — or set LEKET_ORACLE_CACHE to a `
+                + `directory that has ${COMMONMARK}`);
+            }
+            // else a racing loader's cache landed between the two renames; benign
+          } finally {
+            if (aside) rmSync(stale, { recursive: true, force: true });
+          }
+        }
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
