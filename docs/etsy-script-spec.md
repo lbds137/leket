@@ -1,6 +1,6 @@
 # Etsy script spec
 
-Received from Jackalope 2026-11-04 (jackalope-pyra HEAD bbaaedb,
+Received from Jackalope 2026-11-04 (its repo HEAD bbaaedb,
 `scripts/collect/etsy_conversations_console.js`, 213 lines), with its personal-data
 lines flagged out. This file is the port spec for `src/modules/etsy/messages.js`;
 the scripts are the spec — tuning comes later, on evidence. Any change the Etsy
