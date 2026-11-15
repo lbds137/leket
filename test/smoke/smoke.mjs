@@ -133,6 +133,76 @@ const ETSY_ID = "424242";
 const ETSY_CONVO = `https://www.etsy.com/messages/${ETSY_ID}`;
 const ETSY_GONE = "999999";
 const etsyPage = (offset, id = ETSY_ID) => `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list?offset=${offset}&fetch_older=true&load_shop_convos=false`;
+const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
+const messengerCollectorPage = `<!doctype html><html><head><title>(2) Ada Example | Messenger</title></head><body>`
+  + `<div role="main"><div id="scroller" style="height:200px;overflow-y:auto"></div></div>`
+  + `<script>(() => {
+    const scroller = document.getElementById("scroller");
+    const canvas = document.createElement("canvas");
+    canvas.width = 160;
+    canvas.height = 160;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#336699";
+    ctx.fillRect(0, 0, 160, 160);
+    const jpegUrl = canvas.toDataURL("image/jpeg");
+
+    const mp4Bytes = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32, 1, 2, 3, 4]);
+    const videoUrl = URL.createObjectURL(new Blob([mp4Bytes], { type: "video/mp4" }));
+
+    const hdr = document.createElement("img");
+    hdr.width = 60;
+    hdr.height = 60;
+    hdr.style.cssText = "width:60px;height:60px;display:block";
+    scroller.appendChild(hdr);
+
+    const baseMs = Date.UTC(2026, 10, 15, 10, 0, 0);
+    const msPair = (ms) => [Math.floor(ms / 2 ** 32), ms | 0];
+    const makeFiber = (message, outgoing, name) => {
+      const nodes = [];
+      for (let d = 0; d <= 60; d++) {
+        let memoizedProps = {};
+        if (d === 10) memoizedProps = { message: { messageId: "decoy-low", timestampMs: [0, 1000], senderId: [0, 999], text: "decoy", displayedContentTypes: [0, 1] } };
+        else if (d === 24) memoizedProps = { message };
+        else if (d === 30) memoizedProps = { message: { messageId: "decoy-high", timestampMs: [0, 2000], senderId: [0, 998], text: "decoy", displayedContentTypes: [0, 1] } };
+        else if (d === 40) memoizedProps = { outgoing };
+        else if (d === 56) memoizedProps = { value: { contact: { name } } };
+        nodes.push({ memoizedProps, return: null });
+      }
+      for (let d = 0; d < nodes.length - 1; d++) nodes[d].return = nodes[d + 1];
+      return nodes[0];
+    };
+
+    for (let i = 1; i <= 12; i++) {
+      const id = "mc-" + String(i).padStart(2, "0");
+      const isAda = i % 2 === 1;
+      const isMedia = i === 3 || i === 6;
+      const row = document.createElement("div");
+      row.dataset.messageId = id;
+      row.dataset.scope = "messages_table";
+      row.style.height = "40px";
+      row.__reactFiber$x = makeFiber({
+        messageId: id,
+        timestampMs: msPair(baseMs + i * 60000),
+        senderId: [0, isAda ? 101 : 102],
+        text: "synthetic row " + i,
+        isUnsent: false,
+        editCount: 0,
+        displayedContentTypes: [0, isMedia ? 3 : 1],
+      }, isAda, isAda ? "Ada Example" : "Bo Example");
+      if (i === 3) {
+        const img = document.createElement("img");
+        img.width = 160;
+        img.height = 160;
+        img.src = jpegUrl;
+        row.appendChild(img);
+      } else if (i === 6) {
+        const v = document.createElement("video");
+        v.src = videoUrl;
+        row.appendChild(v);
+      }
+      scroller.appendChild(row);
+    }
+  })()</script></body></html>`;
 const WEB = new Map([
   [REDDIT_POST, { type: "text/html", body: html("a reddit post") }],
   [REDDIT_JSON, { type: "application/json", body: redditBody }],
@@ -175,6 +245,7 @@ const WEB = new Map([
   // a second conversation whose first page fails: the failure list's one line
   [etsyPage(0, ETSY_GONE), { type: "application/json", body: "{}", status: 500 }],
   ["https://www.messenger.com/e2ee/t/123", { type: "text/html", body: html("a messenger thread") }],
+  [MESSENGER_COLLECTOR_URL, { type: "text/html", body: messengerCollectorPage }],
 ]);
 
 // ---- a small CDP client over Node's own WebSocket ----
@@ -982,6 +1053,82 @@ async function scenarios(cdp, downloads) {
         JSON.stringify(info.jpg) === JSON.stringify(jpegBytes),
         `messenger: messenger-media/${mediaFile} has the exact JPEG bytes (${JSON.stringify(info.jpg)})`,
       );
+    }
+  });
+
+  // ---- messenger-collector: popup -> real collector sweeps scroller, harvests data: JPEG
+  // and blob: MP4 video, and Save posts through the bridge to build the zip ----
+  await scenario("messenger-collector", async () => {
+    console.log("smoke: messenger-collector save");
+    const thread = await open(MESSENGER_COLLECTOR_URL);
+    await waitFor(
+      () => evalIn(thread.sessionId, `(() => { const img = document.querySelector('div[data-message-id="mc-03"] img'); return Boolean(img && img.complete && img.naturalWidth >= 160); })()`),
+      "the synthetic data:image/jpeg on mc-03 to finish decoding",
+    );
+    const launcher = await clickPopup("Save this conversation");
+    const launched = await waitFor(async () => {
+      if (!(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.targetId === launcher.targetId)) return "closed";
+      const warn = await evalIn(launcher.sessionId, `document.querySelector("#card p.warn")?.textContent || ""`).catch(() => "");
+      return warn && `warned: ${warn}`;
+    }, "the popup to close (launched) or warn", 30000).catch(soft((e) => e.message));
+    check(launched === "closed", `messenger-collector: the popup launches the save (${launched})`);
+
+    const mounted = await waitFor(
+      () => evalIn(thread.sessionId, `Boolean(document.getElementById("leket-messenger-panel") && document.documentElement.dataset.leketMessengerBridge === "1")`),
+      "the collector panel and bridge mark on the Messenger tab",
+    ).catch(soft(() => false));
+    check(mounted === true, "messenger-collector: #leket-messenger-panel and bridge mark mounted");
+
+    await evalIn(thread.sessionId, `[...document.querySelectorAll("#leket-messenger-panel button")].find((b) => b.textContent === "Start").click(), true`);
+    const swept = await waitFor(
+      () => evalIn(thread.sessionId, `(() => { const divs = [...document.querySelectorAll("#leket-messenger-panel > div")]; const s = divs.at(-1)?.textContent || ""; return s.startsWith("Done: 12 messages from the start of the conversation. Press Save.") && s; })()`),
+      "the collector sweep to finish all 12 messages",
+      30000,
+    ).catch(soft((e) => e.message));
+    check(typeof swept === "string" && swept.startsWith("Done: 12 messages"), `messenger-collector: sweep finished (${swept})`);
+
+    await evalIn(thread.sessionId, `[...document.querySelectorAll("#leket-messenger-panel button")].find((b) => b.textContent === "Save").click(), true`);
+
+    const tab = await target((s) => s.type === "page" && s.url.includes("/src/modules/messenger/export.html"), "the Messenger export tab");
+    const end = await waitFor(
+      () => evalIn(tab.sessionId, `(() => { const s = document.getElementById("status"); return s && s.textContent.startsWith("Saved ") && s.textContent; })()`),
+      "the Messenger export tab to finish saving",
+      30000,
+    ).catch(soft((e) => e.message));
+    check(
+      typeof end === "string" && end.includes("12 messages") && end.includes("1 photo(s) and 1 video(s) saved"),
+      `messenger-collector: export tab saved 12 messages, 1 photo, and 1 video (${end})`,
+    );
+
+    const zipName = "messenger-Ada_Example-456.zip";
+    const done = await waitFor(
+      () => extEval(`chrome.downloads.search({ filenameRegex: "messenger-Ada_Example-456\\\\.zip$", state: "complete" }).then((d) => d.length)`).then((n) => n >= 1 && n),
+      "the messenger-Ada_Example-456.zip download to complete",
+      15000,
+    ).catch(soft((e) => e.message));
+    check(done === 1, `messenger-collector: Chrome finished the zip download (${done})`);
+
+    const zips = landed().filter((f) => f === zipName);
+    if (check(zips.length === 1, `messenger-collector: ${zipName} on disk (found: ${zips.join(", ") || "none"})`)) {
+      const photoEntry = "messenger-media/2026-11-15_mc-03_1.jpg";
+      const videoEntry = "messenger-media/2026-11-15_mc-06_1.mp4";
+      const info = JSON.parse(execFileSync("python3", ["-I", "-c",
+        "import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1]) as z:\n names = z.namelist()\n print(json.dumps({'names': names, 'json': z.read('messenger-Ada_Example-456.json').decode('utf-8'), 'md': z.read('messenger-Ada_Example-456.md').decode('utf-8'), 'jpgHead': list(z.read(sys.argv[2])[:3]) if sys.argv[2] in names else [], 'mp4Len': len(z.read(sys.argv[3])) if sys.argv[3] in names else 0}))",
+        join(downloads, zipName), photoEntry, videoEntry], { encoding: "utf8" }));
+      check(
+        JSON.stringify([...info.names].sort()) === JSON.stringify(["messenger-Ada_Example-456.json", "messenger-Ada_Example-456.md", photoEntry, videoEntry]),
+        `messenger-collector: the zip holds the json, md, photo, and video under messenger-media/ (names: ${info.names.join(", ")})`,
+      );
+      const saved = JSON.parse(info.json);
+      check(
+        saved.count === 12 && Array.isArray(saved.media_not_captured) && saved.media_not_captured.length === 0,
+        `messenger-collector: json count is 12 and media_not_captured is empty (${JSON.stringify(saved.media_not_captured)})`,
+      );
+      check(
+        JSON.stringify(info.jpgHead) === JSON.stringify([0xff, 0xd8, 0xff]),
+        `messenger-collector: the photo's first bytes are FF D8 FF (${JSON.stringify(info.jpgHead)})`,
+      );
+      check(info.mp4Len === 16, `messenger-collector: the video holds the 16 synthetic MP4 bytes (${info.mp4Len})`);
     }
   });
 

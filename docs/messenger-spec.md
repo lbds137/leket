@@ -224,58 +224,120 @@ the photo link, the placeholders, and line-start escaping.
 
 ### C. Collector: `src/modules/messenger/collector.js` (MAIN world, classic script)
 
-- Gate: the same path test as the registry. On no match, return with a panel message (no
-  `alert`). A second launch while the panel is open does nothing.
-- Panel: a fixed div `#leket-messenger-panel`, shaped like Discord's, with the count, the oldest date, the photos
-  captured, **Start**, **Stop** and **Save**, and a status line.
-- PIN or empty: when no `div[data-message-id]` mounts within 10 s of Start, the status
-  says "No messages are showing. If Messenger is asking for your PIN to restore chats,
+- Timings (constants at the top of the collector): `STEP_MS = 900`, `STEP_FRACTION = 0.85`,
+  `ROWS_WAIT_MS = 10000`, `STILL_STEPS = 3`, `STALL_STEPS = 10`, `ACK_WAIT_MS = 10000`.
+  Everything waits through `setTimeout`, so the fixture's virtual timers run a sweep in
+  milliseconds.
+- Gate: the same two path regexes as the stub. A second launch while the panel is mounted
+  does nothing. Off a thread path, the panel mounts with only a status line saying
+  "Open a one-to-one conversation on messenger.com or facebook.com/messages, then click
+  Leket's button again." and a **Close** button (no `alert`).
+- Panel: a fixed div `#leket-messenger-panel` with the stub's style, a bold heading
+  `Leket: <name>`, a counts line (messages, oldest date `YYYY-MM-DD` or `-`, photos N,
+  videos N, total MB to one decimal), a status line, and buttons **Start**, **Stop**,
+  **Save**, **Close** (Close stops any sweep and removes the panel, as Discord's does).
+- Controls and status prefixes:
+  - **Start** while sweeping does nothing.
+  - **Stop** ends the current leg at the next step; the status says
+    `Stopped: press Save to keep what was collected, or Start to go on.`
+  - **Save** during a sweep stops it first, waits for the in-flight harvest, then saves.
+    **Save** with nothing collected says `Nothing collected yet: press Start.` and posts
+    nothing.
+  - While sweeping: `Going up: N messages…` / `Going down: N messages…`
+  - Done: `Done: N messages from the start of the conversation. Press Save.`
+  - Stalled: `STALLED, not at the start: N messages collected. Press Save to keep them, or Start to try again.`
+  - No scroller (a conversation that fits on one screen, so no element passes the scroller
+    rule): Start harvests the mounted rows once, then ends as Done if the header img is
+    mounted, else as STALLED.
+- PIN or empty: when no `div[data-message-id]` mounts within 10 s (`ROWS_WAIT_MS`) of Start,
+  the status says "No messages are showing. If Messenger is asking for your PIN to restore chats,
   enter it there, then press Start again." The collector never touches any dialog.
-- Sweep: Start jumps to the bottom (`scrollTop = scrollHeight`), harvests, then steps up
-  by 85% of `clientHeight` every 900 ms, harvesting after each step. It is at the top when
-  `scrollTop === 0`, the header img (≥ 48 px wide, before the first row in document
-  order) is mounted, and the id count hasn't grown over 3 steps. With `scrollTop === 0`
-  but no header after 10 more steps, the status says "STALLED, not at the start" and keeps
-  what it has. Then it steps down to the bottom, harvesting again, which catches rows
-  whose photos hadn't loaded on the way up. Stop ends either leg.
-- Harvest, per mounted row not yet complete:
+- Sweep: Start jumps to the bottom (`scrollTop = scrollHeight`), sleeps 900 ms, and
+  harvests, then steps up by 85% of `clientHeight` (each step: scroll → sleep 900 ms →
+  harvest). It is at the top when `scrollTop <= 2`, the header img (≥ 48 px wide, before the
+  first row in document order) is mounted, and the id count hasn't grown over 3 steps. With
+  `scrollTop <= 2` but no header after 10 more steps (or when `scrollTop` has not changed
+  for 3 steps without reaching the header), the status says "STALLED, not at the start" and
+  keeps what it has. Then it steps down to the bottom (`scrollHeight - clientHeight -
+  scrollTop <= 2`, or 3 steps with unchanged `scrollTop`), harvesting again, which catches
+  rows whose photos hadn't loaded on the way up. Before declaring the top or the bottom, it
+  runs one extra sleep and harvest. Stop ends either leg; an unexpected throw sets
+  `ERROR: <message>. Press Save to keep what was collected.` and resets `sweeping`.
+- Harvest, per mounted row not yet complete (wrapped in try/catch per row so a throwing row
+  is skipped and counted as `N rows could not be read` in the Done/STALLED/Stopped status; a
+  row is complete once its message has `time`,
+  `sender_id`, `outgoing` and a sender name, and when `kinds` has `media`, at least one item
+  was captured and every seen item is captured; a complete row is not read again):
   1. Find `message` by the id match. Find `contact.name` and `outgoing` higher up the chain
      (search to depth 80, and stop at the first hit of each).
-  2. Store `normalize(...)` in a Map keyed by `messageId`. A later read of the same id
-     replaces fields that were null.
-  3. When `kinds` includes `media`: for each `<img>` in the row with natural size ≥ 150
-     px on both sides, whose `src` starts with `data:` or `blob:`, and that sits outside any
-     `a[href^="http"]`: once it is complete, read its bytes (`data:` by decoding, `blob:` by
-     `await fetch`) **before the next scroll step**. Keep it as a Blob named by
-     `mediaName`. A `<video>` in a media row records `video` in the message's `kinds`;
-     when its `currentSrc || src` starts with `blob:`, read it with `await fetch` the same
-     way (a fetch that throws, as a MediaSource blob URL would, is recorded as not captured
-     with the error as its reason) and store `duration_s` from `video.duration` when it is
-     finite. Count the photos and videos captured on the panel, with their total MB. Each
-     photo or video seen but not captured by the end of the sweep (a failed fetch, a `src`
-     of another scheme, an img that never completed) gets one `media_not_captured` entry
-     `{ message_id, kind, reason }`, so a row with some items saved still shows the rest
-     as missing. A media row with nothing seen at all gets one entry of kind `photo` with
-     reason `no media element`.
+  2. Store `normalize(...)` in a Map keyed by `messageId`. Merging a re-read row: fields
+     that are `null` take the new value; `kinds` is the union; `link` keeps the first
+     non-null. `senders` maps `sender_id → name` from the first contact name found for that
+     sender, and `sender` on each message comes from that map at Save time.
+  3. When `kinds` includes `media`: what counts as seen media outside any `a[href^="http"]`
+     is:
+     - a complete `img` (`complete && naturalWidth > 0`) with natural size ≥ 150 on both
+       sides;
+     - an incomplete `img` whose `getBoundingClientRect()` is ≥ 100 on both sides (an emoji
+       or read receipt is far smaller, so it is never counted while loading; **this
+       100×100 threshold is the driver's inference, not a probe fact**);
+     - every `video` (a captured or seen-but-uncaptured video adds `"video"` to the
+       message's `kinds` once).
+     Media identity within a message is keyed by its source: a `blob:` URL as-is; a `data:`
+     URL by `length + ":" + first 64 chars + last 64 chars` (never hold a second copy of a
+     long `data:` string as a key). A key captured once is never read again. Whether
+     Messenger keeps a `blob:` URL across a row's remount is not observed, so after reading
+     the bytes, an item whose kind, size, and first and last 64 bytes equal an item already
+     captured in the same message is also dropped. `data:` URLs are decoded with `atob`
+     (never `fetch`, which the page's CSP may block) with MIME from the URL header; `blob:`
+     URLs are read with `await (await fetch(src)).blob()`, hashing and sniffing with
+     `blob.slice(0, 64)`, `blob.slice(Math.max(0, size - 64))` and `blob.size` (never
+     calling `arrayBuffer()` on the whole blob, and keeping the Blob itself for posting),
+     sniffing the first 12 bytes when `blob.type` is empty (JPEG `FF D8 FF`, PNG `89 50 4E 47`, GIF `47 49 46 38`, WEBP
+     `RIFF....WEBP`, MP4/MOV `....ftyp`, WEBM `1A 45 DF A3`, else empty → `.bin`). All reads
+     in a harvest finish before the next scroll step. Each captured item is a `{ file, kind,
+     mime, width, height, bytes, duration_s }` entry on `message.media` (`n` in `mediaName`
+     is the 1-based capture order within the message; case-insensitive collisions across the
+     save insert `-2`, `-3`, … before the extension while staying ≤ 120 chars and passing
+     `validMediaName`). Seen media not captured by the end of the sweep gets one
+     `media_not_captured` entry `{ message_id, kind, reason }`: non-`data:`/`blob:` photo
+     `not a data: or blob: image (<scheme>)`, incomplete photo `the photo never finished
+     loading`, sourceless video `no video source`, failed fetch `fetch failed: <message>`,
+     and a media row where nothing was seen on any visit gets one `photo` entry with reason
+     `no media element`. Every not-captured branch skips when the slot or key is already
+     captured, and an item captured on a later visit removes its earlier not-captured state.
   4. Link-preview rows record the first `a[href^="http"]` href as `link`. Their
      thumbnails are not saved.
-- More than 2 distinct `sender_id`s: the status warns "This looks like a group
-  conversation; groups aren't checked yet". The save is still allowed.
-- Save: build `{ host, thread_id, url, title, saved_at, time_zone, count, senders:
-  {id: name}, media_not_captured: [...], messages: [...] (sorted by time, then id) }`.
-  Name the file `messenger-<name>-<thread>.json` (name from `document.title` before
-  ` | Messenger`, cleaned as Discord's is, ≤ 50 chars). When the bridge mark
-  `data-leket-messenger-bridge="1"` is present, post it with its files. Otherwise download
-  the JSON alone, through an anchor.
+- More than 2 distinct non-null `sender_id`s: `group_warning: true` and the status shows
+  "This looks like a group conversation; groups aren't checked yet." The save is allowed.
+- Save: build `{ leket: "messenger", version: 1, host, thread_id, url, title, saved_at,
+  time_zone, count, senders: {id: name}, group_warning, media_not_captured: [...],
+  messages: [...] (sorted by time, nulls last, then id) }`. Name the file
+  `messenger-<NAME>-<thread_id>.json` (`NAME` = `document.title` with leading `(\d+) `
+  unread count removed, cut before ` | Messenger`, trimmed, `"messenger"` if empty, cleaned
+  with `[^\p{L}\p{N}._-]+` → `_`, ≤ 50 code points; passes `validSaveName` unchanged).
+  Close sets a `closed` flag checked at the top of each row in harvest and after each await
+  in Save (stopping before any handoff or download).
+  With the bridge mark `data-leket-messenger-bridge="1"`, post `{ type:
+  "leket:messenger-export", id, file, json, files }` to `location.origin` and wait up to
+  `ACK_WAIT_MS` for the ack:
+  - `ok: true` → status `Handed to the export tab (it opens next to this one): N messages, P photos, V videos.`
+  - `ok: false, reason: "too-soon"` → status `Saved less than 10 seconds ago: wait a moment and press Save again.` (nothing downloaded).
+  - any other `ok: false`, or no ack → fall back, status prefixed `The extension didn't answer (reload this tab and click Leket's button again for photos and videos)`.
+  - Without the mark → fall back: move every `media` entry into `media_not_captured`
+    (reason `saved without the extension, so media files were not kept`), empty each
+    `media` list, and download the JSON alone through an anchor (`URL.createObjectURL`,
+    revoked after click).
 - Tests: `test/fixtures/messenger_page.cjs`, a vm fake page shaped like
-  `fake_page.cjs`: synthetic rows with fiber chains (the message at depth 24, the contact
-  at depth 56), a virtualized scroller that mounts 20 rows around `scrollTop`, a header
-  img at the top, one photo row whose `data:` img completes only on the second visit, a
-  video row, a link row and an unsent row. `test/messenger-collector.test.js` asserts the
-  count, the dedupe, the names, the photo captured on the way down, the video captured
-  (and a second video whose fetch throws, recorded as not captured), the link placeholder, the STALLED path when the header never mounts, the PIN status with no
-  rows, and the group warning. The smoke scenario then posts through the real collector's
-  Save (not a hand-built post), so its post shape is the one checked end to end.
+  `fake_page.cjs`: synthetic rows with fiber chains (the message at depth 24, `outgoing` at
+  ~40, `contact.name` at 56, decoy fibers above and below), a virtualized scroller that
+  mounts ~20 rows around `scrollTop`, a header img at the top, one photo row whose `data:`
+  img completes only on the second visit, a video row, a link row, an unsent row, filtered
+  small imgs, case-insensitive name collision, reminted video blob URL, short no-overflow
+  thread, off-thread path, Hebrew/emoji titles, stalled, PIN, group, and handoff paths
+  (`test/messenger-collector.test.js`). The `"messenger-collector"` smoke scenario on
+  `https://www.messenger.com/e2ee/t/456` runs the real collector's Start and Save end to
+  end.
 
 ### D. Docs, version, release
 
