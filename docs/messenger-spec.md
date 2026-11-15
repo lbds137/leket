@@ -2,7 +2,7 @@
 
 Approved 2026-11-15 by the owner. Scope: save one Messenger one-to-one thread, opened on
 www.facebook.com/messages or www.messenger.com, as a zip holding its messages (JSON and Markdown)
-and its photos. Every platform fact below comes from read-only probes of live threads on
+and its photos and videos (owner 11-15: videos too). Every platform fact below comes from read-only probes of live threads on
 2026-11-15 (Hebrew locale, Chrome). Nothing from those threads is in this repo, and nothing
 may be: fixtures are synthetic.
 
@@ -60,6 +60,9 @@ Each line says what was observed, and where, or marks the claim as inferred.
 - **Path is not encryption** (observed): an e2ee thread once showed as `/t/<id>/` in the
   address bar, so the path form says nothing about encryption. Use `isSecureMessage` if
   that is ever needed.
+- **Video bytes**: NOT read. The probe saw `<video>` elements with `blob:` srcs and finite
+  durations (13–37 s) but did not fetch one. If the blob URL is a MediaSource, `fetch` fails,
+  and the collector must report that rather than hide it. Check during unit C's live check.
 - **messageId character set**: NOT read (the probe tool masked the values). Treat it as an
   arbitrary string everywhere it reaches a file name.
 
@@ -70,16 +73,16 @@ Units A, B and C all use this one shape. The export JSON:
 ```
 { leket: "messenger", version: 1, host, thread_id, url, title, saved_at (ISO), time_zone,
   count, senders: { "<sender_id>": "<name>" }, group_warning: bool,
-  photos_not_captured: [{ message_id, reason }],
+  media_not_captured: [{ message_id, reason }],
   messages: [Message] }            // sorted by time, then id
 Message = { id, time (ISO|null), sender_id (string|null), sender (string|null),
   outgoing (bool|null), text (string|null), unsent (bool), edited (bool),
   reply_to: { text } | null, kinds: [string],   // per contentKinds, plus "video" when seen
-  link: string|null, photos: [Photo] }
-Photo = { file, mime, width, height, bytes }      // file = name inside messenger-photos/
+  link: string|null, media: [Media] }
+Media = { file, kind: "photo"|"video", mime, width, height, bytes, duration_s }      // file = name inside messenger-media/
 ```
 
-`normalize()` returns a Message with `link: null` and `photos: []`. The collector fills
+`normalize()` returns a Message with `link: null` and `media: []`. The collector fills
 those two fields, and `renderMarkdown` reads them.
 
 ## Units
@@ -104,19 +107,20 @@ A classic script, with no `import` or `export`. It is injected into the page bef
   host, thread id, message count, first and last date, and save time. After that, each
   day gets a `## YYYY-MM-DD` heading (in the page's time zone, passed in), and each message
   is `**<sender>** HH:MM` followed by its text, with `> ` for a reply's quoted text.
-  Each saved photo is `![photo](messenger-photos/<file>)`. Content that isn't saved gets a
-  bracketed note: `[video, not saved]`, `[sticker]`, `[link preview: <href>]` and
+  Each saved photo is `![photo](messenger-media/<file>)` and each saved video
+  `[video, <duration> s](messenger-media/<file>)`. Content that isn't saved gets a
+  bracketed note: `[photo, not captured]`, `[video, not captured]`, `[sticker]`, `[link preview: <href>]` and
   `[unsent]`. Escape Markdown only where it breaks structure, meaning a line starting with
   `#`, `>` or `-`.
 - `safePart(s, max)` → `s` with every character outside `[\p{L}\p{N}._-]` replaced by `_`,
   runs of `_` collapsed, leading dots stripped, and cut to `max` characters (default 40);
-  `"x"` if that leaves it empty. `photoName(day, messageId, n, mime)` →
-  `<day>_<safePart(messageId)>_<n>.<jpg|png|webp|gif|bin>`. Uniqueness comes from the
+  `"x"` if that leaves it empty. `mediaName(day, messageId, n, mime)` →
+  `<day>_<safePart(messageId)>_<n>.<jpg|png|webp|gif|mp4|webm|mov|bin>` (by MIME type). Uniqueness comes from the
   collector, not the name: it appends `-2`, `-3` and so on when a name is already taken.
 
 Tests (`test/messenger-read.test.js`, synthetic only): `i64` on `[0, 1]`, on a negative low
 word (`[1, -1]` → 2^33 − 1), and on a real-shaped ms pair built from `Date.UTC`; `toIso`
-round trip; `contentKinds` for 1, 2, 1024, 16384 and 1|4096; `safePart`/`photoName` on an id
+round trip; `contentKinds` for 1, 2, 1024, 16384 and 1|4096; `safePart`/`mediaName` on an id
 holding `/`, `$`, `=`, `..` and a leading dot; `normalize` on an e2ee-shaped
 and a plain-shaped object; `renderMarkdown` day split across midnight in a non-UTC zone,
 the photo link, the placeholders, and line-start escaping.
@@ -126,7 +130,7 @@ the photo link, the placeholders, and line-start escaping.
 - `src/modules/registry.js`: a `messenger` module. `matches` parses the URL. The host must be
   `www.messenger.com` with a pathname matching `^/(e2ee/)?t/\d+/?$`, or `www.facebook.com`
   with `^/messages/(e2ee/)?t/\d+/?$`. Export the pathname pattern, as `CODE_PATHNAME` is.
-  Title "Messenger"; blurb "Save this conversation, with its photos, as one zip.";
+  Title "Messenger"; blurb "Save this conversation, with its photos and videos, as one zip.";
   command `{ id: "save", label: "Save this conversation" }`.
   `test/registry.test.js`: matches all six URL forms, and refuses `/t/` with no id,
   `messenger.com` without www, `m.facebook.com`, `facebook.com/messages/` bare, and
@@ -153,7 +157,7 @@ the photo link, the placeholders, and line-start escaping.
   `leket:chunk` as Discord's does, and adds `leket:file` `{ index, offset }`, which returns
   `{ name, size, data }`: `data` is base64 of up to 6 MiB from `offset`, read with
   `blob.slice().arrayBuffer()`. It announces with `{ type: "leket:ready", key }`.
-  It keeps only the latest save (`KEEP = 1`): photos are large.
+  It keeps only the latest save (`KEEP = 1`): media is large.
 - `src/background.js` `leket:ready` handler: choose the export page from
   `match(sender.tab.url)?.id`. `discord` opens `discord/export.html`, `messenger` opens
   `messenger/export.html`, and anything else gets `{ ok: false }`. The message shape stays
@@ -163,20 +167,21 @@ the photo link, the placeholders, and line-start escaping.
   with a plain `<script>` before the `export.js` module, and `export.js` uses
   `globalThis.LeketMessengerRead`. Re-validate the posted `file` against
   `^messenger-[\p{L}\p{N}._-]{1,60}-\d{1,25}\.json$` (else `messenger-export.json`). Check
-  each photo name against `^[\p{L}\p{N}._-]{1,120}$`, with no leading dot; a file that
+  each media file name against `^[\p{L}\p{N}._-]{1,120}$`, with no leading dot; a file that
   fails is skipped and listed as not captured. Read the JSON through `leket:chunk`,
   then each file through `leket:file` until `offset >= size`, decoding base64 into
   Uint8Arrays. Write a `ZipWriter` (default part limit) holding
   `messenger-<name>-<thread>.json`, `messenger-<name>-<thread>.md` (from `renderMarkdown`)
-  and `messenger-photos/<file>`. Download it with `createPartDownload` exactly as the
+  and `messenger-media/<file>`. Download it with `createPartDownload` exactly as the
   Discord export tab does, with the same retry-by-click link. On release, send
-  `leket:release`. The page states the counts: messages, photos saved, and photos seen but
-  not captured.
+  `leket:release`. The page states the counts: messages, photos and videos saved, and
+  media seen but not captured. Media is added to the zip a file at a time, as each one is
+  read, so no more than one file's bytes are held decoded at once.
 - Smoke (`test/smoke/smoke.mjs`), scenario "messenger": serve a synthetic page at
   `https://www.messenger.com/e2ee/t/123`, click the popup's button, and assert that the
   popup closed and the collector's panel (`#leket-messenger-panel`) mounted, which proves
   the MAIN-world files injected. Wait for the bridge mark, then post a synthetic `leket:messenger-export` with two messages and one small JPEG
-  Blob, then assert one zip on disk holding the json, the md and `messenger-photos/…jpg`
+  Blob, then assert one zip on disk holding the json, the md and `messenger-media/…jpg`
   with the right bytes. Prove it red by routing `messenger` to the Discord export page in
   the `leket:ready` handler, and record that red run in the PR body.
 
@@ -204,17 +209,20 @@ the photo link, the placeholders, and line-start escaping.
   3. When `kinds` includes `media`: for each `<img>` in the row with natural size ≥ 150
      px on both sides, whose `src` starts with `data:` or `blob:`, and that sits outside any
      `a[href^="http"]`: once it is complete, read its bytes (`data:` by decoding, `blob:` by
-     `await fetch`) **before the next scroll step**. Keep it as a Blob named
-     `<YYYY-MM-DD>_<messageId tail 12>_<n>.jpg`, with the extension taken from the MIME
-     type. A `<video>` in a media row records `video` in the message's `kinds`, and
-     nothing is read. A media row that ends the sweep with no captured photo and no video,
-     whatever its `src` scheme, is counted in `photos_not_captured` with its message id.
+     `await fetch`) **before the next scroll step**. Keep it as a Blob named by
+     `mediaName`. A `<video>` in a media row records `video` in the message's `kinds`;
+     when its `currentSrc || src` starts with `blob:`, read it with `await fetch` the same
+     way (a fetch that throws, as a MediaSource blob URL would, is recorded as not captured
+     with the error as its reason) and store `duration_s` from `video.duration` when it is
+     finite. Count the photos and videos captured on the panel, with their total MB. A
+     media row that ends the sweep with nothing captured, whatever its `src` scheme, goes in
+     `media_not_captured` with its message id.
   4. Link-preview rows record the first `a[href^="http"]` href as `link`. Their
      thumbnails are not saved.
 - More than 2 distinct `sender_id`s: the status warns "This looks like a group
   conversation; groups aren't checked yet". The save is still allowed.
 - Save: build `{ host, thread_id, url, title, saved_at, time_zone, count, senders:
-  {id: name}, photos_not_captured: [...], messages: [...] (sorted by time, then id) }`.
+  {id: name}, media_not_captured: [...], messages: [...] (sorted by time, then id) }`.
   Name the file `messenger-<name>-<thread>.json` (name from `document.title` before
   ` | Messenger`, cleaned as Discord's is, ≤ 50 chars). When the bridge mark
   `data-leket-messenger-bridge="1"` is present, post it with its files. Otherwise download
@@ -224,8 +232,8 @@ the photo link, the placeholders, and line-start escaping.
   at depth 56), a virtualized scroller that mounts 20 rows around `scrollTop`, a header
   img at the top, one photo row whose `data:` img completes only on the second visit, a
   video row, a link row and an unsent row. `test/messenger-collector.test.js` asserts the
-  count, the dedupe, the names, the photo captured on the way down, the video and link
-  placeholders, the STALLED path when the header never mounts, the PIN status with no
+  count, the dedupe, the names, the photo captured on the way down, the video captured
+  (and a second video whose fetch throws, recorded as not captured), the link placeholder, the STALLED path when the header never mounts, the PIN status with no
   rows, and the group warning.
 
 ### D. Docs, version, release
@@ -237,5 +245,5 @@ on a thread she picks (filed as a Needs Lila item).
 
 ## Open, for later
 
-Videos (same in-page read, bigger zips; owner's call), stickers, voice clips, the unknown
+Stickers, voice clips, the unknown
 kinds `4`, `4096` and `2^29`, groups, and the English-locale panel wording.
