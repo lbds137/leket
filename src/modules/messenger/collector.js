@@ -9,6 +9,9 @@
   const STILL_STEPS = 3;
   const STALL_STEPS = 10;
   const ACK_WAIT_MS = 10000;
+  // after the bridge says it accepted the post, how long the worker may take to open the export tab
+  const ACK_FINAL_MS = 120000;
+  const LARGE_BYTES = 1024 * 1024 * 1024;
 
   if (document.getElementById("leket-messenger-panel")) return;
 
@@ -55,8 +58,16 @@
 
   const threadId = (location.pathname.match(/\/t\/(\d+)\/?$/) || [])[1] || "0";
 
+  // The panel belongs to the conversation it was opened on: Messenger is a single-page app,
+  // so the tab can move to another thread while this script stays.
+  const pathOf = () => String(location.pathname).replace(/\/+$/, "");
+  const launchPath = pathOf();
+  const launchTitle = document.title;
+  const MOVED_TEXT = "This tab moved to another conversation. Go back to the conversation this panel was opened on, or close this panel.";
+  const movedAway = () => pathOf() !== launchPath;
+
   const heading = document.createElement("div");
-  heading.textContent = `Leket: ${nameOf(document.title)}`;
+  heading.textContent = `Leket: ${nameOf(launchTitle)}`;
   heading.style.cssText = "font-weight:bold;margin-bottom:4px";
   panel.appendChild(heading);
 
@@ -107,10 +118,13 @@
     return oldest || "-";
   };
 
+  const LARGE_NOTE = " — large save: keep this tab and the export tab open until it finishes";
+
   const renderCounts = () => {
-    heading.textContent = `Leket: ${nameOf(document.title)}`;
+    heading.textContent = `Leket: ${nameOf(launchTitle)}`;
     const mb = (totalBytes / 1048576).toFixed(1);
-    countsLine.textContent = `${seen.size} messages, oldest ${oldestDay()}, photos ${totalPhotos}, videos ${totalVideos}, ${mb} MB`;
+    const large = totalBytes > LARGE_BYTES ? LARGE_NOTE : "";
+    countsLine.textContent = `${seen.size} messages, oldest ${oldestDay()}, photos ${totalPhotos}, videos ${totalVideos}, ${mb} MB${large}`;
   };
 
   const ROW_SEL = 'div[data-message-id][data-scope="messages_table"]';
@@ -268,11 +282,14 @@
     return null;
   };
 
+  const NEVER_LOADED = "the photo never finished loading";
+
   const isComplete = (entry) => {
     const m = entry.msg;
     if (m.time === null || m.sender_id === null || typeof m.outgoing !== "boolean" || m.sender === null) return false;
     // Guard (photo-late): a media row is complete only once at least one item was captured and every seen item is captured
-    if (m.kinds.includes("media") && (m.media.length === 0 || entry.notCaptured.size > 0)) return false;
+    // Guard (settled row): or once every seen item is accounted for (captured, or not capturable for a reason that a later visit cannot change)
+    if (m.kinds.includes("media") && !entry.settled) return false;
     return true;
   };
 
@@ -324,9 +341,22 @@
   let cancelSleep = null;
   let cancelHandOver = null;
 
+  // True once the tab has left the launch conversation: the sweep stops and nothing more is collected.
+  let moved = false;
+  const checkMoved = () => {
+    moved = movedAway();
+    if (!moved) return false;
+    stopRequested = true;
+    if (cancelSleep) cancelSleep();
+    setStatus(MOVED_TEXT, false);
+    return true;
+  };
+
   const harvestImpl = async () => {
+    if (checkMoved()) return;
     for (const row of getRows()) {
       if (closed) return;
+      if (checkMoved()) return;
       let rowKey = row;
       try {
         const rowId = (row.dataset && row.dataset.messageId)
@@ -354,6 +384,7 @@
             capturedSlots: new Set(),
             notCaptured: new Map(),
             everSawMedia: false,
+            settled: false,
             captureSeq: 0,
           };
           seen.set(norm.id, entry);
@@ -387,7 +418,7 @@
                 const key = src ? sourceKey(src) : null;
                 if (isSlotOrKeyCaptured(entry, slot, key)) continue;
                 const scheme = (src.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/) || [null, "none"])[1].toLowerCase();
-                setNotCaptured(entry, slot, key, "photo", `not a data: or blob: image (${scheme})`);
+                setNotCaptured(entry, slot, key, "photo", `not a data: or blob: source (${scheme})`);
                 continue;
               }
               const key = sourceKey(src);
@@ -397,7 +428,7 @@
               }
               try {
                 const { size, head, tail, blob, mime } = await readMediaSource(src);
-                if (closed) return;
+                if (closed || checkMoved()) return;
                 clearNotCaptured(entry, slot, key);
                 entry.capturedKeys.add(key);
                 const sig = byteSig("photo", size, head, tail);
@@ -419,7 +450,7 @@
                 totalBytes += size;
                 totalPhotos++;
               } catch (err) {
-                if (closed) return;
+                if (closed || checkMoved()) return;
                 if (isSlotOrKeyCaptured(entry, slot, key)) continue;
                 setNotCaptured(entry, slot, key, "photo", `fetch failed: ${(err && err.message) || String(err)}`);
               }
@@ -430,7 +461,7 @@
               const src = String(img.currentSrc || img.src || "");
               const key = src ? sourceKey(src) : null;
               if (isSlotOrKeyCaptured(entry, slot, key)) continue;
-              setNotCaptured(entry, slot, key, "photo", "the photo never finished loading");
+              setNotCaptured(entry, slot, key, "photo", NEVER_LOADED);
             }
           }
 
@@ -452,7 +483,7 @@
               const key = sourceKey(src);
               if (isSlotOrKeyCaptured(entry, slot, key)) continue;
               const scheme = (src.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/) || [null, "none"])[1].toLowerCase();
-              setNotCaptured(entry, slot, key, "video", `not a data: or blob: image (${scheme})`);
+              setNotCaptured(entry, slot, key, "video", `not a data: or blob: source (${scheme})`);
               continue;
             }
             const key = sourceKey(src);
@@ -462,7 +493,7 @@
             }
             try {
               const { size, head, tail, blob, mime } = await readMediaSource(src);
-              if (closed) return;
+              if (closed || checkMoved()) return;
               clearNotCaptured(entry, slot, key);
               entry.capturedKeys.add(key);
               const sig = byteSig("video", size, head, tail);
@@ -487,19 +518,25 @@
               totalBytes += size;
               totalVideos++;
             } catch (err) {
-              if (closed) return;
+              if (closed || checkMoved()) return;
               if (isSlotOrKeyCaptured(entry, slot, key)) continue;
               // Guard (video fetch failure): record a failed video fetch in media_not_captured
               setNotCaptured(entry, slot, key, "video", `fetch failed: ${(err && err.message) || String(err)}`);
             }
           }
+
+          // Guard (settled row): an item was seen, and every item not
+          // captured failed for a reason a later visit cannot change (its source scheme); a
+          // failed fetch, a missing video source or a photo still loading is tried again
+          entry.settled = (entry.msg.media.length > 0 || entry.notCaptured.size > 0)
+            && [...entry.notCaptured.values()].every((v) => v.reason.startsWith("not a data: or blob: source"));
         }
         unreadableRows.delete(rowKey);
       } catch {
         unreadableRows.add(rowKey);
       }
     }
-    if (closed) return;
+    if (closed || checkMoved()) return;
     renderCounts();
   };
 
@@ -528,7 +565,7 @@
 
   const finishStopped = () => {
     sweeping = false;
-    if (!closed) {
+    if (!closed && !checkMoved()) {
       setStatus(`Stopped: press Save to keep what was collected, or Start to go on.${skipNote()}`);
     }
   };
@@ -538,10 +575,12 @@
 
   const runSweep = async () => {
     try {
+      if (checkMoved()) return;
       let waited = 0;
       while (getRows().length === 0 && waited < ROWS_WAIT_MS && !stopRequested) {
         const chunk = Math.min(STEP_MS, ROWS_WAIT_MS - waited);
         await sleep(chunk);
+        if (checkMoved()) return;
         waited += chunk;
       }
       if (stopRequested) return finishStopped();
@@ -670,6 +709,7 @@
     if (sweeping || closed) return;
     sweeping = true;
     stopRequested = false;
+    moved = false;
     const p = runSweep();
     p.catch(() => {}).finally(() => {
       if (sweepPromise === p) sweepPromise = null;
@@ -694,13 +734,24 @@
       window.removeEventListener("message", onAck);
       resolve(res);
     };
+    const giveUp = () => done({ bridged: true, ok: false, reason: "timeout" });
+    let pendingSeen = false;
     const onAck = (e) => {
       const d = e.data;
       if (e.source === window && d && d.type === "leket:ack" && d.id === id) {
+        if (d.pending === true) {
+          // the bridge accepted the post and its handoff is under way: wait longer for the final ack
+          if (!pendingSeen) {
+            pendingSeen = true;
+            clearTimeout(timeout);
+            timeout = setTimeout(giveUp, ACK_FINAL_MS);
+          }
+          return;
+        }
         done({ bridged: true, ok: Boolean(d.ok), reason: d.reason || null });
       }
     };
-    const timeout = setTimeout(() => done({ bridged: true, ok: false, reason: "timeout" }), ACK_WAIT_MS);
+    let timeout = setTimeout(giveUp, ACK_WAIT_MS);
     cancelHandOver = () => done({ bridged: true, ok: false, reason: "closed" });
     window.addEventListener("message", onAck);
     window.postMessage({ type: "leket:messenger-export", id, file, json, files }, location.origin);
@@ -711,6 +762,8 @@
     if (saving || closed) return;
     saving = true;
     try {
+      // Guard (thread pin): a tab that has moved to another conversation saves nothing
+      if (checkMoved()) return;
       if (sweeping || inFlightHarvest || sweepPromise) {
         stopRequested = true;
         if (cancelSleep) cancelSleep();
@@ -724,6 +777,7 @@
         }
       }
       if (closed) return;
+      if (checkMoved()) return;
       if (seen.size === 0) {
         setStatus("Nothing collected yet: press Start.", false);
         return;
@@ -768,8 +822,8 @@
       const sendersObj = {};
       for (const [sid, sname] of senders) sendersObj[sid] = sname;
 
-      const rawTitle = cleanTitle(document.title);
-      const name = nameOf(document.title);
+      const rawTitle = cleanTitle(launchTitle);
+      const name = nameOf(launchTitle);
       const file = `messenger-${name}-${threadId}.json`;
       let tz = "UTC";
       try {
@@ -799,8 +853,18 @@
         const json = JSON.stringify(exp, null, 1);
         const ack = await handOver(file, json, capturedFiles.map((f) => ({ name: f.name, blob: f.blob })));
         if (closed) return;
+        // Guard (thread pin, after the handoff): a refused or unanswered handoff on a tab that has since moved neither downloads nor reports
+        if (!ack.ok && checkMoved()) return;
         if (ack.ok) {
-          setStatus(`Handed to the export tab (it opens next to this one): ${messages.length} messages, ${totalPhotos} photos, ${totalVideos} videos.`);
+          const big = totalBytes > LARGE_BYTES
+            ? ` This is a large save (${(totalBytes / 1073741824).toFixed(1)} GB): keep this tab and the export tab open until the export tab finishes.`
+            : "";
+          setStatus(`Handed to the export tab (it opens next to this one): ${messages.length} messages, ${totalPhotos} photos, ${totalVideos} videos.${big}`);
+          return;
+        }
+        // Guard (handoff not-a-thread): the worker refused because this tab left the conversation's page; do not download
+        if (ack.reason === "not-a-thread") {
+          setStatus("This tab is no longer on the conversation's page. Go back to the conversation and press Save again.");
           return;
         }
         // Guard (handoff too-soon): wait and do not download when the bridge throttles a repeat save

@@ -3,7 +3,7 @@
 import { ZipWriter } from "../../lib/zip.js";
 import { createPartDownload } from "../../lib/part.js";
 import { esc } from "../../lib/render.js";
-import { foldName, kindOf, listMedia, readMediaFile, settleMedia } from "./media.js";
+import { foldName, kindOf, listMedia, messagesOf, readMediaFile, settleMedia } from "./media.js";
 
 const { renderMarkdown, validMediaName, validSaveName } = globalThis.LeketMessengerRead;
 
@@ -42,6 +42,8 @@ function partLink(blob, name) {
   try {
     const save = await readSave();
     const { fileCount, exp } = save;
+    // every consumer below sees an array of objects, whatever the save held
+    exp.messages = messagesOf(exp);
     const file = validSaveName(save.file);
     const base = file.replace(/\.json$/, "");
     const mdFile = `${base}.md`;
@@ -174,7 +176,7 @@ function partLink(blob, name) {
     const lostBox = document.createElement("div");
     $("problems").appendChild(lostBox);
     let released = false;
-    const messageCount = (exp.messages || []).length;
+    const messageCount = exp.messages.length;
 
     render = () => {
       const badParts = results.filter((r) => !r.ok);

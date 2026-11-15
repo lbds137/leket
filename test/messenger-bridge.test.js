@@ -8,7 +8,8 @@ const SRC = readFileSync(new URL("../src/modules/messenger/bridge.js", import.me
 
 // readyAnswer: what the worker answers leket:ready with ("throw" = the extension is gone)
 function page({ readyAnswer = { ok: true }, orphaned = false } = {}) {
-  const listeners = [], acks = [];
+  // acks: the final answers; pendings: the "accepted, working on it" ones
+  const listeners = [], acks = [], pendings = [];
   let onMessage;
   const ready = [];
   const clock = { t: 1_000_000 };
@@ -19,7 +20,7 @@ function page({ readyAnswer = { ok: true }, orphaned = false } = {}) {
     document: { documentElement: { dataset: {} } },
     crypto: { randomUUID: (() => { let n = 0; return () => `k${++n}`; })() },
     addEventListener: (type, f) => listeners.push(f),
-    postMessage: (data) => acks.push(data),
+    postMessage: (data) => (data.pending ? pendings : acks).push(data),
     chrome: {
       runtime: {
         get id() { return orphaned ? undefined : "ext"; },
@@ -38,6 +39,7 @@ function page({ readyAnswer = { ok: true }, orphaned = false } = {}) {
   return {
     sandbox,
     acks,
+    pendings,
     clock,
     answer,
     ready: () => ready,
@@ -188,6 +190,46 @@ test("a second post within 10 s is refused as too soon and opens nothing; after 
   assert.deepEqual(plain(p.acks)[2], { type: "leket:ack", id: "c", ok: true });
 });
 
+test("an accepted post gets a pending ack at once, before the worker answers, then the final ack; a too-soon one gets no pending ack", async () => {
+  const p = page();
+  let release;
+  p.answer.now = new Promise((r) => { release = r; });
+  const posted = p.post(save("a"));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(plain(p.pendings), [{ type: "leket:ack", id: "a", pending: true }]);
+  assert.deepEqual(plain(p.acks), [], "no final ack while the worker has not answered");
+  release({ ok: true });
+  await posted;
+  assert.deepEqual(plain(p.acks), [{ type: "leket:ack", id: "a", ok: true }]);
+  p.clock.t += 1;
+  await p.post(save("b"));
+  assert.equal(p.pendings.length, 1, "a refused post is not pending");
+  assert.deepEqual(plain(p.acks)[1], { type: "leket:ack", id: "b", ok: false, reason: "too-soon" });
+});
+
+test("a refused handoff does not use up the throttle: a post 1 s later is accepted", async () => {
+  const p = page({ readyAnswer: { ok: false, reason: "not-a-thread" } });
+  await p.post(save("a"));
+  p.clock.t += 1_000;
+  p.answer.now = { ok: true };
+  await p.post(save("b"));
+  assert.deepEqual(plain(p.acks), [
+    { type: "leket:ack", id: "a", ok: false, reason: "not-a-thread" },
+    { type: "leket:ack", id: "b", ok: true },
+  ]);
+  assert.equal(p.ready().length, 2);
+});
+
+test("the worker's reason is forwarded only for not-a-thread and too-soon", async () => {
+  for (const [reason, forwarded] of [["not-a-thread", true], ["too-soon", true], ["weird", false], [{ x: 1 }, false]]) {
+    const p = page({ readyAnswer: { ok: false, reason } });
+    await p.post(save("a"));
+    assert.deepEqual(plain(p.acks), [
+      forwarded ? { type: "leket:ack", id: "a", ok: false, reason } : { type: "leket:ack", id: "a", ok: false },
+    ], JSON.stringify(reason));
+  }
+});
+
 test("a post from another origin, or from another window, is ignored", async () => {
   const p = page();
   await p.post(save("x"), { origin: "https://evil.example" });
@@ -235,4 +277,28 @@ test("bad piece, file and offset requests get an error, not a slice", async () =
   }
   const ok = await p.ask({ type: "leket:file", key, index: 0, offset: 3 });
   assert.equal(Buffer.from(ok.data, "base64").toString(), "d");
+});
+
+test("an older handoff that fails after a newer one was accepted does not give the throttle slot back: a post 1 s after the newer one is too soon", async () => {
+  const p = page();
+  const releases = {};
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  p.answer.now = new Promise((r) => { releases.a = r; });
+  const postA = p.post(save("a"));
+  await tick();
+  p.clock.t += 10_000;
+  p.answer.now = new Promise((r) => { releases.b = r; });
+  const postB = p.post(save("b"));
+  await tick();
+  releases.b({ ok: true });
+  await tick();
+  releases.a({ ok: false });
+  await Promise.all([postA, postB]);
+  p.clock.t += 1_000;
+  p.answer.now = { ok: true };
+  await p.post(save("c"));
+  const finals = Object.fromEntries(plain(p.acks).map((a) => [a.id, a]));
+  assert.equal(finals.a.ok, false);
+  assert.equal(finals.b.ok, true);
+  assert.deepEqual(finals.c, { type: "leket:ack", id: "c", ok: false, reason: "too-soon" });
 });

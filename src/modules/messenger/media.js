@@ -18,7 +18,7 @@ export const kindOf = (med) => (med && med.kind === "video" ? "video" : "photo")
 // a.jpg in one file.
 export const foldName = (name) => name.toLowerCase();
 
-const messagesOf = (exp) => (Array.isArray(exp.messages) ? exp.messages : []).filter((m) => m && typeof m === "object");
+export const messagesOf = (exp) => (Array.isArray(exp.messages) ? exp.messages : []).filter((m) => m && typeof m === "object");
 
 // Every media file the save lists, by folded name → { name, m, med }: the first entry for a
 // name wins; an invalid or repeated name becomes a not-captured entry on its own message.

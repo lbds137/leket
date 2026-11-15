@@ -70,6 +70,22 @@ const WARM = [
   ["control-save-mid-sweep"],
   ["second-launch"],
   ["broken-img"],
+  ["move-fetch"],
+  ["move-fetch-throw"],
+  ["move-fetch-photo"],
+  ["move-fetch-photo-throw"],
+  ["move-wait"],
+  ["move-wait-empty"],
+  ["move-save-noack"],
+  ["move-save-midsweep"],
+  ["move-start"],
+  ["move-stop"],
+  ["move-thread"],
+  ["handoff-pending-late"],
+  ["handoff-pending-never"],
+  ["handoff-not-a-thread"],
+  ["settled"],
+  ["large"],
 ];
 const POOL = 8;
 const warmQueue = [...WARM];
@@ -425,4 +441,170 @@ test("23. controls and broken img: Stop+Save, Stop+Start, Start while sweeping, 
   assert.deepEqual(broken.export.media_not_captured, [
     { message_id: "msg-030", kind: "photo", reason: "the photo never finished loading" },
   ]);
+});
+
+test("24. thread pin: a tab that moves to another conversation mid-sweep collects nothing more, says so, saves nothing; back on the path Save and Start work", async () => {
+  const page = await runPage("move-thread");
+  const MOVED = "This tab moved to another conversation. Go back to the conversation this panel was opened on, or close this panel.";
+  assert.equal(page.statusAfterMove, MOVED);
+  assert.equal(page.statusAfterSaveMoved, MOVED);
+  assert.equal(page.postsAfterSaveMoved, page.postsBeforeSave, "Save on the wrong conversation posts nothing");
+  assert.equal(page.downloadedWhileMoved, false, "and downloads nothing");
+
+  // back on the launch path (written with a trailing slash): Save posts, and only the original thread
+  assert.equal(page.postCount, 1);
+  assert.ok(page.export.messages.length > 0 && page.export.messages.length < 60);
+  assert.ok(!page.export.messages.some((m) => String(m.id).startsWith("foreign")), "no row of the other thread");
+  assert.ok(!JSON.stringify(page.export).includes("foreign thread message"));
+  assert.equal(page.export.thread_id, "789012345");
+  assert.match(page.statusAfterReturnSave, /^Handed to the export tab/);
+
+  // the title is the one the panel was opened with, not the other thread's
+  assert.equal(page.export.title, "Ada Example");
+  assert.equal(page.file, "messenger-Ada_Example-789012345.json");
+  assert.equal(page.heading, "Leket: Ada_Example");
+
+  // Start works again on the launch path
+  assert.match(page.statusAfterRestart, /^Done: 60 messages from the start of the conversation\. Press Save\./);
+});
+
+test("25. late ack: after a pending ack the collector waits up to 120 s for the final one; with no pending ack it still falls back after 10 s", async () => {
+  const late = await runPage("handoff-pending-late");
+  assert.equal(late.downloaded, false, "the final ok came 30 virtual s after the post: handed over, no JSON-only download");
+  assert.match(late.statusAfterSave, /^Handed to the export tab /);
+  assert.ok(late.saveElapsedMs >= 30000 && late.saveElapsedMs < 120000, `waited ${late.saveElapsedMs} ms`);
+
+  const never = await runPage("handoff-pending-never");
+  assert.equal(never.downloaded, true, "pending and no final answer: fall back");
+  assert.match(never.statusAfterSave, /^The extension didn't answer /);
+  assert.ok(never.saveElapsedMs >= 120000 && never.saveElapsedMs < 130000, `gave up after ${never.saveElapsedMs} ms`);
+
+  const none = await runPage("handoff-no-ack");
+  assert.ok(none.saveElapsedMs >= 10000 && none.saveElapsedMs < 20000, `no pending ack: gave up after ${none.saveElapsedMs} ms`);
+});
+
+test("26. refused handoff reason: not-a-thread says the tab left the conversation's page and downloads nothing", async () => {
+  const page = await runPage("handoff-not-a-thread");
+  assert.equal(page.downloaded, false);
+  assert.equal(
+    page.statusAfterSave,
+    "This tab is no longer on the conversation's page. Go back to the conversation and press Save again.",
+  );
+});
+
+test("27. settled rows and not-captured reasons: https-only media rows are read once, and the reason names a source for photos and videos alike", async () => {
+  const page = await runPage("settled");
+  const mine = page.export.media_not_captured.filter((x) => x.message_id === "msg-045" || x.message_id === "msg-046");
+  assert.deepEqual(mine, [
+    { message_id: "msg-045", kind: "photo", reason: "not a data: or blob: source (https)" },
+    { message_id: "msg-046", kind: "video", reason: "not a data: or blob: source (https)" },
+  ]);
+  assert.ok(page.rowVisits["msg-045"] >= 2, "the row was mounted more than once");
+  assert.equal(page.fiberReads["msg-045"], 1, "a row of only an avatar and an https preview is read once, then settled");
+  assert.equal(page.fiberReads["msg-046"], 1, "an https video row is read once, then settled");
+  assert.ok(page.fiberReads["msg-001"] >= 1);
+});
+
+test("28. large media: past 1 GiB the counts line and Save's status say to keep both tabs open, and nothing is dropped", async () => {
+  const page = await runPage("large");
+  const NOTE = " — large save: keep this tab and the export tab open until it finishes";
+  assert.ok(page.countsAfterSweep.endsWith(NOTE), page.countsAfterSweep);
+  assert.match(page.statusAfterSave, /^Handed to the export tab .*, 4 photos, 1 videos\. This is a large save \(1\.2 GB\): keep this tab and the export tab open until the export tab finishes\.$/);
+  const m = page.export.messages.find((x) => x.id === "msg-029");
+  assert.equal(m.media.length, 1);
+  assert.equal(m.media[0].bytes, Math.round(1.2 * 1024 * 1024 * 1024));
+  assert.equal(page.posted.files.length, 5, "4 photos and the huge video are all posted");
+
+  const small = await runPage("full");
+  assert.ok(!small.countsAfterSweep.includes("large save"));
+  assert.ok(!small.statusAfterSave.includes("large save"));
+});
+
+const MOVED_TEXT = "This tab moved to another conversation. Go back to the conversation this panel was opened on, or close this panel.";
+const noForeign = (exp) => !exp || !JSON.stringify(exp).includes("foreign");
+
+test("29. thread pin across a read: a path change during a fetch records nothing (neither the bytes nor a failure), writes no Done/Going status and scrolls no more", async () => {
+  for (const scenario of ["move-fetch", "move-fetch-throw"]) {
+    const page = await runPage(scenario);
+    assert.equal(page.statusWhileMoved, MOVED_TEXT, scenario);
+    assert.equal(page.scrollsAfterMove, 0, `${scenario}: no scroll on the other conversation`);
+    assert.equal(page.postsWhileMoved, 0, scenario);
+    assert.ok(noForeign(page.export), scenario);
+    const m = page.export.messages.find((x) => x.id === "msg-029");
+    assert.deepEqual(m.media, [], `${scenario}: the read that finished after the move is not kept`);
+    assert.ok(!page.export.media_not_captured.some((x) => x.message_id === "msg-029"), `${scenario}: no fetch failed entry`);
+  }
+  for (const scenario of ["move-fetch-photo", "move-fetch-photo-throw"]) {
+    const page = await runPage(scenario);
+    assert.equal(page.statusWhileMoved, MOVED_TEXT, scenario);
+    assert.equal(page.scrollsAfterMove, 0, scenario);
+    assert.ok(noForeign(page.export), scenario);
+    assert.deepEqual(page.export.messages.find((x) => x.id === "msg-035").media, [], scenario);
+    assert.ok(!page.export.media_not_captured.some((x) => x.message_id === "msg-035"), `${scenario}: no fetch failed entry`);
+  }
+});
+
+test("30. thread pin during the wait for rows: foreign rows that mount while waiting are not scrolled, read or saved", async () => {
+  const page = await runPage("move-wait");
+  assert.equal(page.statusWhileMoved, MOVED_TEXT);
+  assert.equal(page.scrollsAfterMove, 0);
+  assert.equal(page.postsWhileMoved, 0);
+  assert.equal(page.statusAfterReturnSave, "Nothing collected yet: press Start.", "nothing from the other conversation was kept");
+  assert.equal(page.postCount, 0);
+});
+
+test("31. thread pin while Save waits: a handoff that times out on a moved tab does not download or report; a path change while Save waits for the sweep posts nothing", async () => {
+  const noAck = await runPage("move-save-noack");
+  assert.equal(noAck.statusWhileMoved, MOVED_TEXT);
+  assert.equal(noAck.downloadedWhileMoved, false, "no fallback download after the move");
+  assert.equal(noAck.postCount, 1, "only the post made before the move");
+  assert.ok(noForeign(noAck.export));
+
+  const mid = await runPage("move-save-midsweep");
+  assert.equal(mid.statusWhileMoved, MOVED_TEXT);
+  assert.equal(mid.postCount, 0, "Save saw the move after the sweep stopped, and posted nothing");
+  assert.equal(mid.downloadedWhileMoved, false);
+});
+
+test("32. thread pin: Start pressed on the other conversation does nothing, and Save after returning holds only the original thread", async () => {
+  const page = await runPage("move-start");
+  assert.equal(page.scrollsAfterStart, 0);
+  assert.equal(page.statusWhileMoved, MOVED_TEXT);
+  assert.equal(page.postsWhileMoved, 0);
+  assert.ok(noForeign(page.export));
+  assert.match(page.statusAfterReturnSave, /^Handed to the export tab /);
+});
+
+test("33. completeness: a row is re-read while a qualifying img is loading or a read failed in passing, and settles once nothing it holds can change", async () => {
+  const page = await runPage("settled");
+  const msgOf = (id) => page.export.messages.find((x) => x.id === id);
+  // an https preview plus a tiny still-loading emoji: settled after one read
+  assert.equal(page.fiberReads["msg-047"], 1, "tiny incomplete emoji does not keep the row open");
+  assert.deepEqual(
+    page.export.media_not_captured.filter((x) => x.message_id === "msg-047"),
+    [{ message_id: "msg-047", kind: "photo", reason: "not a data: or blob: source (https)" }],
+  );
+  // a read that failed once is tried again and kept
+  assert.ok(page.fiberReads["msg-048"] >= 2, `flaky video read ${page.fiberReads["msg-048"]} times`);
+  assert.equal(msgOf("msg-048").media.length, 1);
+  assert.ok(!page.export.media_not_captured.some((x) => x.message_id === "msg-048"));
+  // one captured photo, a second qualifying img that was still loading: read again, both kept
+  assert.ok(page.fiberReads["msg-049"] >= 2, `late second photo row read ${page.fiberReads["msg-049"]} times`);
+  assert.equal(msgOf("msg-049").media.length, 2);
+  assert.ok(!page.export.media_not_captured.some((x) => x.message_id === "msg-049"));
+});
+
+test("34. thread pin: Stop pressed, then the tab moves before the stopped sweep reports: the status is the moved one, not Stopped", async () => {
+  const page = await runPage("move-stop");
+  assert.equal(page.statusWhileMoved, MOVED_TEXT);
+  assert.equal(page.scrollsAfterMove, 0);
+  assert.equal(page.postsWhileMoved, 0);
+});
+
+test("35. thread pin while waiting for rows: a move to a page with no rows is noticed within one step, not at the end of the 10 s wait", async () => {
+  const page = await runPage("move-wait-empty");
+  assert.equal(page.statusWhileMoved, MOVED_TEXT);
+  assert.ok(page.movedLatencyMs <= 900, `moved status ${page.movedLatencyMs} ms after the move`);
+  assert.equal(page.scrollsAfterMove, 0);
+  assert.equal(page.postsWhileMoved, 0);
 });
