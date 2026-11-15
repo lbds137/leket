@@ -1,7 +1,7 @@
 // src/modules/registry.js: what the popup offers for a tab's URL.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MODULES, match, POST_PATHNAME } from "../src/modules/registry.js";
+import { MODULES, match, POST_PATHNAME, MESSENGER_PATHNAME, FACEBOOK_MESSAGES_PATHNAME } from "../src/modules/registry.js";
 import { COMMANDS } from "../src/popup/commands.js";
 
 test("a DM, a server channel and a thread each match the Discord module", () => {
@@ -14,6 +14,45 @@ test("a DM, a server channel and a thread each match the Discord module", () => 
     const m = match(url);
     assert.ok(m, `no match for ${url}`);
     assert.equal(m.id, "discord");
+  }
+});
+
+test("all eight Messenger thread URL forms match the messenger module (a query or fragment is not part of the path), and non-thread URLs do not", () => {
+  assert.ok(MESSENGER_PATHNAME instanceof RegExp);
+  assert.ok(FACEBOOK_MESSAGES_PATHNAME instanceof RegExp);
+  for (const url of [
+    "https://www.messenger.com/t/1234567890",
+    "https://www.messenger.com/t/1234567890/",
+    "https://www.messenger.com/e2ee/t/1234567890",
+    "https://www.messenger.com/e2ee/t/1234567890/",
+    "https://www.facebook.com/messages/t/1234567890",
+    "https://www.facebook.com/messages/t/1234567890/",
+    "https://www.facebook.com/messages/e2ee/t/1234567890",
+    "https://www.facebook.com/messages/e2ee/t/1234567890/",
+    "https://www.messenger.com/t/1234567890?q=1",
+    "https://www.facebook.com/messages/t/1234567890#x",
+  ]) {
+    const m = match(url);
+    assert.ok(m, `no match for ${url}`);
+    assert.equal(m.id, "messenger");
+  }
+  for (const url of [
+    "https://www.messenger.com/t/",
+    "https://messenger.com/t/1234567890",
+    "https://m.facebook.com/messages/t/1234567890",
+    "https://www.facebook.com/messages/",
+    "https://www.messenger.com/e2ee/t/abc",
+    "https://www.facebook.com/messages/e2ee/t/abc",
+    "http://www.messenger.com/t/1234567890",
+    "http://www.facebook.com/messages/t/1234567890",
+    "https://www.messenger.com/t/1234567890/extra",
+    "https://www.facebook.com/messages/t/1234567890/extra",
+    "https://www.messenger.com/t?q=1234567890",
+    "https://www.messenger.com/",
+    "https://www.facebook.com/",
+    "https://www.facebook.com/messages/t/1234567890.evil.example/",
+  ]) {
+    assert.equal(match(url), null, `unexpected match for ${url}`);
   }
 });
 

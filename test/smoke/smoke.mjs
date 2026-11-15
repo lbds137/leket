@@ -174,6 +174,7 @@ const WEB = new Map([
   [etsyPage(2), { type: "application/json", body: JSON.stringify({ messages: [] }) }],
   // a second conversation whose first page fails: the failure list's one line
   [etsyPage(0, ETSY_GONE), { type: "application/json", body: "{}", status: 500 }],
+  ["https://www.messenger.com/e2ee/t/123", { type: "text/html", body: html("a messenger thread") }],
 ]);
 
 // ---- a small CDP client over Node's own WebSocket ----
@@ -838,6 +839,149 @@ async function scenarios(cdp, downloads) {
       check(end.fails.length === 0, `etsy save ${round}: nothing is listed as failed (${end.fails.length} failures)`);
       const blobs = await evalIn(ep, `Promise.all(window.smokeBlobs.map((u) => fetch(u).then(() => "readable", () => "freed")))`);
       check(JSON.stringify(blobs) === '["freed"]', `etsy save ${round}: the page made one blob and freed its URL (${JSON.stringify(blobs)})`);
+    }
+  });
+
+  // ---- messenger: popup -> worker injects bridge (isolated) + read.js & collector.js (MAIN) ->
+  // panel mounts -> bridge -> export tab builds zip (json, md, messenger-media/*.jpg) ----
+  await scenario("messenger", async () => {
+    console.log("smoke: messenger save");
+    const thread = await open("https://www.messenger.com/e2ee/t/123");
+    const launcher = await clickPopup("Save this conversation");
+    const launched = await waitFor(async () => {
+      if (!(await cdp.send("Target.getTargets")).targetInfos.some((t) => t.targetId === launcher.targetId)) return "closed";
+      const warn = await evalIn(launcher.sessionId, `document.querySelector("#card p.warn")?.textContent || ""`).catch(() => "");
+      return warn && `warned: ${warn}`;
+    }, "the popup to close (launched) or warn", 30000).catch(soft((e) => e.message));
+    check(launched === "closed", `messenger: the popup launches the save (${launched})`);
+
+    const mounted = await waitFor(
+      () => evalIn(thread.sessionId, `Boolean(document.getElementById("leket-messenger-panel") && window.LeketMessengerRead)`),
+      "the collector's #leket-messenger-panel on the Messenger tab",
+    ).catch(soft(() => false));
+    check(mounted === true, "messenger: #leket-messenger-panel mounted (MAIN-world read.js + collector.js injected)");
+
+    await waitFor(
+      () => evalIn(thread.sessionId, `document.documentElement.dataset.leketMessengerBridge === "1"`),
+      "the bridge mark on the Messenger tab",
+    );
+
+    const mediaFile = "2026-11-15_m1_1.jpg";
+    const jpegBytes = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9];
+    const messengerExport = {
+      leket: "messenger",
+      version: 1,
+      host: "www.messenger.com",
+      thread_id: "123",
+      url: "https://www.messenger.com/e2ee/t/123",
+      title: "Synthetic Thread",
+      saved_at: "2026-11-15T12:00:00.000Z",
+      time_zone: "UTC",
+      count: 2,
+      senders: { "1": "Sender A", "2": "Sender B" },
+      group_warning: false,
+      media_not_captured: [],
+      messages: [
+        {
+          id: "m1",
+          time: "2026-11-15T10:00:00.000Z",
+          sender_id: "1",
+          sender: "Sender A",
+          outgoing: true,
+          text: "first synthetic message",
+          unsent: false,
+          edited: false,
+          reply_to: null,
+          kinds: ["text", "media"],
+          link: null,
+          media: [{ file: mediaFile, kind: "photo", mime: "image/jpeg", width: 200, height: 200, bytes: jpegBytes.length, duration_s: null }],
+        },
+        {
+          id: "m2",
+          time: "2026-11-15T10:01:00.000Z",
+          sender_id: "2",
+          sender: "Sender B",
+          outgoing: false,
+          text: "second synthetic message",
+          unsent: false,
+          edited: false,
+          reply_to: null,
+          // the video is listed but never handed to the bridge: the zip must not claim it;
+          // the photo repeats m1's file name in another case: one file on macOS/Windows
+          kinds: ["text", "media", "video"],
+          link: null,
+          media: [
+            { file: "2026-11-15_m2_1.mp4", kind: "video", mime: "video/mp4", width: 320, height: 240, bytes: 99, duration_s: 3 },
+            { file: mediaFile.toUpperCase(), kind: "photo", mime: "image/jpeg", width: 200, height: 200, bytes: jpegBytes.length, duration_s: null },
+          ],
+        },
+      ],
+    };
+
+    const acked = await evalIn(thread.sessionId, `new Promise((resolve) => {
+      const onAck = (e) => {
+        if (e.source === window && e.data && e.data.type === "leket:ack" && e.data.id === "m-smoke-1") {
+          window.removeEventListener("message", onAck);
+          resolve(Boolean(e.data.ok));
+        }
+      };
+      window.addEventListener("message", onAck);
+      const blob = new Blob([new Uint8Array(${JSON.stringify(jpegBytes)})], { type: "image/jpeg" });
+      window.postMessage({
+        type: "leket:messenger-export",
+        id: "m-smoke-1",
+        file: "messenger-smoke-123.json",
+        json: ${JSON.stringify(JSON.stringify(messengerExport))},
+        // both case forms are handed over: only one may reach the zip
+        files: [{ name: ${JSON.stringify(mediaFile)}, blob }, { name: ${JSON.stringify(mediaFile.toUpperCase())}, blob }],
+      }, location.origin);
+    })`);
+    check(acked === true, `messenger: the bridge acknowledged the export (${acked})`);
+
+    const tab = await target((s) => s.type === "page" && s.url.includes("/src/modules/messenger/export.html"), "the Messenger export tab");
+    const end = await waitFor(
+      () => evalIn(tab.sessionId, `(() => { const s = document.getElementById("status"); return s && s.textContent.startsWith("Saved ") && s.textContent; })()`),
+      "the Messenger export tab to finish saving",
+      30000,
+    ).catch(soft((e) => e.message));
+    check(typeof end === "string" && end.includes("2 messages") && end.includes("1 photo(s)"), `messenger: the export tab reports the saved counts (${end})`);
+
+    const done = await waitFor(
+      () => extEval(`chrome.downloads.search({ filenameRegex: "messenger-smoke-123\\\\.zip$", state: "complete" }).then((d) => d.length)`).then((n) => n >= 1 && n),
+      "the Messenger zip download to complete",
+      15000,
+    ).catch(soft((e) => e.message));
+    check(done === 1, `messenger: Chrome finished the zip download (${done})`);
+
+    const zips = landed().filter((f) => f.startsWith("messenger-") && f.endsWith(".zip"));
+    if (check(zips.length === 1 && zips[0] === "messenger-smoke-123.zip", `messenger: one zip on disk (found: ${zips.join(", ") || "none"})`)) {
+      const info = JSON.parse(execFileSync("python3", ["-I", "-c",
+        "import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1]) as z:\n print(json.dumps({'names': z.namelist(), 'json': z.read('messenger-smoke-123.json').decode('utf-8'), 'md': z.read('messenger-smoke-123.md').decode('utf-8'), 'jpg': list(z.read('messenger-media/' + sys.argv[2]))}))",
+        join(downloads, zips[0]), mediaFile], { encoding: "utf8" }));
+      check(
+        JSON.stringify([...info.names].sort()) === JSON.stringify([`messenger-media/${mediaFile}`, "messenger-smoke-123.json", "messenger-smoke-123.md"]),
+        `messenger: the zip holds the json, the md and messenger-media/${mediaFile} only (names: ${info.names.join(", ")})`,
+      );
+      const saved = JSON.parse(info.json);
+      check(saved.count === 2, "messenger: the zip's json holds the two messages");
+      const lost = saved.media_not_captured.map((x) => `${x.message_id}:${x.kind}`).sort();
+      check(
+        saved.messages[0].media.length === 1 && saved.messages[1].media.length === 0
+          && JSON.stringify(lost) === JSON.stringify(["m2:photo", "m2:video"])
+          && saved.media_not_captured.some((x) => x.kind === "photo" && /repeated media file name/.test(x.reason)),
+        `messenger: the unread video and the case-repeated photo are each not captured once, on m2 (${JSON.stringify(saved.media_not_captured)})`,
+      );
+      const count = (s, sub) => s.split(sub).length - 1;
+      check(
+        info.md.includes("# Synthetic Thread") && count(info.md, `![photo](messenger-media/${mediaFile})`) === 1
+          && count(info.md, "[video, not captured]") === 1 && count(info.md, "[photo, not captured]") === 1
+          && !info.md.includes("2026-11-15_m2_1.mp4") && !info.md.includes(mediaFile.toUpperCase()),
+        "messenger: the zip's md links the photo once and marks each missing item once, without a dead link",
+      );
+      check(
+        JSON.stringify(info.jpg) === JSON.stringify(jpegBytes),
+        `messenger: messenger-media/${mediaFile} has the exact JPEG bytes (${JSON.stringify(info.jpg)})`,
+      );
     }
   });
 

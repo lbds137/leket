@@ -352,3 +352,21 @@ test("mediaName always passes the export page's name check", () => {
   }
   assert.equal(R.mediaName("(no date)", "m1", 1.5, "image/png"), "_no_date_m1_0.png");
 });
+
+test("validMediaName takes only a bare file name; validSaveName falls back for anything else", () => {
+  const { globalApi: R } = loadRead();
+  for (const ok of ["2026-11-15_m1_0.jpg", "a", "x".repeat(120), "ünï_çødé.mp4", "a..b.jpg"]) {
+    assert.equal(R.validMediaName(ok), true, ok);
+  }
+  for (const bad of ["../x.jpg", "a/b.jpg", "a\\b.jpg", ".hidden", "..", "", "x".repeat(121), "a b.jpg", null, undefined, 5, ["a.jpg"]]) {
+    assert.equal(R.validMediaName(bad), false, String(bad));
+  }
+  // every name mediaName makes passes, whatever it is given
+  for (const args of [["2026-11-15", "mid.$abc", 1, "image/jpeg"], ["../..", "../../etc", -1, "__proto__"], ["", "", NaN, ""]]) {
+    assert.equal(R.validMediaName(R.mediaName(...args)), true, JSON.stringify(args));
+  }
+  assert.equal(R.validSaveName("messenger-Some_Name-1731700000000.json"), "messenger-Some_Name-1731700000000.json");
+  for (const bad of ["../messenger-a-1.json", "messenger-a-1.json.exe", "messenger-a b-1.json", "other-a-1.json", "messenger--1.json", null, 7]) {
+    assert.equal(R.validSaveName(bad), "messenger-export.json", String(bad));
+  }
+});

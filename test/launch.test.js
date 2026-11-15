@@ -124,3 +124,51 @@ test("the collector's Save handoff still opens the export tab beside it", async 
   // the export tab finds the save by the Discord tab's id and the handoff key
   assert.deepEqual(Object.fromEntries(u.searchParams), { tab: "3", key: "k" });
 });
+
+test("the Save handoff opens the export page by the tab's host", async () => {
+  const opened = async (url) => {
+    reset();
+    TAB_URL = url;
+    const reply = await handled({ type: "leket:ready", key: "k" }, { tab: { id: 3, index: 2, windowId: 1 } });
+    return [reply, calls.tabsCreated[0] && new URL(calls.tabsCreated[0].url).pathname];
+  };
+  // a collected Discord save whose page has since moved off a conversation still opens
+  assert.deepEqual(await opened("https://discord.com/channels/@me"), [{ ok: true }, "/src/modules/discord/export.html"]);
+  for (const url of ["https://www.messenger.com/e2ee/t/7", "https://www.facebook.com/messages/t/7"]) {
+    const [reply, path] = await opened(url);
+    assert.deepEqual(reply, { ok: true });
+    assert.equal(path, "/src/modules/messenger/export.html");
+    assert.ok(shipped(path.slice(1)), "the Messenger export.html is in the extension");
+  }
+  // a Messenger host opens nothing off a thread page: facebook.com's feed shares the window
+  // the bridge listens on
+  for (const url of [
+    "https://example.com/", "https://m.facebook.com/messages/t/7", "not a url",
+    "https://www.facebook.com/", "https://www.facebook.com/messages/", "https://www.messenger.com/",
+    "http://www.messenger.com/t/7",
+  ]) {
+    assert.deepEqual(await opened(url), [{ ok: false }, undefined], url);
+  }
+});
+
+test("a Messenger launch on a facebook.com page that is no thread is refused, with nothing injected", async () => {
+  reset();
+  TAB_URL = "https://www.facebook.com/";
+  const reply = await handled({ type: "leket:launch", command: "save", tabId: 5 }, { id: "test-extension-id" });
+  assert.equal(reply.ok, false);
+  assert.match(reply.error, /no longer a Discord conversation or a Messenger conversation/);
+  assert.equal(calls.scripts.length, 0);
+});
+
+test("a Messenger launch injects its bridge, then read.js and the collector in the page's world", async () => {
+  reset();
+  TAB_URL = "https://www.messenger.com/e2ee/t/7";
+  const reply = await handled({ type: "leket:launch", command: "save", tabId: 5 }, { id: "test-extension-id" });
+  assert.deepEqual(reply, { ok: true });
+  assert.deepEqual(calls.scripts.map((s) => [s.files[0], s.world ?? "ISOLATED"]), [
+    ["src/modules/messenger/bridge.js", "ISOLATED"],
+    ["src/modules/messenger/read.js", "MAIN"],
+    ["src/modules/messenger/collector.js", "MAIN"],
+  ]);
+  for (const s of calls.scripts) assert.ok(shipped(s.files[0]), s.files[0]);
+});

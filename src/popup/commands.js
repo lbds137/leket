@@ -3,6 +3,7 @@
 // implementation: test/registry.test.js walks MODULES against this map, and a module
 // registered without its implementation is a red suite, not a silent button.
 import { commands as discordCommands } from "../modules/discord/launch.js";
+import { commands as messengerCommands } from "../modules/messenger/launch.js";
 import { commands as redditCommands } from "../modules/reddit/json.js";
 
 // The claude-sessions commands need no relay at all: the module's page is self-
@@ -39,6 +40,7 @@ const openEtsyPage = async (tab, { tabs = chrome.tabs } = {}) => {
 
 export const COMMANDS = {
   discord: discordCommands,
+  messenger: messengerCommands,
   reddit: redditCommands,
   "claude-sessions": {
     export: openSessionsPage("#export"),

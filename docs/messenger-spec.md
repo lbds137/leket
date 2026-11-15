@@ -127,7 +127,12 @@ A classic script, with no `import` or `export`. It is injected into the page bef
   runs of `_` collapsed, leading dots stripped, and cut to `max` characters (default 40);
   `"x"` if that leaves it empty. `mediaName(day, messageId, n, mime)` →
   `<day>_<safePart(messageId)>_<n>.<jpg|png|webp|gif|mp4|webm|mov|bin>` (by MIME type). Uniqueness comes from the
-  collector, not the name: it appends `-2`, `-3` and so on when a name is already taken.
+  collector, not the name: it appends `-2`, `-3` and so on when a name is already taken,
+  comparing names case-insensitively (the export tab folds case, since a zip unpacked on
+  macOS or Windows holds `a.jpg` and `A.JPG` as one file). `validMediaName(name)` (a bare
+  `[\p{L}\p{N}._-]{1,120}` name, no leading dot) and `validSaveName(file)` (the save
+  pattern below, else `messenger-export.json`) are the export tab's checks, kept here so
+  the collector and the tests share them; every `mediaName` result passes `validMediaName`.
 
 Tests (`test/messenger-read.test.js`, synthetic only): `i64` on `[0, 1]`, on a negative low
 word (`[1, -1]` → 2^33 − 1), and on a real-shaped ms pair built from `Date.UTC`; `toIso`
@@ -138,17 +143,21 @@ the photo link, the placeholders, and line-start escaping.
 
 ### B. Wiring
 
-- `src/modules/registry.js`: a `messenger` module. `matches` parses the URL. The host must be
-  `www.messenger.com` with a pathname matching `^/(e2ee/)?t/\d+/?$`, or `www.facebook.com`
-  with `^/messages/(e2ee/)?t/\d+/?$`. Export the pathname pattern, as `CODE_PATHNAME` is.
+- `src/modules/registry.js`: a `messenger` module. `matches` parses the URL. The scheme must
+  be `https:`, and the host `www.messenger.com` with a pathname matching
+  `^/(e2ee/)?t/\d+/?$`, or `www.facebook.com` with `^/messages/(e2ee/)?t/\d+/?$`. Export the
+  pathname pattern, as `CODE_PATHNAME` is.
   Title "Messenger"; blurb "Save this conversation, with its photos and videos, as one zip.";
   command `{ id: "save", label: "Save this conversation" }`.
-  `test/registry.test.js`: matches all six URL forms, and refuses `/t/` with no id,
-  `messenger.com` without www, `m.facebook.com`, `facebook.com/messages/` bare, and
-  `/e2ee/t/abc`.
+  `test/registry.test.js`: matches all eight URL forms (plus a query or fragment, which is
+  not path), and refuses `/t/` with no id, `messenger.com` without www, `m.facebook.com`,
+  `facebook.com/messages/` bare, `/e2ee/t/abc`, `http:`, `/t/<id>/extra` and the bare hosts.
 - `manifest.json`: add `https://www.messenger.com/*` and `https://www.facebook.com/*` to
   `host_permissions`. Add no CDN hosts, because nothing is fetched from them. Update the
-  description to name Messenger.
+  description to name Messenger. The whole `www.facebook.com/*` is needed, not just
+  `/messages/*`: the `leket:ready` handler reads `sender.tab.url`, which Chrome fills only
+  for a host the extension holds, and Facebook navigates in-page. New host permissions make
+  Chrome ask to re-accept on update; the unit D release note says so.
 - `src/modules/messenger/launch.js`: the same shape as the Discord one, sending
   `{ type: "leket:launch", command: "save", tabId }` with no module field.
   `src/popup/commands.js` maps `messenger` to it.
@@ -167,27 +176,44 @@ the photo link, the placeholders, and line-start escaping.
   in 8 MiB string chunks, as Discord's does, and each file as its Blob. It answers
   `leket:chunk` as Discord's does, and adds `leket:file` `{ index, offset }`, which returns
   `{ name, size, data }`: `data` is base64 of up to 6 MiB from `offset`, read with
-  `blob.slice().arrayBuffer()`. It announces with `{ type: "leket:ready", key }`.
-  It keeps only the latest save (`KEEP = 1`): media is large.
-- `src/background.js` `leket:ready` handler: choose the export page from
-  `match(sender.tab.url)?.id`. `discord` opens `discord/export.html`, `messenger` opens
-  `messenger/export.html`, and anything else gets `{ ok: false }`. The message shape stays
-  the same, so `discord/collector.js` and `discord/bridge.js` don't change, and there is no
-  diff to mirror.
+  `blob.slice().arrayBuffer()`; an index or offset that is not a whole number in range gets
+  an error. It announces with `{ type: "leket:ready", key }`. It keeps only the latest save,
+  since media is large, but drops the older one only once `leket:ready` answers ok; a
+  refused or failed handoff drops the new save instead, and acks `ok: false`. It accepts one
+  post per 10 s (a refused one acks `{ ok: false, reason: "too-soon" }`): every post opens
+  a tab, and the page world can post too. A request for a save it no longer holds answers
+  `{ error, gone: true }`.
+- `src/background.js` `leket:ready` handler: choose the export page by the sender tab's
+  hostname: Save can be pressed after the page has moved on inside the site (Discord's
+  friends list matches no module), and a collected save must still open. `discord.com`
+  opens `discord/export.html` on the host alone. `www.messenger.com` and `www.facebook.com`
+  open `messenger/export.html` only while `match(url)` is the messenger module (a thread
+  page): facebook.com's other pages share the window the bridge listens on. Anything else
+  gets `{ ok: false }`. The message shape stays the same, so `discord/collector.js` and
+  `discord/bridge.js` don't change, and there is no diff to mirror.
 - `src/modules/messenger/export.html` + `export.js`: `export.html` loads `../messenger/read.js`
   with a plain `<script>` before the `export.js` module, and `export.js` uses
-  `globalThis.LeketMessengerRead`. Re-validate the posted `file` against
-  `^messenger-[\p{L}\p{N}._-]{1,60}-\d{1,25}\.json$` (else `messenger-export.json`). Check
-  each media file name against `^[\p{L}\p{N}._-]{1,120}$`, with no leading dot; a file that
-  fails is skipped and listed as not captured. Read the JSON through `leket:chunk`,
-  then each file through `leket:file` until `offset >= size`, decoding base64 into
-  Uint8Arrays. Write a `ZipWriter` (default part limit) holding
+  `globalThis.LeketMessengerRead`. Re-validate the posted `file` with `validSaveName`
+  (`^messenger-[\p{L}\p{N}._-]{1,60}-\d{1,25}\.json$`, else `messenger-export.json`). Check
+  each media file name with `validMediaName`; names compare with case folded, the first
+  entry for a name wins, and an invalid or repeated one is listed as not captured. The
+  media bookkeeping lives in `src/modules/messenger/media.js` (tested against a stub
+  bridge): `listMedia`, `readMediaFile` and `settleMedia`. Read the JSON through
+  `leket:chunk`, then each file through `leket:file` until `offset >= size`, decoding
+  base64 into Uint8Arrays. A gone save is fatal (nothing is built). A tab that stops
+  answering ends the reads; the JSON and Markdown are still written, with every file not
+  read by then marked not captured. The JSON and Markdown are written after the media, so
+  they name only files the zip holds: every listed file not saved (a failed read, or never
+  handed over) becomes a `media_not_captured` entry on its own message, and a message keeps
+  only the media entries the zip holds, by identity. Write a `ZipWriter` (default part limit) holding
   `messenger-<name>-<thread>.json`, `messenger-<name>-<thread>.md` (from `renderMarkdown`)
   and `messenger-media/<file>`. Download it with `createPartDownload` exactly as the
   Discord export tab does, with the same retry-by-click link. On release, send
   `leket:release`. The page states the counts: messages, photos and videos saved, and
   media seen but not captured. Media is added to the zip a file at a time, as each one is
-  read, so no more than one file's bytes are held decoded at once.
+  read, so no more than one file's bytes are held decoded at once. Because the JSON and
+  Markdown come last, a save whose media passes the ~2 GiB part limit puts them in the last
+  part; accepted, since retry-by-click covers a part that fails.
 - Smoke (`test/smoke/smoke.mjs`), scenario "messenger": serve a synthetic page at
   `https://www.messenger.com/e2ee/t/123`, click the popup's button, and assert that the
   popup closed and the collector's panel (`#leket-messenger-panel`) mounted, which proves
@@ -248,16 +274,23 @@ the photo link, the placeholders, and line-start escaping.
   video row, a link row and an unsent row. `test/messenger-collector.test.js` asserts the
   count, the dedupe, the names, the photo captured on the way down, the video captured
   (and a second video whose fetch throws, recorded as not captured), the link placeholder, the STALLED path when the header never mounts, the PIN status with no
-  rows, and the group warning.
+  rows, and the group warning. The smoke scenario then posts through the real collector's
+  Save (not a hand-built post), so its post shape is the one checked end to end.
 
 ### D. Docs, version, release
 
 README: a "Save a Messenger conversation" section, the file table, and the layout lines.
 Bump to 0.4.0 in `manifest.json` and `package.json`. Release notes go in the PR that
-completes the batch. Then the owner reloads the unpacked extension and runs one real save
+completes the batch, and say that Chrome asks to re-accept permissions on update (the
+new Messenger and Facebook hosts). Then the owner reloads the unpacked extension and runs one real save
 on a thread she picks (filed as a Needs Lila item).
 
 ## Open, for later
 
 Stickers, voice clips, the unknown
 kinds `4`, `4096` and `2^29`, groups, and the English-locale panel wording.
+
+Ruled out: an unforgeable Save handshake. The collector runs in the page's own world, so
+any script on the thread page can post what it posts; the thread-page check and the
+10 s throttle bound what a forged post can do (open an export tab), and they are the
+whole defence.

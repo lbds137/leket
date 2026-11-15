@@ -93,12 +93,24 @@
     return cleaned || "x";
   }
 
-  // Always matches the export page's check: ^[\p{L}\p{N}._-]{1,120}$, no leading dot.
+  // Always passes validMediaName below.
   function mediaName(day, messageId, n, mime) {
     const baseMime = String(mime ?? "").split(";")[0].trim().toLowerCase();
     const ext = Object.hasOwn(MIME_EXT, baseMime) ? MIME_EXT[baseMime] : "bin";
     const idx = Number.isSafeInteger(n) && n >= 0 ? n : 0;
     return safePart(`${safePart(day, 10)}_${safePart(messageId)}_${idx}.${ext}`, 120);
+  }
+
+  // The export page's checks on names that come from the page world: a media file name
+  // becomes a zip entry under messenger-media/, so no separator, no leading dot, no "..".
+  const MEDIA_NAME_RE = /^[\p{L}\p{N}._-]{1,120}$/u;
+  function validMediaName(name) {
+    return typeof name === "string" && !name.startsWith(".") && MEDIA_NAME_RE.test(name);
+  }
+
+  const SAVE_NAME_RE = /^messenger-[\p{L}\p{N}._-]{1,60}-\d{1,25}\.json$/u;
+  function validSaveName(file) {
+    return typeof file === "string" && SAVE_NAME_RE.test(file) ? file : "messenger-export.json";
   }
 
   // Inline: every character CommonMark could read as markup is backslash-escaped,
@@ -249,7 +261,7 @@
     return `${out.join("\n\n")}\n`;
   }
 
-  const api = { i64, toIso, contentKinds, normalize, renderMarkdown, safePart, mediaName };
+  const api = { i64, toIso, contentKinds, normalize, renderMarkdown, safePart, mediaName, validMediaName, validSaveName };
   globalThis.LeketMessengerRead = api;
   if (typeof module === "object" && module) module.exports = api;
 })();
