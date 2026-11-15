@@ -278,7 +278,8 @@ if (scenario.startsWith("guild-hidden")) {
   // LAST occurrence, so the row's own copy is cut and the label survives — a
   // first-occurrence cut would take the label's copy and the opened bar would stop
   // matching (this pins the occurrence half on the bar path; the later-first order is
-  // pinned on the start path, by the auto scenario's nested-quote test)
+  // pinned by the growing bar below, and on the start path by the auto scenario's
+  // nested-quote test)
   list.add(bar("1 blocked message", [{ id: hiddenId(1, -5), author: blocked, content: "message" }]));
   msgs.slice(0, 3).forEach((m) => list.add(rowNode(m)));
   // first seen while its group was still loading: "1 blocked message", then 2 by the save
