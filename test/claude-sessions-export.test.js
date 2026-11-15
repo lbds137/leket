@@ -52,7 +52,7 @@ const collect = async (sessions, opts = {}) => {
     known: opts.known || {},
     skip: opts.skip || [],
     partStart: opts.partStart ?? 0,
-    run: opts.run || "2026-11-05T1412",
+    run: opts.run || "2026-11-05T141207",
     threshold: opts.threshold,
     timeoutMs: opts.timeoutMs,
     onFlush: opts.onFlush || (async (lines, name) => parts.push({ lines, name })),
@@ -525,16 +525,29 @@ test("marker payload is exact, skipped sessions included in the count; partStart
   );
   // S skipped (no fetch), A fetched: one new part, numbered 04 after partStart 3
   assert.deepEqual(markers[0].payload, { parts: 4, sessions: 2, events: 1, failed: 0 });
-  assert.equal(markers[0].name, "claude-sessions-2026-11-05T1412-done.json");
-  assert.equal(parts[0].name, "claude-sessions-2026-11-05T1412-part04.jsonl");
+  assert.equal(markers[0].name, "claude-sessions-2026-11-05T141207-done.json");
+  assert.equal(parts[0].name, "claude-sessions-2026-11-05T141207-part04.jsonl");
 });
 
 test("filenames: the first part is part01, zero-padded to two digits", async () => {
   const a = oneEventSession("A", "tA", 400), b = oneEventSession("B", "tB", 200);
   const fetch = standIn(routesOneEvent([a, b]));
   const { parts } = await collect(sessionsOf(a, b), { fetch, threshold: 300 });
-  assert.equal(parts[0].name, "claude-sessions-2026-11-05T1412-part01.jsonl");
-  assert.equal(parts[1].name, "claude-sessions-2026-11-05T1412-part02.jsonl");
+  assert.equal(parts[0].name, "claude-sessions-2026-11-05T141207-part01.jsonl");
+  assert.equal(parts[1].name, "claude-sessions-2026-11-05T141207-part02.jsonl");
+});
+
+test("filenames: with no run given, the run key is runKey()'s, seconds included", async () => {
+  const a = oneEventSession("A", "tA", 200);
+  const names = [];
+  await exportSessions(sessionsOf(a), {
+    fetch: standIn(routesOneEvent([a])),
+    onFlush: async (lines, name) => { names.push(name); },
+    onMarker: async (payload, name) => { names.push(name); },
+  });
+  assert.equal(names.length, 2);
+  assert.match(names[0], /^claude-sessions-\d{4}-\d{2}-\d{2}T\d{6}-part01\.jsonl$/);
+  assert.match(names[1], /^claude-sessions-\d{4}-\d{2}-\d{2}T\d{6}-done\.json$/);
 });
 
 test("an all-skipped run still writes its titles-only part and the done marker", async () => {

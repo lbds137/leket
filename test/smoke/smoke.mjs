@@ -116,7 +116,7 @@ const listing = (data) => JSON.stringify({ data, next_cursor: null });
 // claude chat: the chat page's own script calls an org-scoped API, so the org probe finds
 // the org in the tab's resource timeline; one chat lists an upload and an output (only
 // the output is fetched), the other two's listings answer 404 (one listed with a name,
-// one with an empty name, so the failure list shows both forms)
+// one with a null name, so the failure list shows both forms)
 const ORG = "00000000-0000-4000-8000-0000000000aa";
 const ORG_API = `https://claude.ai/api/organizations/${ORG}/`;
 const CHAT_OK = "00000000-0000-4000-8000-000000000001";
@@ -646,7 +646,7 @@ async function scenarios(cdp, downloads) {
   });
 
   // ---- claude chat: popup -> the module's page, which parses a pasted whole file, then
-  // runs a real list: org probe on the tab, list, download, one failed chat, the file ----
+  // runs a real list: org probe on the tab, list, download, two failed chats, the file ----
   await scenario("chat", async () => {
     console.log("smoke: claude chat outputs");
     const chatTab = await open(CLAUDE_CHAT);
@@ -668,7 +668,7 @@ async function scenarios(cdp, downloads) {
     check(seen === true, "chat: the chat tab's own org call is in its resource timeline");
     // the empty list's line is blanked with the click, so the wait reads this run's end
     await evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); p.textContent = ""; p.className = "";
-      document.getElementById("chats").value = ${JSON.stringify(JSON.stringify([[CHAT_OK, "a chat", "smoke"], [CHAT_GONE, "a gone chat", "smoke"], [CHAT_NAMELESS, "", "smoke"]]))};
+      document.getElementById("chats").value = ${JSON.stringify(JSON.stringify([[CHAT_OK, "a chat", "smoke"], [CHAT_GONE, "a gone chat", "smoke"], [CHAT_NAMELESS, null, "smoke"]]))};
       document.getElementById("outputs-run").click(); return true; })()`);
     const end = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status");
       const t = p.hidden ? "" : p.textContent;
@@ -681,7 +681,11 @@ async function scenarios(cdp, downloads) {
     check(JSON.stringify(end.fails) === JSON.stringify([`a gone chat (${CHAT_GONE}): 404 list-files?prefix=`, `${CHAT_NAMELESS}: 404 list-files?prefix=`]),
       `chat: the failure list names the gone chat by its name and id, the nameless one by its id (${JSON.stringify(end.fails)})`);
     if (check(/^claude-chat-outputs-\d{4}-\d{2}-\d{2}\.json$/.test(name || ""), `chat: the dated file is on disk (${name})`)) {
-      const [ok, gone] = JSON.parse(readFileSync(join(downloads, name), "utf8"));
+      const saved = JSON.parse(readFileSync(join(downloads, name), "utf8"));
+      const [ok, gone, nameless] = saved;
+      check(saved.length === 3, `chat: the file holds all three chats (${saved.length})`);
+      check(nameless?.chat === CHAT_NAMELESS && nameless.name === null && nameless.error === "404 list-files?prefix=",
+        `chat: the nameless chat's entry carries its error and its null name (${JSON.stringify(nameless)})`);
       check(ok?.chat === CHAT_OK && ok.files.length === 1 && ok.files[0].path === REPORT_PATH && ok.files[0].text === REPORT && !ok.files[0].size_mismatch,
         "chat: the file holds the one output, as text, at its size (the upload was not fetched)");
       check(gone?.chat === CHAT_GONE && gone.error === "404 list-files?prefix=" && gone.files.length === 0, `chat: the gone chat's entry carries its error (${gone?.error})`);
