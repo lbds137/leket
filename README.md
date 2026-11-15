@@ -3,13 +3,14 @@
 A Chrome extension that saves what you can see on a few sites, to files you keep:
 
 - **Discord**: a DM, a server channel or a thread, with its attachments, as a zip (in parts when the save is large). Unzipped, it holds a page you can read offline, the attachments, and the full data as JSON.
+- **Messenger**: a one-to-one conversation on messenger.com or facebook.com/messages, with its photos and videos, as a zip holding the messages as Markdown and JSON.
 - **Etsy**: your conversations with shops or buyers, as one dated JSON.
 - **Reddit**: a post with its comments, as Markdown, with its JSON alongside.
 - **claude.ai**: your claude.ai/code sessions (export, rename, delete), and the files Claude delivered in your chats.
 
 Click its toolbar button on one of these sites and it offers what it can do there; anywhere else it lists them.
 
-On Discord it reads only what Discord's own page loads while it scrolls back through the conversation. It doesn't log in as you, use a bot, or call Discord's API. That also means it saves only what your account can see.
+On Discord it reads only what Discord's own page loads while it scrolls back through the conversation. It doesn't log in as you, use a bot, or call Discord's API. That also means it saves only what your account can see. Messenger works the same way: it reads what the open conversation shows as it scrolls.
 
 ## Install (once)
 
@@ -55,6 +56,31 @@ If you only want the messages, untick **save attachments too** before clicking S
 
 `src/modules/discord/collector.js` also works on its own: paste its contents into Chrome's DevTools console (F12, Console tab) on an open conversation. Save then downloads the JSON alone, without attachments or the readable page.
 
+## Save a Messenger conversation
+
+1. Open the conversation on [messenger.com](https://www.messenger.com) or [facebook.com/messages](https://www.facebook.com/messages) in Chrome. One-to-one conversations only for now: a group can be saved, but the panel warns that groups haven't been checked yet.
+2. Click the **Leket** button in the toolbar, then **Save this conversation**. A small panel appears at the top right of the page.
+3. Click **Start**. It jumps to the newest message, scrolls up to the start of the conversation, then back down, reading messages, photos and videos as they appear. Leave the tab alone while it runs. **Stop** ends it early; what was read so far is kept.
+4. When the panel says **Done**, click **Save**. A new tab opens and saves the zip to your Downloads folder. Keep that tab open until it says it's done.
+
+The photos are the ones the conversation shows. Whether those are always full size, or sometimes a smaller copy of a large photo, hasn't been checked yet.
+
+When something goes wrong:
+
+- **"No messages are showing"**: Messenger may be asking for your PIN to restore your chats. Enter it there (Leket never touches it), then click **Start** again.
+- **"STALLED, not at the start"**: Messenger stopped loading older messages. Scroll up a little by hand, then click **Start** again. **Save** keeps what was read so far.
+- **"Saved less than 10 seconds ago"**: wait a moment and click **Save** again.
+- **"The extension didn't answer"**: the extension was updated or reloaded after you clicked its button. The messages were saved as a JSON file in Downloads, without the photos and videos. For those, reload the Messenger tab, click the button again and start again.
+- **Photos or videos marked "not captured"**: the Markdown file says where each one was, and the JSON says why (one that never finished loading, or a video Messenger streams in a way that can't be read back).
+
+What's in the zip:
+
+| File | What it is |
+|---|---|
+| `messenger-<name>-<thread>.md` | The conversation, readable as plain text or in any Markdown viewer, with the photos inline |
+| `messenger-<name>-<thread>.json` | Everything that was collected: each message's text, sender, time, replies, and its photos and videos |
+| `messenger-media/` | The photos and videos, named `<date>_<message id>_<n>` |
+
 ## Save Etsy conversations
 
 1. Sign in to [etsy.com](https://www.etsy.com) in Chrome and open any Etsy page — ideally the conversation you want, at `etsy.com/messages/<id>`.
@@ -90,19 +116,25 @@ These two pages are bulk tools for claude.ai. Their input lists come from script
 
 `npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies.
 
-`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons, one isolated scenario per module (a failure fails that module and the rest still run): a reddit save (twice: the second must overwrite, not add a renamed copy), and a reddit image save; a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it; a claude.ai sessions export whose download reports late; a claude.ai chat-outputs run, twice (the second must overwrite); and Etsy saves, four over one file, then two the harness makes Chrome refuse. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does). On Linux it finds a Playwright Chromium in `~/.cache/ms-playwright`, or in `PLAYWRIGHT_BROWSERS_PATH` when that is set (`npx playwright install chromium`). On other systems, or to pick a browser, set `LEKET_CHROME` to one. Without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. CI runs the smoke on every pull request, in the Chromium build pinned in `.github/workflows/ci.yml`. The unit tests stub `chrome.*`, so run the smoke locally too before pushing any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
+`npm run smoke` loads the unpacked extension into a headless Chromium, opens the real popup and presses its buttons, one isolated scenario per module (a failure fails that module and the rest still run): a reddit save (twice: the second must overwrite, not add a renamed copy), and a reddit image save; a Discord save, from the bridge onward (the harness posts the collector's hand-off itself), whose zip's first try is cancelled so the export tab's retry click has to save it; two Messenger saves, one whose hand-off the harness posts itself (with a repeated photo name and a missing video the export tab must report) and one swept and saved by the real panel, with a photo and a video; a claude.ai sessions export whose download reports late; a claude.ai chat-outputs run, twice (the second must overwrite); and Etsy saves, four over one file, then two the harness makes Chrome refuse. Every page is synthetic and served by the harness; requests are intercepted, DNS resolves nothing and no proxy is used. It needs a Chromium that still loads unpacked extensions (branded Google Chrome no longer does). On Linux it finds a Playwright Chromium in `~/.cache/ms-playwright`, or in `PLAYWRIGHT_BROWSERS_PATH` when that is set (`npx playwright install chromium`). On other systems, or to pick a browser, set `LEKET_CHROME` to one. Without one it exits 2. `LEKET_SMOKE_KEEP=1` keeps the profile and downloads for a look. CI runs the smoke on every pull request, in the Chromium build pinned in `.github/workflows/ci.yml`. The unit tests stub `chrome.*`, so run the smoke locally too before pushing any change to `src/background.js`, the popup, an offscreen document, an export or download path, or a module's launch.
 
 Layout:
 
 - `src/popup/popup.html`, `src/popup/popup.js`: the toolbar popup. It detects what the active tab supports and renders that module's card.
 - `src/popup/commands.js`: what each card's buttons do, one map per module; the tests pin every registered command to an implementation here.
 - `src/modules/registry.js`: the supported sites, matched by URL, and each module's buttons.
-- `src/background.js`: the service worker. It carries the Discord module's launch (the popup hands the click over), opens the export tab when the collector's Save hands over, and runs the reddit save (it opens the offscreen document and downloads what that prepares).
+- `src/background.js`: the service worker. It carries the Discord and Messenger launches (the popup hands the click over), opens the matching export tab when a collector's Save hands over, and runs the reddit save (it opens the offscreen document and downloads what that prepares).
 - `src/modules/discord/`: the Discord module.
   - `launch.js`: its command — what the popup's button does.
   - `collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
   - `bridge.js`: hands the collector's export from the page to the export tab, in pieces.
   - `export.html`, `export.js`: the export tab. With `src/lib/`, it fetches the attachments, writes `index.html` and builds the zip.
+- `src/modules/messenger/`: the Messenger module.
+  - `launch.js`: its command.
+  - `read.js`: pure helpers (dates, message fields, file names, the Markdown), shared by the panel, the export tab and the tests.
+  - `collector.js`: the panel. It runs in the page's own world, because Messenger's message objects are on its React elements, and it reads each photo and video's bytes there, since only that page can.
+  - `bridge.js`: hands the collector's save, photos and videos included, from the page to the export tab, in pieces.
+  - `export.html`, `export.js`, `media.js`: the export tab, which reads the pieces and builds the zip.
 - `src/modules/reddit/`: the Reddit module.
   - `json.js`: its command; it hands the save to the worker.
   - `offscreen.html`, `offscreen.js`, `prepare.js`: the offscreen document, which fetches the post's JSON and images and renders the .md (again once the images are saved, so it links them), so the save outlives the popup.
@@ -113,6 +145,7 @@ Layout:
 - `src/modules/claude-chat/`: the claude.ai chat-outputs module. `page.html`, `page.js`: its page; `outputs.js`: lists and fetches each chat's delivered files (no extension APIs).
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
+- `test/fixtures/messenger_page.cjs`: the same for Messenger.
 - `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).
 - `icons/`: the toolbar and extension icons. `source/logo.svg` draws the 48 and 128 px ones; `source/logo-16.svg` is a simplified version for 16 px, where the full one blurs. Regenerate with `rsvg-convert -w N -h N icons/source/logo.svg -o icons/iconN.png` (`logo-16.svg` for N = 16).
 
