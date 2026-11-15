@@ -1,5 +1,5 @@
-// The Discord module's launch: the popup hands the click over
-// (src/modules/discord/launch.js) and the worker does the injecting — a popup dies when
+// The worker-launched modules (Discord, Messenger): the popup hands the click over
+// (the module's launch.js) and the worker does the injecting — a popup dies when
 // it loses focus, and a launch must finish once started. A module worker, so the
 // conversation test comes from the registry (src/modules/registry.js): one copy, not
 // two that can drift.
@@ -15,24 +15,66 @@ const flag = async (tabId, text, title) => {
   } catch { /* the tab is gone */ }
 };
 
+// What each worker command injects, in order. The bridge goes first: the collector looks
+// for its mark when Save is pressed. The collector runs in the page's own world: the
+// message objects live on the site's React elements, which a content script's isolated
+// world can't see.
+const LAUNCH = {
+  discord: {
+    save: [
+      { files: ["src/modules/discord/bridge.js"] },
+      { files: ["src/modules/discord/collector.js"], world: "MAIN" },
+    ],
+  },
+  messenger: {
+    save: [
+      { files: ["src/modules/messenger/bridge.js"] },
+      { files: ["src/modules/messenger/read.js"], world: "MAIN" },
+      { files: ["src/modules/messenger/collector.js"], world: "MAIN" },
+    ],
+  },
+};
+
+// The export page for a bridge's leket:ready, by the tab's host: Save can be pressed after
+// the page has moved on inside the site (Discord's friends list is no conversation), and a
+// save already collected must still open its export tab. A Messenger host also needs a
+// thread page (`thread`): www.facebook.com is the whole site, and its other pages share
+// the window the bridge listens on, so a post from them opens nothing.
+const EXPORT_PAGES = {
+  "discord.com": { page: "src/modules/discord/export.html" },
+  "www.messenger.com": { page: "src/modules/messenger/export.html", thread: "messenger" },
+  "www.facebook.com": { page: "src/modules/messenger/export.html", thread: "messenger" },
+};
+
+const exportPageFor = (url) => {
+  try {
+    const host = new URL(url).hostname;
+    if (!Object.hasOwn(EXPORT_PAGES, host)) return null;
+    const { page, thread } = EXPORT_PAGES[host];
+    return thread && match(url)?.id !== thread ? null : page;
+  } catch {
+    return null;
+  }
+};
+
 const launch = async (tabId, command) => {
   // a command the popup may render but the worker does not carry yet is refused, not
-  // run as save (a second Discord command dispatches here)
-  if (command !== "save") {
+  // run as save
+  if (!Object.values(LAUNCH).some((m) => Object.hasOwn(m, command))) {
     return { ok: false, error: `The worker has no "${command}" command.` };
   }
   try {
-    // the tab may have navigated since the popup matched it
+    // the tab may have navigated since the popup matched it; routing comes from match(tab.url).id alone
     const tab = await chrome.tabs.get(tabId);
-    if (match(tab.url || "")?.id !== "discord") {
-      await flag(tabId, "?", "Leket: open a DM or a channel on discord.com first, then click again");
-      return { ok: false, error: "This tab is no longer a Discord conversation — open a DM or a channel and click again." };
+    const mod = match(tab.url || "")?.id;
+    const steps = mod && LAUNCH[mod]?.[command];
+    if (!steps) {
+      await flag(tabId, "?", "Leket: open a conversation on discord.com, messenger.com or facebook.com/messages first, then click again");
+      return { ok: false, error: "This tab is no longer a Discord conversation or a Messenger conversation — open a DM, channel or thread on discord.com, messenger.com or facebook.com/messages and click again." };
     }
-    // the bridge first: the collector looks for its mark when Save is pressed
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["src/modules/discord/bridge.js"] });
-    // the page's own world: Discord's message objects live on its React elements, which
-    // a content script's isolated world can't see
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["src/modules/discord/collector.js"], world: "MAIN" });
+    for (const step of steps) {
+      await chrome.scripting.executeScript({ target: { tabId }, ...step });
+    }
     await flag(tabId, "", "Leket: save this conversation");
     return { ok: true };
   } catch (e) {
@@ -137,9 +179,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true; // the answer comes after the save
   }
   if (!msg || msg.type !== "leket:ready" || !sender.tab) return;
-  const q = new URLSearchParams({ tab: String(sender.tab.id), key: msg.key });
-  chrome.tabs.create({ url: chrome.runtime.getURL(`src/modules/discord/export.html?${q}`), index: sender.tab.index + 1, windowId: sender.tab.windowId })
-    .then(() => reply({ ok: true }), () => reply({ ok: false }));
+  (async () => {
+    const tabUrl = sender.tab.url ?? (await chrome.tabs.get(sender.tab.id).catch(() => null))?.url;
+    const page = exportPageFor(tabUrl || "");
+    if (!page) return reply({ ok: false });
+    const q = new URLSearchParams({ tab: String(sender.tab.id), key: msg.key });
+    await chrome.tabs.create({ url: chrome.runtime.getURL(`${page}?${q}`), index: sender.tab.index + 1, windowId: sender.tab.windowId });
+    reply({ ok: true });
+  })().catch(() => reply({ ok: false }));
   // the answer comes after the tab is opened
   return true;
 });

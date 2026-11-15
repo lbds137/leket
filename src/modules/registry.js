@@ -30,16 +30,40 @@ export const CODE_PATHNAME = new RegExp(String.raw`^\/code(?=$|\/)`);
 // stays nobody's territory, and /chatX is a different path altogether.
 export const CHAT_PATHNAME = new RegExp(String.raw`^\/chat(?=$|\/)`);
 
+// Anchored pathname patterns for a Messenger conversation thread on www.messenger.com
+// (/t/<digits> or /e2ee/t/<digits>, optional trailing /) and www.facebook.com (/messages/...).
+export const MESSENGER_PATHNAME = new RegExp(String.raw`^\/(e2ee\/)?t\/\d+\/?$`);
+export const FACEBOOK_MESSAGES_PATHNAME = new RegExp(
+  String.raw`^\/messages\/(e2ee\/)?t\/\d+\/?$`,
+);
+
 export const MODULES = [
   {
     id: "discord",
     // a DM (@me), a server channel or a thread: /channels/<guild>/<channel>[/<thread>].
     // A worker-run command lives in three places: here, src/popup/commands.js (via the
-    // module's launch.js), and the command check in src/background.js launch() —
+    // module's launch.js), and the launch table in src/background.js launch() —
     // test/registry.test.js pins only the first two.
     matches: (url) => /^https:\/\/discord\.com\/channels\/(@me|\d+)\/\d+/.test(url),
     title: "Discord",
     blurb: "Save this DM, channel or thread, with its attachments, as one zip you can open offline.",
+    commands: [{ id: "save", label: "Save this conversation" }],
+  },
+  {
+    id: "messenger",
+    matches: (url) => {
+      try {
+        const u = new URL(url);
+        // https only: the manifest's host permissions and the bridge's origin check are https
+        if (u.protocol !== "https:") return false;
+        return (u.hostname === "www.messenger.com" && MESSENGER_PATHNAME.test(u.pathname))
+          || (u.hostname === "www.facebook.com" && FACEBOOK_MESSAGES_PATHNAME.test(u.pathname));
+      } catch {
+        return false;
+      }
+    },
+    title: "Messenger",
+    blurb: "Save this conversation, with its photos and videos, as one zip.",
     commands: [{ id: "save", label: "Save this conversation" }],
   },
   {

@@ -3,7 +3,7 @@
   "name": "Leket",
   "version": "0.3.40",
   "minimum_chrome_version": "109",
-  "description": "Save Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
+  "description": "Save Discord and Messenger conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "action": {
     "default_title": "Leket",
     "default_popup": "src/popup/popup.html",
@@ -16,6 +16,8 @@
     "https://discord.com/*",
     "https://cdn.discordapp.com/*",
     "https://media.discordapp.net/*",
+    "https://www.messenger.com/*",
+    "https://www.facebook.com/*",
     "https://www.reddit.com/*",
     "https://old.reddit.com/*",
     "https://i.redd.it/*",
