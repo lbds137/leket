@@ -9,13 +9,13 @@
 import { API_ORIGIN } from "./listing.js";
 import { assignedJson } from "../../lib/paste.js";
 
-// the run's key, YYYY-MM-DDTHHMM in UTC: two runs on one day never share file names, so
+// the run's key, YYYY-MM-DDTHHMMSS in UTC: two runs, even in one minute, never share file names, so
 // bin/claude-sessions-weekly splits each run on its own instead of merging them. A
 // resumed run (PART_START) takes a fresh run key on purpose — the first run's parts,
 // markerless, wait for weekly's 24 h STALE_HOURS fallback and ingest then (weekly's
 // ingest step: "no end marker after 24 h; taking the part file(s) as they are"), so
 // nothing is orphaned by the new key.
-export const runKey = (date = new Date()) => date.toISOString().slice(0, 16).replace(":", "");
+export const runKey = (date = new Date()) => date.toISOString().slice(0, 19).replaceAll(":", "");
 
 const partName = (run, n) => `claude-sessions-${run}-part${String(n).padStart(2, "0")}.jsonl`;
 const markerName = (run) => `claude-sessions-${run}-done.json`;
