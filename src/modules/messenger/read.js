@@ -96,7 +96,7 @@
   // Always matches the export page's check: ^[\p{L}\p{N}._-]{1,120}$, no leading dot.
   function mediaName(day, messageId, n, mime) {
     const baseMime = String(mime ?? "").split(";")[0].trim().toLowerCase();
-    const ext = MIME_EXT[baseMime] || "bin";
+    const ext = Object.hasOwn(MIME_EXT, baseMime) ? MIME_EXT[baseMime] : "bin";
     const idx = Number.isSafeInteger(n) && n >= 0 ? n : 0;
     return safePart(`${safePart(day, 10)}_${safePart(messageId)}_${idx}.${ext}`, 120);
   }
@@ -122,7 +122,8 @@
   function paragraphs(text, prefix = "") {
     const blocks = [];
     let cur = [];
-    for (const ln of String(text).split(/\r?\n/)) {
+    // a lone \r ends a line too, as it does for a CommonMark reader
+    for (const ln of String(text).split(/\r\n|\r|\n/)) {
       if (ln.trim() === "") {
         if (cur.length) blocks.push(cur);
         cur = [];
@@ -134,8 +135,13 @@
     return blocks.map((b) => b.join("\\\n")).join(prefix ? `\n${prefix.trimEnd()}\n` : "\n\n");
   }
 
+  function oneLine(s) {
+    return String(s ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  // An angle-bracket link destination ends at a space or `>`, and a `\` in it escapes.
   function safeHref(href) {
-    return String(href).replace(/[\s<>]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+    return String(href).replace(/[\s<>\\]/g, (c) => encodeURIComponent(c));
   }
 
   function makeFormatter(tz) {
@@ -181,19 +187,19 @@
     const firstDate = dated.length ? dated[0].day : "(no date)";
     const lastDate = dated.length ? dated[dated.length - 1].day : "(no date)";
     const count = exp && exp.count != null ? exp.count : messages.length;
-    const title = String((exp && exp.title) || "").replace(/\s+/g, " ").trim() || "Messenger conversation";
+    const title = oneLine(exp && exp.title) || "Messenger conversation";
     const meta = [
       exp && exp.host ? exp.host : "messenger",
       exp && exp.thread_id != null ? `thread ${exp.thread_id}` : null,
       `${count} messages`,
       `${firstDate} – ${lastDate}`,
       exp && exp.saved_at ? `saved ${exp.saved_at}` : null,
-    ].filter(Boolean).map(escapeInline).join(" · ");
+    ].filter(Boolean).map(oneLine).join(" · ");
 
     const out = [`# ${escapeInline(title).replace(/#/g, "\\#")}`, escapeLine(meta)];
 
     const renderMessage = (m, hhmm) => {
-      const name = m.sender || m.sender_id || "unknown";
+      const name = oneLine(m.sender) || oneLine(m.sender_id) || "unknown";
       const label = `${escapeInline(name)}${m.outgoing === true ? " (you)" : ""}`;
       const blocks = [`**${label}**${hhmm ? ` ${hhmm}` : ""}`];
       if (m.reply_to && m.reply_to.text != null && String(m.reply_to.text).trim() !== "") {
@@ -203,16 +209,16 @@
 
       const notes = [];
       if (m.unsent) notes.push("[unsent]");
-      const media = m.media || [];
-      for (const med of media) {
-        if (med.kind === "video") {
-          const secs = Number.isFinite(med.duration_s) ? `, ${Math.round(med.duration_s)} s` : "";
-          notes.push(`[video${secs}](messenger-media/${med.file})`);
-        } else {
-          notes.push(`![photo](messenger-media/${med.file})`);
+      else {
+        const media = m.media || [];
+        for (const med of media) {
+          if (med.kind === "video") {
+            const secs = Number.isFinite(med.duration_s) ? `, ${Math.round(med.duration_s)} s` : "";
+            notes.push(`[video${secs}](messenger-media/${med.file})`);
+          } else {
+            notes.push(`![photo](messenger-media/${med.file})`);
+          }
         }
-      }
-      if (!m.unsent) {
         const kinds = m.kinds || [];
         const lost = missing.get(m.id) || [];
         for (const x of lost) notes.push(`[${x.kind === "video" ? "video" : "photo"}, not captured]`);
