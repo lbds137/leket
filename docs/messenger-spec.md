@@ -73,7 +73,7 @@ Units A, B and C all use this one shape. The export JSON:
 ```
 { leket: "messenger", version: 1, host, thread_id, url, title, saved_at (ISO), time_zone,
   count, senders: { "<sender_id>": "<name>" }, group_warning: bool,
-  media_not_captured: [{ message_id, reason }],
+  media_not_captured: [{ message_id, kind: "photo"|"video", reason }],   // one per item
   messages: [Message] }            // sorted by time, then id
 Message = { id, time (ISO|null), sender_id (string|null), sender (string|null),
   outgoing (bool|null), text (string|null), unsent (bool), edited (bool),
@@ -106,12 +106,23 @@ A classic script, with no `import` or `export`. It is injected into the page bef
 - `renderMarkdown(exp)` → one Markdown document: a title line, then a meta line with the
   host, thread id, message count, first and last date, and save time. After that, each
   day gets a `## YYYY-MM-DD` heading (in the page's time zone, passed in), and each message
-  is `**<sender>** HH:MM` followed by its text, with `> ` for a reply's quoted text.
+  is a `**<sender>** HH:MM` paragraph, then the reply's quoted text as its own `> ` block,
+  then its text (source lines joined with backslash hard breaks, blank lines kept as
+  paragraph breaks), then one notes paragraph. Blank lines separate every block, so a quote
+  never swallows what follows it.
   Each saved photo is `![photo](messenger-media/<file>)` and each saved video
-  `[video, <duration> s](messenger-media/<file>)`. Content that isn't saved gets a
-  bracketed note: `[photo, not captured]`, `[video, not captured]`, `[sticker]`, `[link preview: <href>]` and
-  `[unsent]`. Escape Markdown only where it breaks structure, meaning a line starting with
-  `#`, `>` or `-`.
+  `[video, <duration> s](messenger-media/<file>)` (just `[video](…)` when the duration is
+  unknown). Content that isn't saved gets a
+  bracketed note: `[photo, not captured]` / `[video, not captured]` (one per
+  `media_not_captured` entry for that message, by its `kind`, or one when a media row has
+  nothing saved and no entry), `[sticker]`, `[link preview](<href>)` (spaces and `<>`
+  percent-encoded) and `[unsent]`; an unsent message gets no media, sticker or link notes.
+  Text renders literally: in text, quotes, names and the title, `` \ ` * _ [ ] < > ~ | & ``
+  are backslash-escaped; a line starting with `#`, `>`, `-`, `+`, `=` or `:` gets a leading
+  backslash, an ordered-list marker gets one before its `.` or `)` (`1\.`, since CommonMark
+  escapes only punctuation), and leading spaces become no-break spaces so an indent never
+  opens a code block. Messages are sorted by time, then id, before rendering, and an
+  invalid time zone falls back to UTC.
 - `safePart(s, max)` → `s` with every character outside `[\p{L}\p{N}._-]` replaced by `_`,
   runs of `_` collapsed, leading dots stripped, and cut to `max` characters (default 40);
   `"x"` if that leaves it empty. `mediaName(day, messageId, n, mime)` →
@@ -214,9 +225,12 @@ the photo link, the placeholders, and line-start escaping.
      when its `currentSrc || src` starts with `blob:`, read it with `await fetch` the same
      way (a fetch that throws, as a MediaSource blob URL would, is recorded as not captured
      with the error as its reason) and store `duration_s` from `video.duration` when it is
-     finite. Count the photos and videos captured on the panel, with their total MB. A
-     media row that ends the sweep with nothing captured, whatever its `src` scheme, goes in
-     `media_not_captured` with its message id.
+     finite. Count the photos and videos captured on the panel, with their total MB. Each
+     photo or video seen but not captured by the end of the sweep (a failed fetch, a `src`
+     of another scheme, an img that never completed) gets one `media_not_captured` entry
+     `{ message_id, kind, reason }`, so a row with some items saved still shows the rest
+     as missing. A media row with nothing seen at all gets one entry of kind `photo` with
+     reason `no media element`.
   4. Link-preview rows record the first `a[href^="http"]` href as `link`. Their
      thumbnails are not saved.
 - More than 2 distinct `sender_id`s: the status warns "This looks like a group
