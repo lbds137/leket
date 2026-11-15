@@ -68,10 +68,10 @@ const ROUTES_NONE = new Proxy({}, { get: () => () => noEvents });
 
 // --- runKey
 
-test("runKey is YYYY-MM-DDTHHMM UTC with the colon stripped", () => {
-  assert.equal(runKey(new Date("2026-11-05T14:12:00Z")), "2026-11-05T1412");
-  // two runs on one day differ by the minute, never share names
-  assert.notEqual(runKey(new Date("2026-11-05T14:12:00Z")), runKey(new Date("2026-11-05T14:13:00Z")));
+test("runKey is YYYY-MM-DDTHHMMSS UTC with the colons stripped", () => {
+  assert.equal(runKey(new Date("2026-11-05T14:12:07.900Z")), "2026-11-05T141207");
+  // two runs in one minute differ by the second, never share names
+  assert.notEqual(runKey(new Date("2026-11-05T14:12:00Z")), runKey(new Date("2026-11-05T14:12:01Z")));
 });
 
 // --- parseKnown

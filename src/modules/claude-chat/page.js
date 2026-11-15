@@ -88,9 +88,10 @@ $("outputs-run").addEventListener("click", (e) => busy(e.target, async () => {
     const failedChats = done.results.filter((r) => r.error);
     // what the run says at the end, from what actually happened: a download Chrome
     // interrupted or refused is not a Done, however green the collection was, and
-    // failed chats are named either way
+    // failed chats are named either way: by the list's name with the id after it, or by
+    // the id alone when the list gave no name
     const finish = (saved) => {
-      failures(failedChats.map((r) => `${r.chat}: ${r.error}`));
+      failures(failedChats.map((r) => `${typeof r.name === "string" && r.name.trim() ? `${r.name.trim()} (${r.chat})` : r.chat}: ${r.error}`));
       if (saved === true) {
         const end = doneLine({ chats: chats.length, fileCount: done.fileCount, results: done.results, filename });
         say(end.text, end.warn ? "warn" : "ok");

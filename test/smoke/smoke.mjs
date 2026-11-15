@@ -13,7 +13,7 @@
 // the page hears nothing first and the part's late end after, on cue (the file itself
 // is on disk at once; what's covered is the stop and the late-end narration). The chat
 // page runs for real too: its org probe reads the chat tab's resource timeline, then it
-// lists and downloads a synthetic chat's outputs and names a second chat that fails,
+// lists and downloads a synthetic chat's outputs and names two chats that fail (one by name, one by id),
 // then runs again and must replace that day's file, not add a renamed copy.
 // The Etsy page, prefilled from the tab, pages a synthetic message-list endpoint and
 // saves four times over one file: twice from the prefilled box, then from an emptied
@@ -115,11 +115,13 @@ const EARLIER_SESSION = "cse_smokeearlier"; // in the pasted resume line only: n
 const listing = (data) => JSON.stringify({ data, next_cursor: null });
 // claude chat: the chat page's own script calls an org-scoped API, so the org probe finds
 // the org in the tab's resource timeline; one chat lists an upload and an output (only
-// the output is fetched), the other's listing answers 404
+// the output is fetched), the other two's listings answer 404 (one listed with a name,
+// one with an empty name, so the failure list shows both forms)
 const ORG = "00000000-0000-4000-8000-0000000000aa";
 const ORG_API = `https://claude.ai/api/organizations/${ORG}/`;
 const CHAT_OK = "00000000-0000-4000-8000-000000000001";
 const CHAT_GONE = "00000000-0000-4000-8000-000000000002";
+const CHAT_NAMELESS = "00000000-0000-4000-8000-000000000003";
 const wiggle = (chat) => `${ORG_API}conversations/${chat}/wiggle/`;
 const REPORT_PATH = "/mnt/user-data/outputs/report.md";
 const REPORT = "# a report\n\nan output's text\n";
@@ -153,6 +155,7 @@ const WEB = new Map([
   ] }) }],
   [`${wiggle(CHAT_OK)}download-file?path=${encodeURIComponent(REPORT_PATH)}`, { type: "text/markdown", body: REPORT }],
   [`${wiggle(CHAT_GONE)}list-files?prefix=`, { type: "application/json", body: "{}", status: 404 }],
+  [`${wiggle(CHAT_NAMELESS)}list-files?prefix=`, { type: "application/json", body: "{}", status: 404 }],
   [`${SESSIONS_API}?statuses=active&limit=50`, { type: "application/json", body: listing([
     { id: NEW_SESSION, title: "a new session", last_event_at: "2021-01-03T00:00:00Z" },
     { id: KNOWN_SESSION, title: "an archived session", last_event_at: "2021-01-01T00:00:00Z" },
@@ -665,7 +668,7 @@ async function scenarios(cdp, downloads) {
     check(seen === true, "chat: the chat tab's own org call is in its resource timeline");
     // the empty list's line is blanked with the click, so the wait reads this run's end
     await evalIn(cp, `(() => { const p = document.getElementById("outputs-status"); p.textContent = ""; p.className = "";
-      document.getElementById("chats").value = ${JSON.stringify(JSON.stringify([[CHAT_OK, "a chat", "smoke"], [CHAT_GONE, "a gone chat", "smoke"]]))};
+      document.getElementById("chats").value = ${JSON.stringify(JSON.stringify([[CHAT_OK, "a chat", "smoke"], [CHAT_GONE, "a gone chat", "smoke"], [CHAT_NAMELESS, "", "smoke"]]))};
       document.getElementById("outputs-run").click(); return true; })()`);
     const end = await waitFor(() => evalIn(cp, `(() => { const p = document.getElementById("outputs-status");
       const t = p.hidden ? "" : p.textContent;
@@ -673,9 +676,10 @@ async function scenarios(cdp, downloads) {
         fails: [...document.getElementById("outputs-failures").children].map((li) => li.textContent) }; })()`),
     "the chat page's end line", 15000).catch(soft((e) => ({ t: e.message, fails: [] })));
     const name = landed().find((f) => f.startsWith("claude-chat-outputs-"));
-    check(end.t === `Done: 2 chats, 1 files saved to ${name}. 1 chat(s) failed — their entries carry an "error".` && end.cls === "warn",
-      `chat: the run probes the org, saves one output and names the failed chat (it said: ${end.t} [${end.cls}])`);
-    check(JSON.stringify(end.fails) === JSON.stringify([`${CHAT_GONE}: 404 list-files?prefix=`]), `chat: the failure list names the gone chat (${JSON.stringify(end.fails)})`);
+    check(end.t === `Done: 3 chats, 1 files saved to ${name}. 2 chat(s) failed — their entries carry an "error".` && end.cls === "warn",
+      `chat: the run probes the org, saves one output and names the failed chats (it said: ${end.t} [${end.cls}])`);
+    check(JSON.stringify(end.fails) === JSON.stringify([`a gone chat (${CHAT_GONE}): 404 list-files?prefix=`, `${CHAT_NAMELESS}: 404 list-files?prefix=`]),
+      `chat: the failure list names the gone chat by its name and id, the nameless one by its id (${JSON.stringify(end.fails)})`);
     if (check(/^claude-chat-outputs-\d{4}-\d{2}-\d{2}\.json$/.test(name || ""), `chat: the dated file is on disk (${name})`)) {
       const [ok, gone] = JSON.parse(readFileSync(join(downloads, name), "utf8"));
       check(ok?.chat === CHAT_OK && ok.files.length === 1 && ok.files[0].path === REPORT_PATH && ok.files[0].text === REPORT && !ok.files[0].size_mismatch,
@@ -690,7 +694,7 @@ async function scenarios(cdp, downloads) {
       return (t.startsWith("Done:") || (p.className === "warn" && t !== "")) && t; })()`), "the chat page's second end line", 15000).catch(soft((e) => e.message));
     const twice = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-", state: "complete" }).then((d) => d.length)`)
       .then((n) => n >= 2 && n), "the second chat save to finish").catch(soft((e) => e.message));
-    check(twice === 2 && again.startsWith("Done: 2 chats, 1 files saved to"), `chat: a second run saves again (${twice} finished; it said: ${again})`);
+    check(twice === 2 && again.startsWith("Done: 3 chats, 1 files saved to"), `chat: a second run saves again (${twice} finished; it said: ${again})`);
     await sleep(500); // a stray third save would have a moment to land: Chrome's count, read again, still matches
     const settled = await extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-" }).then((d) => d.length)`);
     check(settled === 2, `chat: no further chat download started (${settled} in Chrome's list)`);
