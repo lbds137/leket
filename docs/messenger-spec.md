@@ -115,8 +115,10 @@ A classic script, with no `import` or `export`. It is injected into the page bef
   unknown). Content that isn't saved gets a
   bracketed note: `[photo, not captured]` / `[video, not captured]` (one per
   `media_not_captured` entry for that message, by its `kind`, or one when a media row has
-  nothing saved and no entry), `[sticker]`, `[link preview](<href>)` (spaces and `<>`
-  percent-encoded) and `[unsent]`; an unsent message gets no media, sticker or link notes.
+  nothing saved and no entry), `[sticker]`, `[link preview](<href>)` (only for an `http:` or `https:` link, spaces and `<>`
+  percent-encoded) and `[unsent]`; an unsent message gets no media, sticker or link notes. A save
+  from anywhere is untrusted: `messages` that is not an array renders as none, and an entry
+  that is not an object is skipped.
   Text renders literally: in text, quotes, names and the title, `` \ ` * _ [ ] < > ~ | & ``
   are backslash-escaped; a line starting with `#`, `>`, `-`, `+`, `=` or `:` gets a leading
   backslash, an ordered-list marker gets one before its `.` or `)` (`1\.`, since CommonMark
@@ -179,9 +181,13 @@ the photo link, the placeholders, and line-start escaping.
   `blob.slice().arrayBuffer()`; an index or offset that is not a whole number in range gets
   an error. It announces with `{ type: "leket:ready", key }`. It keeps only the latest save,
   since media is large, but drops the older one only once `leket:ready` answers ok; a
-  refused or failed handoff drops the new save instead, and acks `ok: false`. It accepts one
+  refused or failed handoff drops the new save instead, and acks `ok: false`, passing on the
+  worker's `reason` when it is `not-a-thread` or `too-soon` (any other is dropped). It accepts one
   post per 10 s (a refused one acks `{ ok: false, reason: "too-soon" }`): every post opens
-  a tab, and the page world can post too. A request for a save it no longer holds answers
+  a tab, and the page world can post too. On accepting a post (past the throttle check) it
+  acks `{ type: "leket:ack", id, pending: true }` at once, then the final ack when the
+  handoff is decided. A handoff that ends `ok: false` gives its slot back: only a post that
+  opened a tab counts toward the 10 s. A request for a save it no longer holds answers
   `{ error, gone: true }`.
 - `src/background.js` `leket:ready` handler: choose the export page by the sender tab's
   hostname: Save can be pressed after the page has moved on inside the site (Discord's
@@ -189,7 +195,7 @@ the photo link, the placeholders, and line-start escaping.
   opens `discord/export.html` on the host alone. `www.messenger.com` and `www.facebook.com`
   open `messenger/export.html` only while `match(url)` is the messenger module (a thread
   page): facebook.com's other pages share the window the bridge listens on. Anything else
-  gets `{ ok: false }`. The message shape stays the same, so `discord/collector.js` and
+  gets `{ ok: false, reason: "not-a-thread" }`. The message shape stays the same, so `discord/collector.js` and
   `discord/bridge.js` don't change, and there is no diff to mirror.
 - `src/modules/messenger/export.html` + `export.js`: `export.html` loads `../messenger/read.js`
   with a plain `<script>` before the `export.js` module, and `export.js` uses
@@ -199,7 +205,8 @@ the photo link, the placeholders, and line-start escaping.
   entry for a name wins, and an invalid or repeated one is listed as not captured. The
   media bookkeeping lives in `src/modules/messenger/media.js` (tested against a stub
   bridge): `listMedia`, `readMediaFile` and `settleMedia`. Read the JSON through
-  `leket:chunk`, then each file through `leket:file` until `offset >= size`, decoding
+  `leket:chunk` (right after parsing, `exp.messages` becomes `messagesOf(exp)`: an array of
+  objects, `[]` for anything else), then each file through `leket:file` until `offset >= size`, decoding
   base64 into Uint8Arrays. A gone save is fatal (nothing is built). A tab that stops
   answering ends the reads; the JSON and Markdown are still written, with every file not
   read by then marked not captured. The JSON and Markdown are written after the media, so
@@ -225,7 +232,7 @@ the photo link, the placeholders, and line-start escaping.
 ### C. Collector: `src/modules/messenger/collector.js` (MAIN world, classic script)
 
 - Timings (constants at the top of the collector): `STEP_MS = 900`, `STEP_FRACTION = 0.85`,
-  `ROWS_WAIT_MS = 10000`, `STILL_STEPS = 3`, `STALL_STEPS = 10`, `ACK_WAIT_MS = 10000`.
+  `ROWS_WAIT_MS = 10000`, `STILL_STEPS = 3`, `STALL_STEPS = 10`, `ACK_WAIT_MS = 10000`, `ACK_FINAL_MS = 120000`.
   Everything waits through `setTimeout`, so the fixture's virtual timers run a sweep in
   milliseconds.
 - Gate: the same two path regexes as the stub. A second launch while the panel is mounted
@@ -249,6 +256,13 @@ the photo link, the placeholders, and line-start escaping.
   - No scroller (a conversation that fits on one screen, so no element passes the scroller
     rule): Start harvests the mounted rows once, then ends as Done if the header img is
     mounted, else as STALLED.
+- Thread pin: the panel keeps the `location.pathname` it launched on (trailing `/` removed)
+  and the `document.title` it launched with. At the top of each harvest (and per row), at
+  Start and at the start of Save, a different pathname stops the sweep, collects nothing
+  more and sets the status `This tab moved to another conversation. Go back to the
+  conversation this panel was opened on, or close this panel.`; Save then does nothing else
+  (no post, no download). Back on the launch path, Start and Save work again. The saved
+  `title` and file name come from the launch title.
 - PIN or empty: when no `div[data-message-id]` mounts within 10 s (`ROWS_WAIT_MS`) of Start,
   the status says "No messages are showing. If Messenger is asking for your PIN to restore chats,
   enter it there, then press Start again." The collector never touches any dialog.
@@ -267,7 +281,11 @@ the photo link, the placeholders, and line-start escaping.
   is skipped and counted as `N rows could not be read` in the Done/STALLED/Stopped status; a
   row is complete once its message has `time`,
   `sender_id`, `outgoing` and a sender name, and when `kinds` has `media`, at least one item
-  was captured and every seen item is captured; a complete row is not read again):
+  was captured and every seen item is captured, or the row is settled; a complete row is not
+  read again). A media row is settled once a visit saw every `img` complete and at least one
+  seen item, and every seen item is captured or not captured for a reason other than `the
+  photo never finished loading` (filtered-out imgs count as accounted), so a row that holds
+  only an avatar and an `https:` preview is read once, not on every harvest:
   1. Find `message` by the id match. Find `contact.name` and `outgoing` higher up the chain
      (search to depth 80, and stop at the first hit of each).
   2. Store `normalize(...)` in a Map keyed by `messageId`. Merging a re-read row: fields
@@ -301,7 +319,7 @@ the photo link, the placeholders, and line-start escaping.
      save insert `-2`, `-3`, … before the extension while staying ≤ 120 chars and passing
      `validMediaName`). Seen media not captured by the end of the sweep gets one
      `media_not_captured` entry `{ message_id, kind, reason }`: non-`data:`/`blob:` photo
-     `not a data: or blob: image (<scheme>)`, incomplete photo `the photo never finished
+     `not a data: or blob: source (<scheme>)` (photo and video alike), incomplete photo `the photo never finished
      loading`, sourceless video `no video source`, failed fetch `fetch failed: <message>`,
      and a media row where nothing was seen on any visit gets one `photo` entry with reason
      `no media element`. Every not-captured branch skips when the slot or key is already
@@ -320,8 +338,14 @@ the photo link, the placeholders, and line-start escaping.
   in Save (stopping before any handoff or download).
   With the bridge mark `data-leket-messenger-bridge="1"`, post `{ type:
   "leket:messenger-export", id, file, json, files }` to `location.origin` and wait up to
-  `ACK_WAIT_MS` for the ack:
+  `ACK_WAIT_MS` for the ack; a `pending: true` ack for its id extends the wait for the
+  final ack to `ACK_FINAL_MS` (the worker may take a while to open the export tab):
   - `ok: true` → status `Handed to the export tab (it opens next to this one): N messages, P photos, V videos.`
+    When photo and video bytes pass 1 GiB the counts line ends ` — large save: keep this
+    tab and the export tab open until it finishes` and this status adds ` This is a large
+    save (X.X GB): keep this tab and the export tab open until the export tab finishes.`
+    Nothing is dropped.
+  - `ok: false, reason: "not-a-thread"` → status `This tab is no longer on the conversation's page. Go back to the conversation and press Save again.` (nothing downloaded).
   - `ok: false, reason: "too-soon"` → status `Saved less than 10 seconds ago: wait a moment and press Save again.` (nothing downloaded).
   - any other `ok: false`, or no ack → fall back, status prefixed `The extension didn't answer (reload this tab and click Leket's button again for photos and videos)`.
   - Without the mark → fall back: move every `media` entry into `media_not_captured`

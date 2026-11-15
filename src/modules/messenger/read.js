@@ -179,7 +179,8 @@
       return { ms: d.getTime(), day: `${parts.year}-${parts.month}-${parts.day}`, hhmm: `${parts.hour}:${parts.minute}` };
     };
 
-    const messages = (exp && exp.messages) || [];
+    // a save from anywhere is untrusted: only an array's object entries are messages
+    const messages = (exp && Array.isArray(exp.messages) ? exp.messages : []).filter((m) => m && typeof m === "object");
     const missing = new Map();
     for (const x of (exp && exp.media_not_captured) || []) {
       if (!x || x.message_id == null) continue;
@@ -238,7 +239,8 @@
           notes.push(`[${kinds.includes("video") ? "video" : "photo"}, not captured]`);
         }
         if (kinds.includes("sticker")) notes.push("[sticker]");
-        if (m.link) notes.push(`[link preview](<${safeHref(m.link)}>)`);
+        // only a web link renders as one: javascript:, data: and the like are dropped
+        if (typeof m.link === "string" && /^https?:\/\//i.test(m.link)) notes.push(`[link preview](<${safeHref(m.link)}>)`);
       }
       if (notes.length) blocks.push(notes.join("\\\n"));
       out.push(blocks.join("\n\n"));

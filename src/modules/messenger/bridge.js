@@ -13,6 +13,8 @@
   // One accepted post per 10 s: every post opens a tab, and the page world can post too.
   const MIN_GAP_MS = 10 * 1000;
   let lastPost = -Infinity;
+  // the worker's refusal reasons the collector understands; anything else is dropped
+  const FORWARDED_REASONS = ["not-a-thread", "too-soon"];
   const GONE = "This save is gone: the Messenger tab was reloaded, or Save was pressed again since. Press Save there again.";
 
   const bounds = (s) => {
@@ -60,7 +62,10 @@
     const ack = (ok, reason) => window.postMessage({ type: "leket:ack", id: d.id, ok, ...(reason ? { reason } : {}) }, location.origin);
     const now = Date.now();
     if (now - lastPost < MIN_GAP_MS) return ack(false, "too-soon");
+    const priorPost = lastPost;
     lastPost = now;
+    // the handoff can take a while (the worker opens a tab): tell the collector it was accepted
+    window.postMessage({ type: "leket:ack", id: d.id, pending: true }, location.origin);
     const files = Array.isArray(d.files)
       ? d.files
           .filter((f) => f && typeof f.name === "string" && f.blob && typeof f.blob.size === "number" && typeof f.blob.slice === "function")
@@ -69,9 +74,11 @@
     const key = crypto.randomUUID();
     held.set(key, { file: d.file, json: d.json, files, bounds: bounds(d.json) });
     let ok = false;
+    let reason;
     try {
       const r = await chrome.runtime.sendMessage({ type: "leket:ready", key });
       ok = !!(r && r.ok);
+      if (!ok && r && FORWARDED_REASONS.includes(r.reason)) reason = r.reason;
     } catch {
       ok = false;
     }
@@ -85,8 +92,10 @@
       }
     } else {
       held.delete(key);
+      // only a handoff that opened a tab counts toward the throttle (unless a newer post took the slot since)
+      if (lastPost === now) lastPost = priorPost;
     }
-    ack(ok);
+    ack(ok, ok ? undefined : reason);
   });
 
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {

@@ -107,6 +107,8 @@ function buildFiberChain(message, outgoing, contactName) {
 }
 
 const nonPanelClicks = [];
+// message id -> how many times a harvest read the row's React fiber
+const fiberReads = {};
 const makeEl = (tag, props = {}) => {
   const node = {
     tag: String(tag).toLowerCase(),
@@ -204,7 +206,7 @@ for (let i = 0; i < TOTAL_ROWS; i++) {
     // Photo late: completes only on its second mount
     bits = 3; // text | media
     text = "late photo row";
-  } else if (i === 28 && (scenario === "video" || scenario === "remount-no-double")) {
+  } else if (i === 28 && (scenario === "video" || scenario === "remount-no-double" || scenario === "large" || scenario === "move-fetch" || scenario === "move-fetch-throw")) {
     bits = 3;
     text = "video row";
   } else if (i === 29 && scenario === "broken-img") {
@@ -216,7 +218,7 @@ for (let i = 0; i < TOTAL_ROWS; i++) {
   } else if (i === 32 && scenario === "remint") {
     bits = 3;
     text = "reminted video row";
-  } else if (i === 34 && scenario === "remount-no-double") {
+  } else if (i === 34 && (scenario === "remount-no-double" || scenario === "move-fetch-photo" || scenario === "move-fetch-photo-throw")) {
     bits = 3;
     text = "remounted photo row";
   } else if (i === 35) {
@@ -226,6 +228,9 @@ for (let i = 0; i < TOTAL_ROWS; i++) {
   } else if (i === 40) {
     bits = 3;
     text = "media row with small icons and one real photo";
+  } else if (i >= 44 && i <= 48 && scenario === "settled") {
+    bits = 3;
+    text = `https media row ${i}`;
   } else if (i === 42 || i === 43) {
     bits = 3;
     text = `collision photo ${i}`;
@@ -287,7 +292,15 @@ function buildRowDom(spec) {
       },
     });
   } else {
-    row[`__reactFiber$r${spec.index}`] = buildFiberChain(message, outgoing, contactName);
+    // a getter, so each read of the row's fiber (one per harvest read of the row) is counted
+    const chain = buildFiberChain(message, outgoing, contactName);
+    Object.defineProperty(row, `__reactFiber$r${spec.index}`, {
+      enumerable: true,
+      get() {
+        fiberReads[spec.id] = (fiberReads[spec.id] || 0) + 1;
+        return chain;
+      },
+    });
   }
 
   if (spec.index === 25) {
@@ -354,7 +367,7 @@ function buildRowDom(spec) {
       videoHeight: 240,
       duration: 5.0,
     }));
-  } else if (spec.index === 34 && scenario === "remount-no-double") {
+  } else if (spec.index === 34 && (scenario === "remount-no-double" || scenario === "move-fetch-photo" || scenario === "move-fetch-photo-throw")) {
     // Mount 1: complete blob: photo; Mount 2+: new blob: URL and incomplete
     const firstMount = spec.mountCount === 1;
     row.appendChild(makeEl("img", {
@@ -405,6 +418,80 @@ function buildRowDom(spec) {
       naturalHeight: 180,
       getBoundingClientRect: () => ({ width: 180, height: 180 }),
     }));
+  } else if (spec.index === 44 && scenario === "settled") {
+    // a 100x100 https avatar (filtered) and a large https preview: nothing here is ever capturable
+    row.appendChild(makeEl("img", {
+      src: "https://scontent.xx.fbcdn.net/v/avatar_100x100.jpg",
+      complete: true,
+      naturalWidth: 100,
+      naturalHeight: 100,
+      getBoundingClientRect: () => ({ width: 100, height: 100 }),
+    }));
+    row.appendChild(makeEl("img", {
+      src: "https://scontent.xx.fbcdn.net/v/preview_1032.jpg",
+      complete: true,
+      naturalWidth: 1032,
+      naturalHeight: 540,
+      getBoundingClientRect: () => ({ width: 1032, height: 540 }),
+    }));
+  } else if (spec.index === 45 && scenario === "settled") {
+    row.appendChild(makeEl("video", {
+      src: "https://video.xx.fbcdn.net/v/clip.mp4",
+      videoWidth: 640,
+      videoHeight: 360,
+      duration: 4.0,
+    }));
+  } else if (spec.index === 46 && scenario === "settled") {
+    // an https preview plus a tiny still-loading emoji: the emoji is filtered, so the row settles
+    row.appendChild(makeEl("img", {
+      src: "https://scontent.xx.fbcdn.net/v/preview_800.jpg",
+      complete: true,
+      naturalWidth: 800,
+      naturalHeight: 600,
+      getBoundingClientRect: () => ({ width: 800, height: 600 }),
+    }));
+    row.appendChild(makeEl("img", {
+      src: "",
+      alt: "👍",
+      complete: false,
+      naturalWidth: 0,
+      naturalHeight: 0,
+      getBoundingClientRect: () => ({ width: 24, height: 24 }),
+    }));
+  } else if (spec.index === 47 && scenario === "settled") {
+    // a blob: video whose first read fails and a later one works
+    row.appendChild(makeEl("video", {
+      src: "blob:https://www.messenger.com/video-flaky",
+      videoWidth: 320,
+      videoHeight: 240,
+      duration: 3.0,
+    }));
+  } else if (spec.index === 48 && scenario === "settled") {
+    // one captured photo and a second qualifying img still loading on the first mounts
+    row.appendChild(makeEl("img", {
+      src: toDataUrl("image/jpeg", makeJpegBytes(90)),
+      complete: true,
+      naturalWidth: 200,
+      naturalHeight: 200,
+      getBoundingClientRect: () => ({ width: 200, height: 200 }),
+    }));
+    const lateOk = spec.mountCount >= 2;
+    row.appendChild(makeEl("img", {
+      src: toDataUrl("image/jpeg", makeJpegBytes(91)),
+      complete: lateOk,
+      naturalWidth: lateOk ? 200 : 0,
+      naturalHeight: lateOk ? 200 : 0,
+      getBoundingClientRect: () => ({ width: 200, height: 200 }),
+    }));
+  } else if (spec.index === 28 && (scenario === "large" || scenario === "move-fetch" || scenario === "move-fetch-throw")) {
+    // one video whose Blob reports more than 1 GiB
+    row.appendChild(makeEl("video", {
+      src: "",
+      currentSrc: scenario === "large" ? "blob:https://www.messenger.com/video-huge" : "blob:https://www.messenger.com/video-ok",
+      videoWidth: 640,
+      videoHeight: 360,
+      duration: 90.0,
+    }));
   } else if (spec.index === 42) {
     row.appendChild(makeEl("img", {
       src: JPEG_DATA_COLLIDE_1,
@@ -440,9 +527,53 @@ const scrollHistory = [];
 const mountedDomByIndex = new Map();
 let asyncMountTimer = null;
 
+// The tab has moved to another conversation (an SPA navigation): the same scroller now holds that thread's rows.
+let onForeign = false;
+const FOREIGN_IDS = ["foreign-1", "foreign-2", "foreign-3"];
+const buildForeignRow = (id, n) => {
+  const row = makeEl("div", { dataset: { messageId: id, scope: "messages_table" } });
+  const message = {
+    messageId: id,
+    timestampMs: msPair(baseMs + (100 + n) * 60000),
+    senderId: [0, 201],
+    text: `foreign thread message ${n}`,
+    isUnsent: false,
+    editCount: 0,
+    displayedContentTypes: [0, 1],
+  };
+  row[`__reactFiber$f${n}`] = buildFiberChain(message, false, "Dee Example");
+  return row;
+};
+
+// scroll writes made once the tab is on the foreign path: a collector that has moved must make none
+let scrollsAtMove = null;
+let released = scenario !== "move-wait" && scenario !== "move-wait-empty";
+let moveAtVnow = null;
+const doMove = () => {
+  sandbox.location.pathname = "/e2ee/t/555000111";
+  sandbox.location.href = `${origin}/e2ee/t/555000111`;
+  document.title = "(1) Dee Example | Messenger";
+  scrollsAtMove = scrollHistory.length;
+  moveAtVnow = vnow;
+  onForeign = true;
+  syncMountedRows();
+};
+const comeBack = () => {
+  sandbox.location.pathname = `/e2ee/t/${THREAD_ID}`;
+  sandbox.location.href = href;
+  onForeign = false;
+  released = true;
+  syncMountedRows();
+};
+
 function syncMountedRows() {
   scrollerEl.children = [];
-  if (scenario === "pin") return;
+  if (scenario === "pin" || ((scenario === "move-wait" || scenario === "move-wait-empty") && !released && !onForeign)) return;
+  if (onForeign && scenario === "move-wait-empty") return;
+  if (onForeign) {
+    FOREIGN_IDS.forEach((id, n) => scrollerEl.appendChild(buildForeignRow(id, n + 1)));
+    return;
+  }
 
   const firstIdx = isShort ? 0 : Math.max(0, Math.min(TOTAL_ROWS - 20, Math.floor(currentScrollTop / 50)));
   const lastIdx = isShort ? TOTAL_ROWS : Math.min(TOTAL_ROWS, firstIdx + 20);
@@ -527,13 +658,18 @@ let downloadedJson = null;
 const revokedUrls = [];
 
 const hasBridgeMark = scenario !== "handoff-no-bridge";
-const bridgeAckMode = scenario === "handoff-too-soon"
-  ? "too-soon"
-  : (scenario === "handoff-no-ack" || scenario === "save-close" || scenario === "save-close-ack")
-    ? "none"
-    : scenario === "handoff-nack"
-      ? "nack"
-      : "ok";
+const ACK_MODES = {
+  "handoff-too-soon": "too-soon",
+  "handoff-not-a-thread": "not-a-thread",
+  "handoff-pending-late": "pending-late",
+  "handoff-pending-never": "pending-never",
+  "handoff-no-ack": "none",
+  "move-save-noack": "none",
+  "save-close": "none",
+  "save-close-ack": "none",
+  "handoff-nack": "nack",
+};
+const bridgeAckMode = ACK_MODES[scenario] || "ok";
 
 const document = {
   title: customTitle !== undefined ? customTitle : "(2) Ada Example | Messenger",
@@ -617,6 +753,7 @@ class VirtualDate extends Date {
   }
 }
 
+let flakyReads = 0;
 const fetchCalls = [];
 let fullBlobArrayBufferCalls = 0;
 const blobSlices = [];
@@ -626,6 +763,31 @@ const fakeFetch = async (url) => {
   const s = String(url);
   fetchCalls.push(s);
   if (!s.startsWith("blob:")) throw new Error(`unexpected non-blob fetch: ${s}`);
+  if (s === "blob:https://www.messenger.com/video-flaky") {
+    flakyReads++;
+    if (flakyReads === 1) throw new Error("transient read failure");
+    return { ok: true, status: 200, blob: async () => new Blob([makeMp4Bytes(95)], { type: "video/mp4" }) };
+  }
+  if ((scenario === "move-fetch" || scenario === "move-fetch-throw") && s === "blob:https://www.messenger.com/video-ok") {
+    // the tab navigates away while this read is in flight
+    doMove();
+    if (scenario === "move-fetch-throw") throw new Error("read failed after the move");
+  }
+  if (scenario.startsWith("move-fetch-photo") && s === "blob:https://www.messenger.com/photo-remount-1") {
+    doMove();
+    if (scenario === "move-fetch-photo-throw") throw new Error("read failed after the move");
+  }
+  if (s === "blob:https://www.messenger.com/video-huge") {
+    // a Blob stand-in that reports 1.2 GiB but holds only the bytes the collector slices
+    const real = new Blob([MP4_BYTES], { type: "video/mp4" });
+    const huge = {
+      size: Math.round(1.2 * 1024 * 1024 * 1024),
+      type: "video/mp4",
+      slice: (start, end) => real.slice(start === undefined ? 0 : Math.min(start, 32), end === undefined || end === null ? undefined : end),
+      arrayBuffer: async () => { throw new Error("full blob.arrayBuffer() must not be called"); },
+    };
+    return { ok: true, status: 200, blob: async () => huge };
+  }
   const entry = blobStore.get(s);
   if (!entry) throw new Error(`unknown blob URL: ${s}`);
   if (entry.error) throw new Error(entry.error);
@@ -713,17 +875,28 @@ const sandbox = {
         if (closeBtn) closeBtn.click();
       }
       if (bridgeAckMode !== "none") {
-        const ackPayload = bridgeAckMode === "too-soon"
-          ? { type: "leket:ack", id: data.id, ok: false, reason: "too-soon" }
-          : bridgeAckMode === "nack"
-            ? { type: "leket:ack", id: data.id, ok: false }
-            : { type: "leket:ack", id: data.id, ok: true };
         const winProxy = vm.runInContext("window", sandbox);
-        virtualSetTimeout(() => {
+        const send = (payload, ms) => virtualSetTimeout(() => {
           for (const fn of [...messageListeners]) {
-            fn({ source: winProxy, origin, data: ackPayload });
+            fn({ source: winProxy, origin, data: payload });
           }
-        }, 5);
+        }, ms);
+        const finalAck = bridgeAckMode === "too-soon"
+          ? { type: "leket:ack", id: data.id, ok: false, reason: "too-soon" }
+          : bridgeAckMode === "not-a-thread"
+            ? { type: "leket:ack", id: data.id, ok: false, reason: "not-a-thread" }
+            : bridgeAckMode === "nack"
+              ? { type: "leket:ack", id: data.id, ok: false }
+              : { type: "leket:ack", id: data.id, ok: true };
+        if (bridgeAckMode === "pending-late" || bridgeAckMode === "pending-never") {
+          // the bridge accepted the post at once; the worker takes 30 virtual seconds to open the export tab (or never answers)
+          send({ type: "leket:ack", id: data.id, pending: true }, 5);
+          if (bridgeAckMode === "pending-late") send(finalAck, 30000);
+          // a repeated pending ack must not restart the wait
+          if (bridgeAckMode === "pending-never") send({ type: "leket:ack", id: data.id, pending: true }, 60000);
+        } else {
+          send(finalAck, 5);
+        }
       }
     }
   },
@@ -823,6 +996,121 @@ const isSweepTerminal = (s) =>
       export: exp,
     }));
     return;
+  } else if (scenario === "move-thread") {
+    const MOVED = "This tab moved to another conversation. Go back to the conversation this panel was opened on, or close this panel.";
+    await waitUntil(() => getStatusText().startsWith("Going up:") && currentScrollTop < 2000 && currentScrollTop > 0);
+    const countsBeforeMove = getCountsText();
+    // an SPA navigation to another thread: the path, the tab title and the mounted rows all change
+    sandbox.location.pathname = "/e2ee/t/555000111";
+    sandbox.location.href = `${origin}/e2ee/t/555000111`;
+    document.title = "(1) Dee Example | Messenger";
+    onForeign = true;
+    syncMountedRows();
+    await waitUntil(() => getStatusText() === MOVED);
+    // let the stopped sweep settle, then try to save from the wrong conversation
+    for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+    const statusAfterMove = getStatusText();
+    const postsBeforeSave = postCount;
+    await saveBtn.click();
+    const statusAfterSaveMoved = getStatusText();
+    const postsAfterSaveMoved = postCount;
+    const downloadedWhileMoved = Boolean(downloadedFile);
+    // back on the launch path: Save works again and holds only that conversation
+    sandbox.location.pathname = `/e2ee/t/${THREAD_ID}/`;
+    sandbox.location.href = href;
+    onForeign = false;
+    syncMountedRows();
+    await saveBtn.click();
+    const statusAfterReturnSave = getStatusText();
+    const savedAfterReturn = posted ? JSON.parse(posted.data.json) : null;
+    const fileAfterReturn = posted ? posted.data.file : null;
+    // and Start works again
+    startBtn.click();
+    await waitUntil(() => isSweepTerminal(getStatusText()));
+    const statusAfterRestart = getStatusText();
+    process.stdout.write(JSON.stringify({
+      countsBeforeMove,
+      statusAfterMove,
+      statusAfterSaveMoved,
+      postsBeforeSave,
+      postsAfterSaveMoved,
+      downloadedWhileMoved,
+      statusAfterReturnSave,
+      export: savedAfterReturn,
+      file: fileAfterReturn,
+      postCount,
+      statusAfterRestart,
+      heading: getPanelDivs()[0].textContent,
+    }));
+    return;
+  } else if (["move-fetch", "move-fetch-throw", "move-fetch-photo", "move-fetch-photo-throw", "move-wait", "move-wait-empty", "move-save-noack", "move-save-midsweep", "move-start", "move-stop"].includes(scenario)) {
+    const MOVED = "This tab moved to another conversation. Go back to the conversation this panel was opened on, or close this panel.";
+    const settleTicks = async () => { for (let i = 0; i < 80; i++) await new Promise((r) => setImmediate(r)); };
+    let scrollsAfterStart = null;
+    let skipFinalSave = false;
+    let movedLatencyMs = null;
+    if (scenario.startsWith("move-fetch")) {
+      await waitUntil(() => getStatusText() === MOVED);
+    } else if (scenario === "move-wait") {
+      virtualSetTimeout(doMove, 3000);
+      await waitUntil(() => getStatusText() === MOVED);
+    } else if (scenario === "move-wait-empty") {
+      // the tab moves to a page with no rows at all, 3 virtual s into the wait for rows
+      virtualSetTimeout(doMove, 3000);
+      await waitUntil(() => getStatusText() === MOVED || isSweepTerminal(getStatusText()));
+      movedLatencyMs = vnow - moveAtVnow;
+    } else if (scenario === "move-save-noack") {
+      await waitUntil(() => isSweepTerminal(getStatusText()));
+      const sp = saveBtn.click();
+      await waitUntil(() => postCount >= 1);
+      doMove();
+      await sp;
+      skipFinalSave = true;
+    } else if (scenario === "move-save-midsweep") {
+      await waitUntil(() => getStatusText().startsWith("Going up:") && currentScrollTop < 2000 && currentScrollTop > 0);
+      const sp = saveBtn.click();
+      doMove();
+      await sp;
+      skipFinalSave = true;
+    } else if (scenario === "move-stop") {
+      await waitUntil(() => getStatusText().startsWith("Going up:") && currentScrollTop < 2000 && currentScrollTop > 0);
+      // Stop, and the tab moves before the stopped sweep gets to report
+      stopBtn.click();
+      doMove();
+      await settleTicks();
+    } else if (scenario === "move-start") {
+      await waitUntil(() => getStatusText().startsWith("Going up:") && currentScrollTop < 2000 && currentScrollTop > 0);
+      doMove();
+      await waitUntil(() => getStatusText() === MOVED);
+      await settleTicks();
+      const before = scrollHistory.length;
+      startBtn.click();
+      await settleTicks();
+      scrollsAfterStart = scrollHistory.length - before;
+    }
+    await settleTicks();
+    const statusWhileMoved = getStatusText();
+    const scrollsAfterMove = scrollHistory.length - (scrollsAtMove === null ? scrollHistory.length : scrollsAtMove);
+    const postsWhileMoved = postCount;
+    const downloadedWhileMoved = Boolean(downloadedFile);
+    comeBack();
+    let statusAfterReturnSave = null;
+    if (!skipFinalSave) {
+      await saveBtn.click();
+      statusAfterReturnSave = getStatusText();
+    }
+    process.stdout.write(JSON.stringify({
+      statusWhileMoved,
+      scrollsAfterMove,
+      scrollsAfterStart,
+      movedLatencyMs,
+      postsWhileMoved,
+      downloadedWhileMoved,
+      statusAfterReturnSave,
+      postCount,
+      export: posted ? JSON.parse(posted.data.json) : null,
+    }));
+    return;
   } else if (scenario === "save-close") {
     await waitUntil(() => getStatusText().startsWith("Going up:") && currentScrollTop < 2000 && currentScrollTop > 0);
     const savePromise = saveBtn.click();
@@ -861,7 +1149,9 @@ const isSweepTerminal = (s) =>
     return;
   }
 
+  const saveStartedAt = vnow;
   await saveBtn.click();
+  const saveElapsedMs = vnow - saveStartedAt;
   const collectorBlobSlices = [...blobSlices];
 
   let fallbackExport = null;
@@ -920,6 +1210,8 @@ const isSweepTerminal = (s) =>
     fullBlobArrayBufferCalls,
     blobSlices: collectorBlobSlices,
     nonPanelClicks,
+    saveElapsedMs,
+    fiberReads,
     rowVisits: Object.fromEntries(rowSpecs.map((r) => [r.id, r.visits])),
   }));
 })();

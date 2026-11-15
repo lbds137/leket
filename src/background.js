@@ -182,7 +182,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
     const tabUrl = sender.tab.url ?? (await chrome.tabs.get(sender.tab.id).catch(() => null))?.url;
     const page = exportPageFor(tabUrl || "");
-    if (!page) return reply({ ok: false });
+    if (!page) return reply({ ok: false, reason: "not-a-thread" });
     const q = new URLSearchParams({ tab: String(sender.tab.id), key: msg.key });
     await chrome.tabs.create({ url: chrome.runtime.getURL(`${page}?${q}`), index: sender.tab.index + 1, windowId: sender.tab.windowId });
     reply({ ok: true });

@@ -991,7 +991,7 @@ async function scenarios(cdp, downloads) {
 
     const acked = await evalIn(thread.sessionId, `new Promise((resolve) => {
       const onAck = (e) => {
-        if (e.source === window && e.data && e.data.type === "leket:ack" && e.data.id === "m-smoke-1") {
+        if (e.source === window && e.data && e.data.type === "leket:ack" && e.data.id === "m-smoke-1" && !e.data.pending) {
           window.removeEventListener("message", onAck);
           resolve(Boolean(e.data.ok));
         }

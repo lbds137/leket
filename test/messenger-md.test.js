@@ -163,3 +163,23 @@ test("mediaName ignores Object.prototype keys as MIME types", () => {
     assert.equal(R.mediaName("2026-11-15", "m1", 1, mime), "2026-11-15_m1_1.bin");
   }
 });
+
+test("a save that is not shaped like ours: a non-array messages, non-object entries, and a non-web link", () => {
+  const base = { title: "T", host: "www.messenger.com", thread_id: "1", time_zone: "UTC" };
+  for (const messages of ["x", 5, {}, null, undefined]) {
+    const md = R.renderMarkdown({ ...base, messages });
+    assert.match(md, /^# T\n/, `messages ${JSON.stringify(messages)}`);
+  }
+  const good = { id: "m1", time: "2026-11-15T10:00:00.000Z", sender: "S", outgoing: false,
+    text: "hello", reply_to: null, unsent: false, kinds: [], link: null, media: [] };
+  const md = R.renderMarkdown({ ...base, messages: [null, 3, "s", good] });
+  assert.ok(md.includes("**S** 10:00\n\nhello"), md);
+  for (const link of ["javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "//e.x/u", "ftp://e.x/u", 5, {}]) {
+    const out = R.renderMarkdown({ ...base, messages: [{ ...good, kinds: ["link"], link }] });
+    assert.ok(!out.includes("link preview"), `${JSON.stringify(link)} rendered: ${out}`);
+  }
+  for (const link of ["https://e.x/u", "HTTP://e.x/u"]) {
+    const out = R.renderMarkdown({ ...base, messages: [{ ...good, kinds: ["link"], link }] });
+    assert.ok(out.includes(`[link preview](<${link}>)`), out);
+  }
+});

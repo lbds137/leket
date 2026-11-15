@@ -164,3 +164,10 @@ test("an empty first slice of a non-empty file, bad base64, or a size that is no
   const zero = await readMediaFile(bridge([], () => ({ name: "e.jpg", size: 0, data: "" })).ask, 0, accept("e.jpg"));
   assert.equal(zero.status, "saved", "a genuinely empty file is saved empty");
 });
+
+test("messagesOf: a non-array becomes [], and only object entries stay", async () => {
+  const { messagesOf } = await import("../src/modules/messenger/media.js");
+  for (const messages of ["x", 5, {}, null, undefined]) assert.deepEqual(messagesOf({ messages }), []);
+  const m = { id: "m1" };
+  assert.deepEqual(messagesOf({ messages: [null, 3, "s", undefined, m] }), [m]);
+});

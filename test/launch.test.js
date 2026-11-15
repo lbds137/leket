@@ -147,7 +147,7 @@ test("the Save handoff opens the export page by the tab's host", async () => {
     "https://www.facebook.com/", "https://www.facebook.com/messages/", "https://www.messenger.com/",
     "http://www.messenger.com/t/7",
   ]) {
-    assert.deepEqual(await opened(url), [{ ok: false }, undefined], url);
+    assert.deepEqual(await opened(url), [{ ok: false, reason: "not-a-thread" }, undefined], url);
   }
 });
 
