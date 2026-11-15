@@ -32,9 +32,11 @@ Each line says what was observed, and where, or marks the claim as inferred.
   has no id field, so key names by the row's `senderId`. Nearby props carry `outgoing`
   (boolean, true for the viewer's own rows) and `isGroupThread`.
 - **Content-type bits** (observed counts across 12 threads; meanings inferred from what
-  rendered): `1` text; `2` media: a photo row holds one or more `<img>` whose `src` is a
-  `data:image/jpeg;base64,…` URL at full decoded size (seen 540x720 up to 946x2049), and a
-  video row holds a `<video>` with a `blob:` src; `1024` link-preview card (has an
+  rendered): `1` text; `2` media: on messenger.com e2ee threads a photo row holds one or more
+  `<img>` whose `src` is a `data:image/jpeg;base64,…` URL (natural sizes seen 540x720 up to
+  946x2049; whether that is the full-size photo or a preview capped near 720 px is NOT
+  checked: compare with the media viewer before unit C), and a video row holds a `<video>`
+  with a `blob:` src. Photos on facebook.com and on plain threads are unverified; `1024` link-preview card (has an
   `a[href^="http"]`; its thumbnail is a `blob:` img); `1032`/`1033` share or preview
   variants (fbcdn https imgs, links); `16384` sticker-like (one `blob:` img 220x259, no
   link); `4`, `4096`, `536870912` (2^29) unknown (no image, no link).
@@ -55,6 +57,30 @@ Each line says what was observed, and where, or marks the claim as inferred.
 - **PIN** (observed once, not re-triggerable): a host without the e2ee keys shows a 6-digit
   "enter PIN to restore chats" dialog before any rows load. No selector was recorded.
 - **Groups** (observed): plain group threads use the same row shape. Out of scope for v1.
+- **Path is not encryption** (observed): an e2ee thread once showed as `/t/<id>/` in the
+  address bar, so the path form says nothing about encryption. Use `isSecureMessage` if
+  that is ever needed.
+- **messageId character set**: NOT read (the probe tool masked the values). Treat it as an
+  arbitrary string everywhere it reaches a file name.
+
+## Data shape
+
+Units A, B and C all use this one shape. The export JSON:
+
+```
+{ leket: "messenger", version: 1, host, thread_id, url, title, saved_at (ISO), time_zone,
+  count, senders: { "<sender_id>": "<name>" }, group_warning: bool,
+  photos_not_captured: [{ message_id, reason }],
+  messages: [Message] }            // sorted by time, then id
+Message = { id, time (ISO|null), sender_id (string|null), sender (string|null),
+  outgoing (bool|null), text (string|null), unsent (bool), edited (bool),
+  reply_to: { text } | null, kinds: [string],   // per contentKinds, plus "video" when seen
+  link: string|null, photos: [Photo] }
+Photo = { file, mime, width, height, bytes }      // file = name inside messenger-photos/
+```
+
+`normalize()` returns a Message with `link: null` and `photos: []`. The collector fills
+those two fields, and `renderMarkdown` reads them.
 
 ## Units
 
@@ -72,8 +98,7 @@ A classic script, with no `import` or `export`. It is injected into the page bef
 - `toIso(ts)` → the ISO string of `Number(i64(ts))`, or null.
 - `contentKinds(bits)` → a list drawn from `text` (1), `media` (2), `link` (1024),
   `sticker` (16384) and `other:<bit>` for every other set bit. It takes `[0, n]` or `n`.
-- `normalize(message, senderName, outgoing)` → `{ id, time, sender_id, sender, outgoing, text, unsent, edited,
-  reply_to, kinds }`. `sender_id` is `i64(senderId).toString()`. `reply_to` is
+- `normalize(message, senderName, outgoing)` → a Message (see Data shape). `sender_id` is `i64(senderId).toString()`. `reply_to` is
   `{ text: replyMessageText ?? replySnippet ?? null }`, or null when neither field exists.
 - `renderMarkdown(exp)` → one Markdown document: a title line, then a meta line with the
   host, thread id, message count, first and last date, and save time. After that, each
@@ -83,10 +108,16 @@ A classic script, with no `import` or `export`. It is injected into the page bef
   bracketed note: `[video, not saved]`, `[sticker]`, `[link preview: <href>]` and
   `[unsent]`. Escape Markdown only where it breaks structure, meaning a line starting with
   `#`, `>` or `-`.
+- `safePart(s, max)` → `s` with every character outside `[\p{L}\p{N}._-]` replaced by `_`,
+  runs of `_` collapsed, leading dots stripped, and cut to `max` characters (default 40);
+  `"x"` if that leaves it empty. `photoName(day, messageId, n, mime)` →
+  `<day>_<safePart(messageId)>_<n>.<jpg|png|webp|gif|bin>`. Uniqueness comes from the
+  collector, not the name: it appends `-2`, `-3` and so on when a name is already taken.
 
 Tests (`test/messenger-read.test.js`, synthetic only): `i64` on `[0, 1]`, on a negative low
 word (`[1, -1]` → 2^33 − 1), and on a real-shaped ms pair built from `Date.UTC`; `toIso`
-round trip; `contentKinds` for 1, 2, 1024, 16384 and 1|4096; `normalize` on an e2ee-shaped
+round trip; `contentKinds` for 1, 2, 1024, 16384 and 1|4096; `safePart`/`photoName` on an id
+holding `/`, `$`, `=`, `..` and a leading dot; `normalize` on an e2ee-shaped
 and a plain-shaped object; `renderMarkdown` day split across midnight in a non-UTC zone,
 the photo link, the placeholders, and line-start escaping.
 
@@ -104,13 +135,14 @@ the photo link, the placeholders, and line-start escaping.
   `host_permissions`. Add no CDN hosts, because nothing is fetched from them. Update the
   description to name Messenger.
 - `src/modules/messenger/launch.js`: the same shape as the Discord one, sending
-  `{ type: "leket:launch", command: "save", module: "messenger", tabId }`.
+  `{ type: "leket:launch", command: "save", tabId }` with no module field.
   `src/popup/commands.js` maps `messenger` to it.
-- `src/background.js` `launch()`: a table keyed by module id. `discord.save` injects
+- `src/background.js` `launch()`: a table keyed by module id, where the module comes from
+  `match(tab.url).id` alone. `discord.save` injects
   `discord/bridge.js` (isolated) and `discord/collector.js` (MAIN). `messenger.save`
   injects `messenger/bridge.js` (isolated), then `messenger/read.js` and
-  `messenger/collector.js` (both MAIN). The tab's `match(url).id` must equal the module the
-  popup named; otherwise the existing refusal and badge path runs, with wording per module.
+  `messenger/collector.js` (both MAIN). A tab that matches no module in the table runs the
+  existing refusal and badge path, with wording that names both supported sites.
   An unknown command is still refused. Update the registry comment that names the three
   places a worker command lives.
 - `src/modules/messenger/bridge.js`: a new file. It leaves the Discord bridge untouched,
@@ -127,7 +159,12 @@ the photo link, the placeholders, and line-start escaping.
   `messenger/export.html`, and anything else gets `{ ok: false }`. The message shape stays
   the same, so `discord/collector.js` and `discord/bridge.js` don't change, and there is no
   diff to mirror.
-- `src/modules/messenger/export.html` + `export.js`: read the JSON through `leket:chunk`,
+- `src/modules/messenger/export.html` + `export.js`: `export.html` loads `../messenger/read.js`
+  with a plain `<script>` before the `export.js` module, and `export.js` uses
+  `globalThis.LeketMessengerRead`. Re-validate the posted `file` against
+  `^messenger-[\p{L}\p{N}._-]{1,60}-\d{1,25}\.json$` (else `messenger-export.json`). Check
+  each photo name against `^[\p{L}\p{N}._-]{1,120}$`, with no leading dot; a file that
+  fails is skipped and listed as not captured. Read the JSON through `leket:chunk`,
   then each file through `leket:file` until `offset >= size`, decoding base64 into
   Uint8Arrays. Write a `ZipWriter` (default part limit) holding
   `messenger-<name>-<thread>.json`, `messenger-<name>-<thread>.md` (from `renderMarkdown`)
@@ -136,8 +173,9 @@ the photo link, the placeholders, and line-start escaping.
   `leket:release`. The page states the counts: messages, photos saved, and photos seen but
   not captured.
 - Smoke (`test/smoke/smoke.mjs`), scenario "messenger": serve a synthetic page at
-  `https://www.messenger.com/e2ee/t/123`, click the popup's button, wait for the bridge
-  mark, post a synthetic `leket:messenger-export` with two messages and one small JPEG
+  `https://www.messenger.com/e2ee/t/123`, click the popup's button, and assert that the
+  popup closed and the collector's panel (`#leket-messenger-panel`) mounted, which proves
+  the MAIN-world files injected. Wait for the bridge mark, then post a synthetic `leket:messenger-export` with two messages and one small JPEG
   Blob, then assert one zip on disk holding the json, the md and `messenger-photos/…jpg`
   with the right bytes. Prove it red by routing `messenger` to the Discord export page in
   the `leket:ready` handler, and record that red run in the PR body.
@@ -146,7 +184,7 @@ the photo link, the placeholders, and line-start escaping.
 
 - Gate: the same path test as the registry. On no match, return with a panel message (no
   `alert`). A second launch while the panel is open does nothing.
-- Panel: a fixed div shaped like Discord's, with the count, the oldest date, the photos
+- Panel: a fixed div `#leket-messenger-panel`, shaped like Discord's, with the count, the oldest date, the photos
   captured, **Start**, **Stop** and **Save**, and a status line.
 - PIN or empty: when no `div[data-message-id]` mounts within 10 s of Start, the status
   says "No messages are showing. If Messenger is asking for your PIN to restore chats,
@@ -169,8 +207,8 @@ the photo link, the placeholders, and line-start escaping.
      `await fetch`) **before the next scroll step**. Keep it as a Blob named
      `<YYYY-MM-DD>_<messageId tail 12>_<n>.jpg`, with the extension taken from the MIME
      type. A `<video>` in a media row records `video` in the message's `kinds`, and
-     nothing is read. A media row whose photo never completes is counted as
-     "photo not captured", with its message id.
+     nothing is read. A media row that ends the sweep with no captured photo and no video,
+     whatever its `src` scheme, is counted in `photos_not_captured` with its message id.
   4. Link-preview rows record the first `a[href^="http"]` href as `link`. Their
      thumbnails are not saved.
 - More than 2 distinct `sender_id`s: the status warns "This looks like a group
