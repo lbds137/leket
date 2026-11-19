@@ -5,8 +5,12 @@
   "description": "A Chrome extension that saves Discord conversations with their attachments, Etsy conversations, Reddit posts and claude.ai sessions as files you keep.",
   "type": "module",
   "license": "MIT",
+  "devDependencies": {
+    "backlog.md": "1.55.3"
+  },
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "smoke": "node test/smoke/smoke.mjs"
+    "smoke": "node test/smoke/smoke.mjs",
+    "backlog": "backlog"
   }
 }

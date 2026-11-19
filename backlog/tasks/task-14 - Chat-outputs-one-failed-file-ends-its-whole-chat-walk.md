@@ -1,0 +1,20 @@
+---
+id: TASK-14
+title: 'Chat outputs: one failed file ends its whole chat walk'
+status: Deferred
+assignee: []
+created_date: '2026-11-19T21:22:00Z'
+labels:
+  - chat-outputs
+  - deferred
+dependencies: []
+ordinal: 14000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Migrated from GitHub issue #122 (hardening sweep 11-09), which stays open until Lila okays closing it. Unverified (PLAUSIBLE) unless marked.
+
+Deliberate (outputs.js header: it mirrors the console script, and the CLI consumer reads that shape). Deferred; trigger: coordinate a per-file error field with Deck's dev-docs script.
+<!-- SECTION:DESCRIPTION:END -->
