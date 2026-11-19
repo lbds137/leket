@@ -14,7 +14,7 @@ attachments and builds the zip.
   no usable Chromium: set `LEKET_CHROME` or `npx playwright install chromium`, never skip it.
 - Never commit a real conversation, person's name or attachment as a fixture.
 - Tracking: the queue lives in `backlog/` (backlog.md, `npm run backlog -- task list --plain`;
-  `npm install` first). File found work and dispositions there through the CLI, not in issues
+  `npm ci` first). File found work and dispositions there through the CLI, not in issues
   or the role file.
 - `src/modules/discord/collector.js` and the Etsy logic (`src/modules/etsy/`, per the header of
   `docs/etsy-script-spec.md`) are mirrored in another repo: a change to either goes, as its
