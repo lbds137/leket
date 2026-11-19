@@ -4,10 +4,10 @@ title: Hand the extension to Lila's friend
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
+updated_date: '2026-11-19T21:29:00Z'
 labels:
   - release
   - owner-decision
-  - deferred
 dependencies: []
 ordinal: 9000
 ---
