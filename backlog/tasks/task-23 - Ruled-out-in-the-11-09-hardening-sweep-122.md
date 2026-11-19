@@ -4,8 +4,9 @@ title: Ruled out in the 11-09 hardening sweep (#122)
 status: Done
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
+updated_date: '2026-11-19T21:29:00Z'
 labels:
-  - deferred
+  - ruled-out
 dependencies: []
 ordinal: 23000
 ---

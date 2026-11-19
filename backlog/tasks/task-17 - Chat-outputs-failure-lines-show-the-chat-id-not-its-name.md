@@ -4,9 +4,9 @@ title: 'Chat outputs: failure lines show the chat id, not its name'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
+updated_date: '2026-11-19T21:28:00Z'
 labels:
   - chat-outputs
-  - deferred
 dependencies: []
 ordinal: 17000
 ---

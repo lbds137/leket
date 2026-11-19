@@ -4,9 +4,9 @@ title: 'Etsy: no retry on 429/5xx; string create_date sorts unstably'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
+updated_date: '2026-11-19T21:28:00Z'
 labels:
   - etsy
-  - deferred
 dependencies: []
 ordinal: 19000
 ---

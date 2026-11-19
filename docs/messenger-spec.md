@@ -373,8 +373,8 @@ on a thread she picks (filed as a Needs Lila item).
 
 ## Open, for later
 
-Stickers, voice clips, the unknown
-kinds `4`, `4096` and `2^29`, groups, and the English-locale panel wording.
+Tracked in the backlog as TASK-3 (`backlog/tasks/`), which holds the list: stickers, voice
+clips, unknown message kinds, groups and the English-locale wording.
 
 Ruled out: an unforgeable Save handshake. The collector runs in the page's own world, so
 any script on the thread page can post what it posts; the thread-page check and the

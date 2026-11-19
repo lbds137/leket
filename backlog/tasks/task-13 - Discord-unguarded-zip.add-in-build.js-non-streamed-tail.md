@@ -4,9 +4,9 @@ title: 'Discord: unguarded zip.add in build.js non-streamed tail'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
+updated_date: '2026-11-19T21:28:00Z'
 labels:
   - discord
-  - deferred
 dependencies: []
 ordinal: 13000
 ---

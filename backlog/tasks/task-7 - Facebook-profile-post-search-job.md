@@ -4,9 +4,9 @@ title: 'Facebook: profile post search job'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
+updated_date: '2026-11-19T21:29:00Z'
 labels:
   - facebook
-  - deferred
 dependencies: []
 ordinal: 7000
 ---
