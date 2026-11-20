@@ -620,3 +620,38 @@ test("an empty list item opens its content column; after a paragraph a lone - is
   // a setext heading closes its paragraph, so the 4-space line after it is code
   assert.equal(safeBody("foo\n-\n    <!-- x"), "foo\n-\n    <!-- x");
 });
+
+// --- flair (TASK-25) ---
+
+test("a comment's text flair follows the author; no flair adds nothing", () => {
+  const md = render(postPage({}, [
+    comment({ author: "alice", author_flair_text: "Mod" }),
+    comment({ author: "bob", author_flair_text: null, author_flair_richtext: [] }),
+  ]));
+  assert.ok(md.includes("> **u/alice** (Mod) · 5 points · 2023-11-03 08:26 UTC"), md);
+  assert.ok(md.includes("> **u/bob** · 5 points · 2023-11-03 08:26 UTC"), md);
+});
+
+test("richtext flair wins over the text, emoji parts as their :alias:", () => {
+  const md = render(postPage({}, [comment({
+    author_flair_text: "ignored",
+    author_flair_richtext: [{ e: "emoji", a: ":star:", u: "https://emoji.example/star.png" }, { e: "text", t: " Regular" }],
+  })]));
+  assert.ok(md.includes("> **u/alice** (:star: Regular) · 5 points"), md);
+});
+
+test("flair is escaped like other JSON fields: one line, no raw <", () => {
+  const md = render(postPage({}, [comment({ author_flair_text: "a<b>\n# x" })]));
+  assert.ok(md.includes("**u/alice** (a&lt;b> # x) · 5 points"), md);
+});
+
+test("a post header shows author flair and link flair; neither when absent", () => {
+  const md = render(postPage({
+    author_flair_text: "Helper",
+    link_flair_richtext: [{ e: "text", t: "Question" }],
+    link_flair_text: "Question",
+  }));
+  assert.ok(md.includes("r/x · u/someone (Helper) · post flair: Question · 42 points · 0 comments"), md);
+  const bare = render(postPage());
+  assert.ok(bare.includes("r/x · u/someone · 42 points · 0 comments"), bare);
+});

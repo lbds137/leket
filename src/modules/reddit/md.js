@@ -201,6 +201,19 @@ function plain(v) {
   return String(v).replace(/\s+/g, " ").replace(/</g, "&lt;");
 }
 
+// A flair as one escaped line, or "" when there is none. Richtext wins when it yields text
+// (text parts verbatim, emoji parts as their `:alias:`); else the plain *_flair_text.
+function flairText(text, richtext) {
+  if (Array.isArray(richtext)) {
+    const joined = richtext
+      .map((part) => (part && part.e === "text" ? part.t : part && part.e === "emoji" ? part.a : ""))
+      .filter((s) => typeof s === "string")
+      .join("");
+    if (joined.trim()) return plain(joined).trim();
+  }
+  return typeof text === "string" && text.trim() ? plain(text).trim() : "";
+}
+
 // safeBody's block pass: commonmark.js 0.31.2's line-by-line block parser (lib/blocks.js),
 // ported for the one thing safeBody needs from it, each line's fate: paragraph or heading
 // text (escaped) or code (kept as written). Container matching, lazy continuation, list
@@ -664,7 +677,8 @@ export function comments(children, depth, permalink, out) {
       continue;
     }
     if (kind !== "t1") continue;
-    const head = `**u/${plain(d.author ?? "[deleted]")}** · ${plain(d.score ?? "?")} points · ${when(d.created_utc)}`;
+    const aFlair = flairText(d.author_flair_text, d.author_flair_richtext);
+    const head = `**u/${plain(d.author ?? "[deleted]")}**${aFlair ? ` (${aFlair})` : ""} · ${plain(d.score ?? "?")} points · ${when(d.created_utc)}`;
     out.push(quote(head, depth));
     out.push(quote("", depth));
     out.push(quoteBody(d.body, depth));
@@ -690,10 +704,12 @@ export function postOf(data) {
 export function render(data, saved = {}, folderRel = "", nf = notFetched(data)) {
   const p = postOf(data);
   const link = `https://www.reddit.com${p.permalink ?? ""}`;
+  const aFlair = flairText(p.author_flair_text, p.author_flair_richtext);
+  const lFlair = flairText(p.link_flair_text, p.link_flair_richtext);
   const out = [
     `# ${p.title == null ? "(untitled)" : escapeLine(String(p.title).replace(/\s+/g, " "))}`,
     "",
-    `r/${plain(p.subreddit ?? "?")} · u/${plain(p.author ?? "[deleted]")} · ${plain(p.score ?? "?")} points · ${plain(p.num_comments ?? "?")} comments · ${when(p.created_utc)}`,
+    `r/${plain(p.subreddit ?? "?")} · u/${plain(p.author ?? "[deleted]")}${aFlair ? ` (${aFlair})` : ""}${lFlair ? ` · post flair: ${lFlair}` : ""} · ${plain(p.score ?? "?")} points · ${plain(p.num_comments ?? "?")} comments · ${when(p.created_utc)}`,
     `Source: ${plain(link)}`,
   ];
   const imgs = images(p);
