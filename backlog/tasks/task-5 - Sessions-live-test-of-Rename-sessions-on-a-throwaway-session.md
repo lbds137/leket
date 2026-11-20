@@ -4,12 +4,14 @@ title: 'Sessions: live test of Rename sessions on a throwaway session'
 status: To Do
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
+updated_date: '2026-11-20T02:16:00Z'
 due_date: '2026-11-20'
 labels:
   - sessions
   - at-the-deck
 dependencies: []
-ordinal: 5000
+priority: high
+ordinal: 10
 ---
 
 ## Description

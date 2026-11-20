@@ -4,11 +4,12 @@ title: 'CI: check backlog/ parses and task labels stay in config.yml'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:34:00Z'
-updated_date: '2026-11-19T21:39:00Z'
+updated_date: '2026-11-20T02:17:00Z'
 labels:
   - release
 dependencies: []
-ordinal: 24000
+priority: medium
+ordinal: 90
 ---
 
 ## Description

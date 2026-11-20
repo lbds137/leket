@@ -4,12 +4,13 @@ title: 'Messenger: follow-ups from the real-save report'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
-updated_date: '2026-11-19T21:28:00Z'
+updated_date: '2026-11-20T02:17:00Z'
 labels:
   - messenger
 dependencies:
   - TASK-1
-ordinal: 2000
+priority: medium
+ordinal: 60
 ---
 
 ## Description

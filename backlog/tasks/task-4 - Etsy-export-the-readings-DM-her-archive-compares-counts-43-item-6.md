@@ -4,13 +4,14 @@ title: 'Etsy: export the readings DM; her archive compares counts (#43 item 6)'
 status: To Do
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
-updated_date: '2026-11-19T21:22:00Z'
+updated_date: '2026-11-20T02:16:00Z'
 labels:
   - etsy
   - needs-lila
   - at-the-deck
 dependencies: []
-ordinal: 4000
+priority: high
+ordinal: 30
 ---
 
 ## Description

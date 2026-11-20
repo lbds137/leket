@@ -4,13 +4,14 @@ title: 'Messenger: Lila runs one real save and reports'
 status: To Do
 assignee: []
 created_date: '2026-11-19T21:20:00Z'
-updated_date: '2026-11-19T21:21:00Z'
+updated_date: '2026-11-20T02:16:00Z'
 labels:
   - messenger
   - needs-lila
   - at-the-deck
 dependencies: []
-ordinal: 1000
+priority: high
+ordinal: 20
 ---
 
 ## Description

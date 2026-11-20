@@ -6,11 +6,12 @@ title: >-
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
-updated_date: '2026-11-19T21:28:00Z'
+updated_date: '2026-11-20T02:17:00Z'
 labels:
   - sessions
 dependencies: []
-ordinal: 21000
+priority: low
+ordinal: 100
 ---
 
 ## Description

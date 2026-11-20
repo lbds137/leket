@@ -4,10 +4,11 @@ title: 'Etsy: whole-blob redact blocks the page ~4 s on a 4.5 MB export'
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
-updated_date: '2026-11-19T21:29:00Z'
+updated_date: '2026-11-20T02:17:00Z'
 labels:
   - etsy
 dependencies: []
+priority: low
 ordinal: 20000
 ---
 
