@@ -15,7 +15,7 @@ ordinal: 20000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Migrated from GitHub issue #122 (hardening sweep 11-09), which stays open until Lila okays closing it. Unverified (PLAUSIBLE) unless marked.
+Migrated from GitHub issue #122 (hardening sweep 11-09), closed 2026-11-19 per Lila; this task is the record. Unverified (PLAUSIBLE) unless marked.
 
 Confirmed by the 11-09 audit. Deferred; trigger: an export large enough to freeze the page noticeably.
 <!-- SECTION:DESCRIPTION:END -->

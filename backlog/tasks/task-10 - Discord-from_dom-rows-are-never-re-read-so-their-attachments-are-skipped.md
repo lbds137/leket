@@ -15,7 +15,7 @@ ordinal: 10000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Migrated from GitHub issue #122 (hardening sweep 11-09), which stays open until Lila okays closing it. Unverified (PLAUSIBLE) unless marked.
+Migrated from GitHub issue #122 (hardening sweep 11-09), closed 2026-11-19 per Lila; this task is the record. Unverified (PLAUSIBLE) unless marked.
 
 A row first read without its React object (from_dom) is never re-read, so its attachments are never fetched. The loss is announced in the panel and index.html. Deferred; trigger: a real save showing from_dom rows.
 <!-- SECTION:DESCRIPTION:END -->

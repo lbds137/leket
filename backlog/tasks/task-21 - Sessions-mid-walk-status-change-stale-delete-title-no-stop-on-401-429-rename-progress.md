@@ -17,7 +17,7 @@ ordinal: 100
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Migrated from GitHub issue #122 (hardening sweep 11-09), which stays open until Lila okays closing it. Unverified (PLAUSIBLE) unless marked.
+Migrated from GitHub issue #122 (hardening sweep 11-09), closed 2026-11-19 per Lila; this task is the record. Unverified (PLAUSIBLE) unless marked.
 
 A session changing status mid-walk can be missed; the delete title is not re-checked per DELETE in a long batch; delete and rename keep going after a systemic 401/429; rename has no read progress counter. Deferred; trigger: any live report of one.
 <!-- SECTION:DESCRIPTION:END -->
