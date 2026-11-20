@@ -13,7 +13,8 @@
 //   links its own branch (comments()); render() adds the not-fetched note (notFetched()).
 // - every other JSON field written into a line (author, score, URLs, captions) goes
 //   through plain(): one line, every `<` escaped. Flair goes through plain() too, plus a
-//   backslash before each inline markdown character, so it always reads as literal text.
+//   backslash before each of \ ` * [ ] ~ and a non-intraword _ (flairLine), so it reads
+//   as literal text.
 // - flair (author and post) in the header lines is new: the python prints no flair.
 // - bodies and the title go through safeBody/escapeLine: a bare `<` outside code becomes
 //   `&lt;`, unclosed fences are closed. That includes a `<` in an angle-bracket link
@@ -205,10 +206,18 @@ function plain(v) {
 
 // A flair as one escaped line, or "" when there is none. Richtext wins when it yields text
 // (text parts verbatim, emoji parts as their `:alias:`); else the plain *_flair_text.
-// Flair is free text, so inline markdown is backslash-escaped too: no live link, image
-// or emphasis in the header line.
+// Flair is free text, so inline markdown is backslash-escaped too, with the smallest set
+// that keeps the header line literal: \ ` * [ ] ~ always, and _ unless it sits between two
+// letters/digits (CommonMark never opens emphasis there, so `:snoo_joy:` reads as written).
+// ( ) ! # stay raw: inert once [ ] are escaped. Known, harmless limit: a bare URL can still
+// autolink in a renderer (it loads no image).
+const INTRAWORD = /[\p{L}\p{N}]/u;
 function flairLine(v) {
-  return plain(String(v).replace(/[\\`*_[\]()!#]/g, "\\$&")).trim();
+  const text = String(v).replace(/[\\`*[\]~_]/g, (ch, i, whole) => {
+    if (ch === "_" && INTRAWORD.test(whole[i - 1] ?? "") && INTRAWORD.test(whole[i + 1] ?? "")) return ch;
+    return "\\" + ch;
+  });
+  return plain(text).trim();
 }
 
 function flairText(text, richtext) {

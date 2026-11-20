@@ -642,19 +642,36 @@ test("richtext flair wins over the text, emoji parts as their :alias:", () => {
 
 test("flair is escaped like other JSON fields: one line, no raw <", () => {
   const md = render(postPage({}, [comment({ author_flair_text: "a<b>\n# x" })]));
-  assert.ok(md.includes("**u/alice** (a&lt;b> \\# x) · 5 points"), md);
+  assert.ok(md.includes("**u/alice** (a&lt;b> # x) · 5 points"), md);
 });
 
 test("flair renders as literal text: no live image, link or emphasis", () => {
   const cases = [
-    ["![](https://tracker.example/x.png)", "(\\!\\[\\]\\(https://tracker.example/x.png\\)) · 5 points"],
-    ["[x](https://example.com)", "(\\[x\\]\\(https://example.com\\)) · 5 points"],
+    ["![](https://tracker.example/x.png)", "(!\\[\\](https://tracker.example/x.png)) · 5 points"],
+    ["[x](https://example.com)", "(\\[x\\](https://example.com)) · 5 points"],
     ["*a* _b_ `c` \\d", "(\\*a\\* \\_b\\_ \\`c\\` \\\\d) · 5 points"],
   ];
   for (const [flair, want] of cases) {
     const md = render(postPage({}, [comment({ author_flair_text: flair })]));
     assert.ok(md.includes(want), md);
   }
+});
+
+test("flair keeps readable text raw: parentheses and intraword underscores", () => {
+  const cases = [
+    ["Mod (retired)", "(Mod (retired)) · 5 points"],
+    [":snoo_joy:", "(:snoo_joy:) · 5 points"],
+    ["_x_", "(\\_x\\_) · 5 points"],
+    ["~~x~~", "(\\~\\~x\\~\\~) · 5 points"],
+  ];
+  for (const [flair, want] of cases) {
+    const md = render(postPage({}, [comment({ author_flair_text: flair })]));
+    assert.ok(md.includes(want), md);
+  }
+  const emoji = render(postPage({}, [comment({
+    author_flair_richtext: [{ e: "emoji", a: ":snoo_joy:", u: "https://emoji.example/j.png" }],
+  })]));
+  assert.ok(emoji.includes("(:snoo_joy:) · 5 points"), emoji);
 });
 
 test("richtext with only an alias-less emoji falls back to the flair text", () => {
@@ -668,7 +685,7 @@ test("richtext with only an alias-less emoji falls back to the flair text", () =
 test("a post with link flair but no author flair shows no empty parentheses", () => {
   const md = render(postPage({ link_flair_text: "X" }));
   assert.ok(md.includes("u/someone · post flair: X · 42 points"), md);
-  assert.ok(!md.includes("()"), md);
+  assert.ok(!md.split("\n").find((l) => l.startsWith("r/")).includes("()"), md);
 });
 
 test("a post header shows author flair and link flair; neither when absent", () => {
