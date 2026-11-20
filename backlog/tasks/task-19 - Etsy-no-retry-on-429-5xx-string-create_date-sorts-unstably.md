@@ -15,7 +15,7 @@ ordinal: 19000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Migrated from GitHub issue #122 (hardening sweep 11-09), which stays open until Lila okays closing it. Unverified (PLAUSIBLE) unless marked.
+Migrated from GitHub issue #122 (hardening sweep 11-09), closed 2026-11-19 per Lila; this task is the record. Unverified (PLAUSIBLE) unless marked.
 
 No retry on 429/5xx (the failure is shown in amber). Messages with a string create_date sort in an unstable order (real data is epoch). Deferred; trigger: either seen live.
 <!-- SECTION:DESCRIPTION:END -->

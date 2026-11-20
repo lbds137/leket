@@ -15,7 +15,7 @@ ordinal: 13000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Migrated from GitHub issue #122 (hardening sweep 11-09), which stays open until Lila okays closing it. Unverified (PLAUSIBLE) unless marked.
+Migrated from GitHub issue #122 (hardening sweep 11-09), closed 2026-11-19 per Lila; this task is the record. Unverified (PLAUSIBLE) unless marked.
 
 The zip.add in build.js's non-streamed tail (~:245 at the time) is unguarded; it needs a lying size field to fail. Deferred; trigger: any build crash report.
 <!-- SECTION:DESCRIPTION:END -->
