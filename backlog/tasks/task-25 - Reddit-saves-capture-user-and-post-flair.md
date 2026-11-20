@@ -4,7 +4,7 @@ title: 'Reddit saves: capture user and post flair'
 status: Done
 assignee: []
 created_date: '2026-11-20T19:02:00Z'
-updated_date: '2026-11-20T19:09:00Z'
+updated_date: '2026-11-20T19:25:00Z'
 labels:
   - enhancement
 dependencies: []
@@ -28,5 +28,5 @@ Lila 11-20 (via Chats). Reddit saves drop flair: no "flair" anywhere in src/ (ch
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Shipped in #157; review fixes (flair markdown escaping, header note, two tests) in the follow-up PR task-25-review-fixes.
+Shipped in #157; review fixes (flair markdown escaping, header note, two tests) in #158.
 <!-- SECTION:FINAL_SUMMARY:END -->
