@@ -4,10 +4,11 @@ title: 'Chat outputs: same-day re-run overwrites the day''s file even when worse
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:22:00Z'
-updated_date: '2026-11-19T21:28:00Z'
+updated_date: '2026-11-20T02:17:00Z'
 labels:
   - chat-outputs
 dependencies: []
+priority: low
 ordinal: 15000
 ---
 

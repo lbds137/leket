@@ -4,11 +4,13 @@ title: 'Reddit: save the r/SillyTavernAI thread; tell Tzurot where it lands'
 status: To Do
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
+updated_date: '2026-11-20T02:16:00Z'
 labels:
   - reddit
   - needs-lila
 dependencies: []
-ordinal: 6000
+priority: medium
+ordinal: 40
 ---
 
 ## Description

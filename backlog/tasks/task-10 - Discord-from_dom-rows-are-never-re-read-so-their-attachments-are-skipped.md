@@ -4,10 +4,11 @@ title: 'Discord: from_dom rows are never re-read, so their attachments are skipp
 status: Deferred
 assignee: []
 created_date: '2026-11-19T21:21:00Z'
-updated_date: '2026-11-19T21:28:00Z'
+updated_date: '2026-11-20T02:17:00Z'
 labels:
   - discord
 dependencies: []
+priority: low
 ordinal: 10000
 ---
 
