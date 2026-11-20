@@ -642,7 +642,33 @@ test("richtext flair wins over the text, emoji parts as their :alias:", () => {
 
 test("flair is escaped like other JSON fields: one line, no raw <", () => {
   const md = render(postPage({}, [comment({ author_flair_text: "a<b>\n# x" })]));
-  assert.ok(md.includes("**u/alice** (a&lt;b> # x) · 5 points"), md);
+  assert.ok(md.includes("**u/alice** (a&lt;b> \\# x) · 5 points"), md);
+});
+
+test("flair renders as literal text: no live image, link or emphasis", () => {
+  const cases = [
+    ["![](https://tracker.example/x.png)", "(\\!\\[\\]\\(https://tracker.example/x.png\\)) · 5 points"],
+    ["[x](https://example.com)", "(\\[x\\]\\(https://example.com\\)) · 5 points"],
+    ["*a* _b_ `c` \\d", "(\\*a\\* \\_b\\_ \\`c\\` \\\\d) · 5 points"],
+  ];
+  for (const [flair, want] of cases) {
+    const md = render(postPage({}, [comment({ author_flair_text: flair })]));
+    assert.ok(md.includes(want), md);
+  }
+});
+
+test("richtext with only an alias-less emoji falls back to the flair text", () => {
+  const md = render(postPage({}, [comment({
+    author_flair_text: "Mod",
+    author_flair_richtext: [{ e: "emoji", u: "https://emoji.example/x.png" }],
+  })]));
+  assert.ok(md.includes("**u/alice** (Mod) · 5 points"), md);
+});
+
+test("a post with link flair but no author flair shows no empty parentheses", () => {
+  const md = render(postPage({ link_flair_text: "X" }));
+  assert.ok(md.includes("u/someone · post flair: X · 42 points"), md);
+  assert.ok(!md.includes("()"), md);
 });
 
 test("a post header shows author flair and link flair; neither when absent", () => {

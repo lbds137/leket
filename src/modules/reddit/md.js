@@ -12,7 +12,9 @@
 // - "more" nodes: count-0 cuts render a thread-continues link, and every more line
 //   links its own branch (comments()); render() adds the not-fetched note (notFetched()).
 // - every other JSON field written into a line (author, score, URLs, captions) goes
-//   through plain(): one line, every `<` escaped.
+//   through plain(): one line, every `<` escaped. Flair goes through plain() too, plus a
+//   backslash before each inline markdown character, so it always reads as literal text.
+// - flair (author and post) in the header lines is new: the python prints no flair.
 // - bodies and the title go through safeBody/escapeLine: a bare `<` outside code becomes
 //   `&lt;`, unclosed fences are closed. That includes a `<` in an angle-bracket link
 //   destination (`[x](<url>)`), which then shows as text, and a `<https://…>` autolink,
@@ -203,15 +205,21 @@ function plain(v) {
 
 // A flair as one escaped line, or "" when there is none. Richtext wins when it yields text
 // (text parts verbatim, emoji parts as their `:alias:`); else the plain *_flair_text.
+// Flair is free text, so inline markdown is backslash-escaped too: no live link, image
+// or emphasis in the header line.
+function flairLine(v) {
+  return plain(String(v).replace(/[\\`*_[\]()!#]/g, "\\$&")).trim();
+}
+
 function flairText(text, richtext) {
   if (Array.isArray(richtext)) {
     const joined = richtext
       .map((part) => (part && part.e === "text" ? part.t : part && part.e === "emoji" ? part.a : ""))
       .filter((s) => typeof s === "string")
       .join("");
-    if (joined.trim()) return plain(joined).trim();
+    if (joined.trim()) return flairLine(joined);
   }
-  return typeof text === "string" && text.trim() ? plain(text).trim() : "";
+  return typeof text === "string" && text.trim() ? flairLine(text) : "";
 }
 
 // safeBody's block pass: commonmark.js 0.31.2's line-by-line block parser (lib/blocks.js),
