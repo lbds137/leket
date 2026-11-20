@@ -1,10 +1,10 @@
 ---
 id: TASK-25
 title: 'Reddit saves: capture user and post flair'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-20T19:02:00Z'
-updated_date: '2026-11-20T19:03:00Z'
+updated_date: '2026-11-20T19:09:00Z'
 labels:
   - enhancement
 dependencies: []
@@ -24,3 +24,9 @@ Lila 11-20 (via Chats). Reddit saves drop flair: no "flair" anywhere in src/ (ch
 - [x] #2 Post headers show author flair and post (link) flair when present
 - [x] #3 Flair text goes through plain() escaping; tests cover text, richtext with emoji, and no-flair cases
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in #157; review fixes (flair markdown escaping, header note, two tests) in the follow-up PR task-25-review-fixes.
+<!-- SECTION:FINAL_SUMMARY:END -->
