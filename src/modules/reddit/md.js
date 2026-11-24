@@ -207,17 +207,15 @@ function plain(v) {
 // A flair as one escaped line, or "" when there is none. Richtext wins when it yields text
 // (text parts verbatim, emoji parts as their `:alias:`); else the plain *_flair_text.
 // Flair is free text, so inline markdown is backslash-escaped too, with a small set that
-// keeps links, images and emphasis dead: \ ` * [ ] ~ always, and _ unless it sits between two
-// letters/digits (CommonMark never opens emphasis there, so `:snoo_joy:` reads as written).
-// ( ) ! # stay raw: inert once [ ] are escaped. Known, harmless limit: a bare URL can still
-// autolink in a renderer (it loads no image).
-const INTRAWORD = /[\p{L}\p{N}]/u;
+// keeps links, images and emphasis dead: \ ` * [ ] ~ always, and _ unless both neighbours are
+// letters, digits or combining marks (neither whitespace nor punctuation, so CommonMark never
+// opens or closes emphasis there and `:snoo_joy:` reads as written). The /u flag compares
+// whole code points, so a letter outside the BMP counts too; an emoji is Unicode punctuation
+// (S*) to CommonMark, so an _ beside one stays escaped. ( ) ! # stay raw: inert once [ ] are
+// escaped. Known, harmless limit: a bare URL can still autolink in a renderer (no image loads).
+const FLAIR_ESCAPE = /[\\`*[\]~]|(?<![\p{L}\p{N}\p{M}])_|_(?![\p{L}\p{N}\p{M}])/gu;
 function flairLine(v) {
-  const text = String(v).replace(/[\\`*[\]~_]/g, (ch, i, whole) => {
-    if (ch === "_" && INTRAWORD.test(whole[i - 1] ?? "") && INTRAWORD.test(whole[i + 1] ?? "")) return ch;
-    return "\\" + ch;
-  });
-  return plain(text).trim();
+  return plain(String(v).replace(FLAIR_ESCAPE, (ch) => "\\" + ch)).trim();
 }
 
 function flairText(text, richtext) {
