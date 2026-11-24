@@ -670,6 +670,12 @@ test("flair keeps readable text raw: parentheses and intraword underscores", () 
     ["trail_", "(trail\\_) · 5 points"],
     ["a _b", "(a \\_b) · 5 points"],
     ["a-_b", "(a-\\_b) · 5 points"],
+    // whole code points: astral letters, decomposed accents and Devanagari vowel signs are
+    // intraword; an emoji is punctuation to CommonMark, so its _ stays escaped
+    ["𝐀_𝐁", "(𝐀_𝐁) · 5 points"],
+    ["café_ünder", "(café_ünder) · 5 points"],
+    ["हिंदी_भाषा", "(हिंदी_भाषा) · 5 points"],
+    ["😀_😀", "(😀\\_😀) · 5 points"],
   ];
   for (const [flair, want] of cases) {
     const md = render(postPage({}, [comment({ author_flair_text: flair })]));
