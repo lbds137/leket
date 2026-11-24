@@ -206,8 +206,8 @@ function plain(v) {
 
 // A flair as one escaped line, or "" when there is none. Richtext wins when it yields text
 // (text parts verbatim, emoji parts as their `:alias:`); else the plain *_flair_text.
-// Flair is free text, so inline markdown is backslash-escaped too, with the smallest set
-// that keeps the header line literal: \ ` * [ ] ~ always, and _ unless it sits between two
+// Flair is free text, so inline markdown is backslash-escaped too, with a small set that
+// keeps links, images and emphasis dead: \ ` * [ ] ~ always, and _ unless it sits between two
 // letters/digits (CommonMark never opens emphasis there, so `:snoo_joy:` reads as written).
 // ( ) ! # stay raw: inert once [ ] are escaped. Known, harmless limit: a bare URL can still
 // autolink in a renderer (it loads no image).
