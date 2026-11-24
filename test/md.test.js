@@ -663,6 +663,13 @@ test("flair keeps readable text raw: parentheses and intraword underscores", () 
     [":snoo_joy:", "(:snoo_joy:) · 5 points"],
     ["_x_", "(\\_x\\_) · 5 points"],
     ["~~x~~", "(\\~\\~x\\~\\~) · 5 points"],
+    // intraword means letter or digit on both sides, Unicode included; an edge is never intraword
+    ["v1_2", "(v1_2) · 5 points"],
+    ["café_ünder", "(café_ünder) · 5 points"],
+    ["_lead", "(\\_lead) · 5 points"],
+    ["trail_", "(trail\\_) · 5 points"],
+    ["a _b", "(a \\_b) · 5 points"],
+    ["a-_b", "(a-\\_b) · 5 points"],
   ];
   for (const [flair, want] of cases) {
     const md = render(postPage({}, [comment({ author_flair_text: flair })]));
@@ -685,7 +692,9 @@ test("richtext with only an alias-less emoji falls back to the flair text", () =
 test("a post with link flair but no author flair shows no empty parentheses", () => {
   const md = render(postPage({ link_flair_text: "X" }));
   assert.ok(md.includes("u/someone · post flair: X · 42 points"), md);
-  assert.ok(!md.split("\n").find((l) => l.startsWith("r/")).includes("()"), md);
+  const header = md.split("\n").find((l) => l.startsWith("r/"));
+  assert.ok(header, `no r/ header line in:\n${md}`);
+  assert.ok(!header.includes("()"), header);
 });
 
 test("a post header shows author flair and link flair; neither when absent", () => {

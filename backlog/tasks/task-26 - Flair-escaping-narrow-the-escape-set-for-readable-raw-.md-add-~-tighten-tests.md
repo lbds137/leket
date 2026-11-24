@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-11-20T19:14:00Z'
-updated_date: '2026-11-20T19:25:00Z'
+updated_date: '2026-11-24T00:57:00Z'
 labels:
   - enhancement
 dependencies: []
@@ -23,5 +23,5 @@ From PR #158 claude-review (5 low findings, merged with VERDICT PASS). (1) ~ not
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-flairLine escapes only \ ` * [ ] ~ and non-intraword _; ( ) ! # stay raw; tests pin Mod (retired), :snoo_joy:, _x_, ~~x~~ and scope the no-() check to the r/ header (PR task-26-flair-escape).
+flairLine escapes only \ ` * [ ] ~ and non-intraword _; ( ) ! # stay raw; tests pin Mod (retired), :snoo_joy:, _x_, ~~x~~ and scope the no-() check to the r/ header (PR #159).
 <!-- SECTION:FINAL_SUMMARY:END -->
