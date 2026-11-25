@@ -423,12 +423,12 @@ export function render(data) {
 
   const statusLine = (key, n) => {
     const s = status[key];
-    if (s && s !== "complete") return `<p class="status warn">Saved partway — ${esc(s)} ${n} here.</p>`;
+    if (s && s !== "complete") return `<p class="status warn">Saved partway (${esc(s)}) — ${n} here.</p>`;
     return `<p class="status ok">Complete — ${n} here.</p>`;
   };
   const statusWord = (key) => {
     const s = status[key];
-    return s && s !== "complete" ? `<p class="status warn">Saved partway — ${esc(s)}</p>` : `<p class="status ok">Complete.</p>`;
+    return s && s !== "complete" ? `<p class="status warn">Saved partway (${esc(s)}).</p>` : `<p class="status ok">Complete.</p>`;
   };
 
   let chat = "";
@@ -502,7 +502,7 @@ ul{margin:4px 0;padding-left:20px}li{margin:2px 0}
 </style></head><body><main>
 <header><h1>${esc(you)} &amp; ${esc(replika)}</h1>
 <p>${counts.messages ?? 0} messages · ${counts.diary ?? 0} diary entries · ${counts.memories ?? 0} memories · ${counts.media ?? 0} pictures and voice clips</p>
-<p>${savedLine}</p></header>
+<p>${savedLine}</p>${status.media && status.media !== "complete" ? statusWord("media") : ""}</header>
 <section id="chat"><h2>Chat</h2>${statusLine("chat", counts.messages ?? 0)}${chat}</section>
 <section id="diary"><h2>Diary</h2>${statusLine("diary", counts.diary ?? 0)}${diary}</section>
 <section id="memories"><h2>Memories</h2>${statusWord("memories")}${memories}</section>

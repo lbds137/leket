@@ -21,8 +21,8 @@ const problemsList = (items) => fails.replaceChildren(...items.map((t) => {
   return li;
 }));
 
-const NO_TAB = "This page was opened without a my.replika.com tab: close it, open my.replika.com, click the toolbar button, and start again.";
-const NOT_SIGNED_IN = "Not signed in on that tab: sign in at my.replika.com, let the chat load, then click Save everything again.";
+const NO_TAB = "This page was opened without a Replika tab: close it, open Replika, click the toolbar button, and start again.";
+const NOT_SIGNED_IN = "Not signed in on that tab: sign in to Replika (my.replika.com or my.replika.ai), let the chat load, then click Save everything again.";
 
 // the popup matched a my.replika.com tab and passed its id as a query. Missing or
 // garbage: this page has no tab to read the login from, so it must not run.
@@ -54,22 +54,22 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
     return;
   }
   try {
-    say("Checking the my.replika.com tab…");
+    say("Checking the Replika tab…");
     let tab;
     try {
       tab = await chrome.tabs.get(tabId);
     } catch {
-      say("The my.replika.com tab is gone — open it, sign in, click the toolbar button, and start again.", "warn");
+      say("The Replika tab is gone — open it, sign in, click the toolbar button, and start again.", "warn");
       return;
     }
     // the tab may have navigated since the popup matched it; the probe and the fetches
     // only make sense on a signed-in my.replika.com page
     const mod = match(tab.url);
     if (!mod || mod.id !== "replika") {
-      say("This tab is no longer on my.replika.com — go back there, sign in, click the toolbar button, and start again.", "warn");
+      say("This tab is no longer on Replika — go back there, sign in, click the toolbar button, and start again.", "warn");
       return;
     }
-    say("Reading the sign-in from the my.replika.com tab…");
+    say("Reading the sign-in from the Replika tab…");
     const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readReplikaAuth });
     const probe = injection && injection.result;
     if (!probe || !probe.ok) {

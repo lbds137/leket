@@ -16,6 +16,7 @@ const IMAGE_SIGNED = "https://my.replika.ai/api/mobile/1.5/images/signed/actions
 
 // fixed, secret-free reasons the save shows when a step stopped partway
 export const DIARY_PARTIAL = "Replika stopped answering the diary partway; the entries read so far are kept";
+export const DIARY_STUCK = "the diary list stopped moving forwards; the entries read so far are kept";
 export const MEMORY_V14_PARTIAL = "Replika's older memory list (v1.4) didn't come back; the other memories are kept";
 export const MEMORY_V15_PARTIAL = "Replika's newer memory list (v1.5) didn't come back; the other memories are kept";
 export const MEMORY_BOTH_PARTIAL = "Replika's memory lists (both versions) didn't come back";
@@ -30,7 +31,7 @@ export const MEDIA_FETCH_FAILED = "the file host refused or failed";
 
 export class SignedOut extends Error {
   constructor() {
-    super("Replika answered 401/403: sign in again at my.replika.com and rerun");
+    super("Replika answered 401/403: sign in again on Replika and rerun");
     this.name = "SignedOut";
   }
 }
@@ -158,14 +159,16 @@ export function readReplikaAuth() {
 }
 
 // The diary: previews page by offset (limit 100) until an empty array, then the entries
-// are fetched by id in chunks of 50. A reply that is not an array throws (it is an
-// error, not the end of the list); a failed page after some previews keeps their ids and
+// are fetched by id in chunks of 50. A reply that is not an array is a failure
+// (not the end of the list); a failed page after some previews keeps their ids and
 // still fetches their details, and a failed detail call keeps the details already read —
 // either way the answer carries a fixed partial reason. A 401/403 keeps what was read,
 // with signedOut set so the save stops its remaining steps. The previews ride along too:
 // the save's tally reports the fields they carry that Leket never reads.
-export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, limit = 100, chunk = 50 } = {}) {
+export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, limit = 100, chunk = 50, maxPages = 1000 } = {}) {
   const previews = [];
+  const seen = new Set();
+  let pages = 0;
   let partial = null;
   for (;;) {
     let page;
@@ -176,9 +179,22 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, l
       partial = DIARY_PARTIAL; // the ids read so far still get their details
       break;
     }
-    if (!Array.isArray(page)) throw new Error("the diary previews reply was not a list");
-    previews.push(...page);
+    if (!Array.isArray(page)) {
+      partial = DIARY_PARTIAL; // not a list: the ids read so far still get their details
+      break;
+    }
     if (!page.length) break;
+    const fresh = page.filter((p) => p && p.id != null && !seen.has(p.id));
+    if (fresh.length === 0) {
+      partial = DIARY_STUCK; // the same page again (or items with no id): the offset is being ignored
+      break;
+    }
+    for (const p of fresh) seen.add(p.id);
+    previews.push(...fresh);
+    if (++pages >= maxPages) {
+      partial = DIARY_STUCK;
+      break;
+    }
   }
   const entries = [];
   const ids = previews.map((p) => p && p.id).filter((id) => id != null);
