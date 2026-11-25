@@ -59,6 +59,13 @@ test("pickCaptionTrack prefers manual, then <lang>-orig, then the plain auto tra
   assert.equal(pickCaptionTrack(info, "en").kind, "auto-translated");
   info.automatic_captions.en = t("https://y.test/auto?lang=en");
   assert.equal(pickCaptionTrack(info, "en").kind, "auto");
+  // a regional human track (en-GB, en-US) beats every auto track; the first by key wins
+  const regional = {
+    subtitles: { "en-US": t("https://y.test/us"), "en-GB": t("https://y.test/gb"), eng: t("https://y.test/eng") },
+    automatic_captions: { "en-orig": t("https://y.test/orig") },
+  };
+  assert.deepEqual(pickCaptionTrack(regional, "en"), { url: "https://y.test/gb", kind: "manual", language: "en-GB" });
+  assert.deepEqual(pickCaptionTrack(regional, "EN"), { url: "https://y.test/gb", kind: "manual", language: "en-GB" });
   // a language with only non-json3 formats, or none at all, has no track
   assert.equal(pickCaptionTrack({ automatic_captions: { fr: [{ ext: "vtt", url: "https://y.test/v" }] } }, "fr"), null);
   assert.equal(pickCaptionTrack({}, "en"), null);

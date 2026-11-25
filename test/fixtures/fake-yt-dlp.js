@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 // A stand-in for yt-dlp in test/cli.test.js (LEKET_YTDLP points here): writes a
 // synthetic video.info.json where -o says, and logs the comment estimate the way
-// yt-dlp does. FAKE_YTDLP_MODE: fail exits 1 without writing anything; partial writes
-// the info and then exits 1; null writes the JSON literal null. Every name and text
-// below is invented.
+// yt-dlp does. FAKE_YTDLP_MODE: fail exits 1 without writing anything; old fails the
+// way a yt-dlp without --js-runtimes does; partial writes the info and then exits 1;
+// kill writes the info and then dies by SIGTERM; null writes the JSON literal null;
+// playlist writes a playlist's info. FAKE_YTDLP_ARGS names a file to record argv in.
+// Every name and text below is invented.
 import { writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
+if (process.env.FAKE_YTDLP_ARGS) writeFileSync(process.env.FAKE_YTDLP_ARGS, JSON.stringify(args));
 if (process.env.FAKE_YTDLP_MODE === "fail") {
   process.stderr.write("ERROR: [youtube] fake: Video unavailable\n");
   process.exit(1);
+}
+if (process.env.FAKE_YTDLP_MODE === "old") {
+  process.stderr.write("yt-dlp: error: no such option: --js-runtimes\n");
+  process.exit(2);
 }
 const tmpl = args[args.indexOf("-o") + 1];
 const info = {
@@ -27,8 +34,12 @@ const info = {
 };
 process.stderr.write("[youtube] Downloading ~5 comments\n");
 const mode = process.env.FAKE_YTDLP_MODE;
-writeFileSync(tmpl.replace("%(ext)s", "info.json"), mode === "null" ? "null" : JSON.stringify(info));
+const body = mode === "null" ? "null"
+  : mode === "playlist" ? JSON.stringify({ _type: "playlist", id: "PLfake", title: "A Synthetic Playlist", entries: [] })
+  : JSON.stringify(info);
+writeFileSync(tmpl.replace("%(ext)s", "info.json"), body);
 if (mode === "partial") {
   process.stderr.write("ERROR: [youtube] fake: comment page failed\n");
   process.exit(1);
 }
+if (mode === "kill") process.kill(process.pid, "SIGTERM");

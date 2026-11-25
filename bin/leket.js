@@ -10,11 +10,11 @@
 //      info.json lists.
 // Exit codes: 0 saved (an empty transcript with a note means the video has no captions
 // in that language); 1 nothing saved; 2 usage; 3 saved but incomplete: the caption
-// fetch failed, or yt-dlp stopped partway after writing the video info (the notes in
-// the files and on stderr say which).
+// fetch failed, yt-dlp stopped partway after writing the video info, or only the .json
+// could be written (the notes in the files and on stderr say which).
 import { spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rename, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -28,12 +28,14 @@ const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max
 
   Saves <title>-<video id>-transcript-comments.json (youtube-extract/v1) and .md
   into DIR (default: the current directory), replacing an earlier save of the video.
-  --lang CODE        caption language (default en): a manual track first, then auto
+  --lang CODE        caption language (default en): a manual track (en, else a regional
+                     one such as en-US), then auto
   --max-comments N   stop after N comments, replies included (default: all)
 
-  yt-dlp: $LEKET_YTDLP if set (a path), else yt-dlp on PATH, else uvx.
+  yt-dlp: $LEKET_YTDLP if set (a path), else yt-dlp on PATH, else uvx. It needs a
+  release that knows --js-runtimes.
   Exit: 0 saved; 1 nothing saved; 2 usage; 3 saved but incomplete (captions refused,
-  or yt-dlp stopped partway; the notes say which).`;
+  yt-dlp stopped partway, or only the .json written; the notes say which).`;
 
 // How to run yt-dlp: an explicit path, one on PATH, or uvx (with curl_cffi, which
 // YouTube's extractor asks for to impersonate a browser).
@@ -44,12 +46,20 @@ export function ytDlpCommand(env = process.env, probe = spawnSync) {
   return { cmd: "uvx", pre: ["--with", "curl_cffi", "yt-dlp"] };
 }
 
-// A YouTube video address: youtube.com (www, m, music) or youtu.be, over http(s).
-// yt-dlp would take any of its thousand sites; this subcommand is YouTube's.
+// A YouTube VIDEO address over http(s): youtu.be/<id>, or youtube.com (www, m, music)
+// /watch?v=<id>, /shorts/<id> or /live/<id>. A channel or playlist address would make
+// yt-dlp walk every video in it, comments and all, for hours; yt-dlp would also take
+// any of its thousand other sites. This subcommand saves one YouTube video.
 export function isYouTubeUrl(s) {
   let u;
   try { u = new URL(s); } catch { return false; }
-  return /^https?:$/.test(u.protocol) && /^((www|m|music)\.)?youtube\.com$|^youtu\.be$/.test(u.hostname);
+  if (!/^https?:$/.test(u.protocol)) return false;
+  const id = /^[A-Za-z0-9_-]+$/;
+  if (u.hostname === "youtu.be") return id.test(u.pathname.slice(1));
+  if (!/^((www|m|music)\.)?youtube\.com$/.test(u.hostname)) return false;
+  if (u.pathname === "/watch") return id.test(u.searchParams.get("v") || "");
+  const m = /^\/(shorts|live)\/([^/]+)\/?$/.exec(u.pathname);
+  return !!m && id.test(m[2]);
 }
 
 // yt-dlp's arguments for step 1. YouTube's player needs a JS runtime to solve its
@@ -83,7 +93,8 @@ function run(cmd, args) {
     child.stdout.on("data", (d) => { log += d; });
     child.stderr.on("data", (d) => { log += d; process.stderr.write(d); });
     child.on("error", (e) => res({ code: 127, log: `${log}${e.message}\n` }));
-    child.on("close", (code) => res({ code, log }));
+    // a child killed by a signal closes with code null: that is a stop, never a clean run
+    child.on("close", (code, signal) => res({ code: code ?? 1, signal, log }));
   });
 }
 
@@ -93,19 +104,19 @@ export async function fetchTranscript(info, lang, { fetch: doFetch = fetch } = {
   if (!track) {
     return { transcript: [], note: `YouTube lists no captions in "${lang}" for this video.`, failed: false };
   }
+  const fail = (note) => ({ transcript: [], kind: track.kind, note, failed: true });
   let r;
   try {
     r = await doFetch(track.url, { signal: AbortSignal.timeout(60_000) });
   } catch (e) {
-    return { transcript: [], kind: track.kind, note: `Couldn't reach YouTube for the captions (${(e && e.message) || e}); run again later.`, failed: true };
+    return fail(`Couldn't reach YouTube for the captions (${(e && e.message) || e}); run again later.`);
   }
   if (!r.ok) {
     const why = r.status === 429
       ? "YouTube refused the caption request (HTTP 429: it has rate-limited captions for this network)"
       : `YouTube answered ${r.status} to the caption request`;
-    return { transcript: [], kind: track.kind, note: `${why}; the comments are saved. Run again later, or save from the browser with the Leket extension.`, failed: true };
+    return fail(`${why}; the comments are saved. Run again later, or save from the browser with the Leket extension.`);
   }
-  const fail = (note) => ({ transcript: [], kind: track.kind, note, failed: true });
   let raw;
   try {
     raw = await r.text();
@@ -144,7 +155,8 @@ export async function extractFromInfo(info, { lang = "en", log = "", ytDlpExit =
       total_comments_reported: reportedTotal(log),
       source: "leket-cli/yt-dlp",
       video_id: info.id,
-      transcript_language: cap.kind ? lang : "",
+      // the track's own key: en-US when a regional track stood in for en
+      transcript_language: (cap.kind && pickCaptionTrack(info, lang)?.language) || "",
       transcript_kind: cap.kind,
       transcript_note: cap.note,
       comments_note: notes.join(" "),
@@ -155,18 +167,48 @@ export async function extractFromInfo(info, { lang = "en", log = "", ytDlpExit =
   return { extract, partial: cap.failed || !!ytDlpExit };
 }
 
+// Writes <base>.json and <base>.md through temp files renamed into place, so a failed
+// write (disk full, permissions) never leaves a half-written file or a new .json beside
+// an old .md unannounced. Returns {saved: "both" | "json" | "none", error}: the .json
+// is renamed first, so "json" is the only partial outcome.
+export async function writePair(base, json, md) {
+  const tmp = (ext) => `${base}.${ext}.leket-tmp-${process.pid}`;
+  const why = (e) => (e && e.code) || (e && e.message) || String(e);
+  // cleanup is best effort: its own failure must not hide the write error being reported
+  const drop = (p) => rm(p, { force: true }).catch(() => {});
+  try {
+    await writeFile(tmp("json"), json);
+    await writeFile(tmp("md"), md);
+    await rename(tmp("json"), `${base}.json`);
+  } catch (e) {
+    await Promise.all([drop(tmp("json")), drop(tmp("md"))]);
+    return { saved: "none", error: why(e) };
+  }
+  try {
+    await rename(tmp("md"), `${base}.md`);
+  } catch (e) {
+    await drop(tmp("md"));
+    return { saved: "json", error: why(e) };
+  }
+  return { saved: "both", error: "" };
+}
+
 export async function youtube(url, { out = ".", lang = "en", maxComments } = {}) {
   const yt = ytDlpCommand();
   const work = await mkdtemp(join(tmpdir(), "leket-yt-"));
   try {
-    const { code, log } = await run(yt.cmd, [...yt.pre, ...ytDlpArgs(url, work, { maxComments })]);
+    const { code, signal, log } = await run(yt.cmd, [...yt.pre, ...ytDlpArgs(url, work, { maxComments })]);
+    if (code && /no such option: --js-runtimes/.test(log)) {
+      process.stderr.write("leket: this yt-dlp is too old to know --js-runtimes; update it (yt-dlp -U, or your package manager), or unset LEKET_YTDLP to use uvx's.\n");
+    }
     let info = null;
     try {
       info = JSON.parse(await readFile(join(work, "video.info.json"), "utf8"));
     } catch { /* reported below */ }
-    if (!info || typeof info !== "object" || Array.isArray(info)) {
-      const how = code === 127 ? "could not start" : code ? `exited ${code}` : "finished";
-      process.stderr.write(`leket: yt-dlp ${how} and wrote no readable video info; nothing saved.\n`);
+    if (!info || typeof info !== "object" || Array.isArray(info) || info._type === "playlist") {
+      const how = code === 127 ? "could not start" : signal ? `was stopped (${signal})` : code ? `exited ${code}` : "finished";
+      const what = info && info._type === "playlist" ? "a playlist, not one video" : "no readable video info";
+      process.stderr.write(`leket: yt-dlp ${how} and wrote ${what}; nothing saved.\n`);
       return 1;
     }
     const { extract, partial } = await extractFromInfo(info, { lang, log, ytDlpExit: code });
@@ -176,15 +218,20 @@ export async function youtube(url, { out = ".", lang = "en", maxComments } = {})
     const dir = resolve(out);
     await mkdir(dir, { recursive: true });
     const base = join(dir, `${baseName(extract.metadata.title, extract.metadata.video_id)}-transcript-comments`);
-    await writeFile(`${base}.json`, json);
-    await writeFile(`${base}.md`, md);
+    const { saved, error } = await writePair(base, json, md);
+    if (saved !== "both") {
+      process.stderr.write(saved === "json"
+        ? `leket: saved ${base}.json, but the .md couldn't be written (${error}); any .md there is from an earlier save.\n`
+        : `leket: couldn't write the files (${error}); nothing saved, an earlier save is untouched.\n`);
+      if (saved === "none") return 1;
+    }
     const m = extract.metadata;
     const replies = extract.comments.reduce((n, c) => n + c.replies.length, 0);
-    process.stdout.write(`${base}.json\n${base}.md\n`);
+    process.stdout.write(saved === "both" ? `${base}.json\n${base}.md\n` : `${base}.json\n`);
     process.stderr.write(`leket: ${m.transcript_segment_count} transcript segments, ${m.comments_captured} comments + ${replies} replies${m.total_comments_reported ? ` (YouTube reports ${m.total_comments_reported})` : ""}.\n`);
     if (m.transcript_note) process.stderr.write(`leket: transcript: ${m.transcript_note}\n`);
     if (m.comments_note) process.stderr.write(`leket: comments: ${m.comments_note}\n`);
-    return partial ? 3 : 0;
+    return partial || saved !== "both" ? 3 : 0;
   } finally {
     await rm(work, { recursive: true, force: true });
   }

@@ -58,6 +58,12 @@ export function pickCaptionTrack(info, lang) {
   const json3 = (list) => (Array.isArray(list) ? list.find((f) => f && f.ext === "json3" && f.url) : null);
   const manual = json3(info && info.subtitles && info.subtitles[lang]);
   if (manual) return { url: manual.url, kind: "manual", language: lang };
+  // a human track keyed by region (en-US, pt-BR) beats any auto track in the language
+  const subs = (info && info.subtitles) || {};
+  const regional = Object.keys(subs).sort()
+    .filter((k) => k.toLowerCase().startsWith(`${lang.toLowerCase()}-`))
+    .map((k) => [k, json3(subs[k])]).find(([, f]) => f);
+  if (regional) return { url: regional[1].url, kind: "manual", language: regional[0] };
   const auto = (info && info.automatic_captions) || {};
   const orig = json3(auto[`${lang}-orig`]);
   if (orig) return { url: orig.url, kind: "auto", language: lang };
@@ -156,7 +162,6 @@ export function buildExtract({ metadata = {}, transcript = [], comments = [], ex
   };
 }
 
-// One line, so a multi-line comment stays inside its list item and blockquote.
 // One line, so a multi-line comment stays inside its list item and blockquote, with
 // every `<` escaped so a title or comment can't open raw HTML (the reddit module's
 // plain() does the same). Links and emphasis stay: the text is read, not executed.
