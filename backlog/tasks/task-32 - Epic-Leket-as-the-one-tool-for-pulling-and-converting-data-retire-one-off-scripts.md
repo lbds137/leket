@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:44:00Z'
-updated_date: '2026-11-25T19:44:00Z'
+updated_date: '2026-11-25T20:14:00Z'
 labels:
   - epic
 dependencies: []
@@ -37,3 +37,9 @@ Constraints:
 - [ ] #2 Lila has ruled on the IN/OUT list (AskUserQuestion, with a recommendation)
 - [ ] #3 Each IN item has its own task; each retired script's owning session is told once its leket path ships
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Replika is IN via TASK-33 (owner's direct ask, 2026-11-25); the inventory doesn't need to rule on it.
+<!-- SECTION:NOTES:END -->
