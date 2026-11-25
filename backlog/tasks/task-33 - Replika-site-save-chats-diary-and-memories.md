@@ -4,7 +4,7 @@ title: 'Replika site: save chats, diary and memories'
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:49:00Z'
-updated_date: '2026-11-25T20:20:00Z'
+updated_date: '2026-11-25T23:56:00Z'
 labels:
   - replika
   - needs-lila
@@ -32,7 +32,7 @@ Step 3, the live run, is hands-off for the account owner: signing in once, in th
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Prior-art evaluation (approach, license, gaps) recorded in the task
-- [ ] #2 Module saves chats, diary and memories; smoke scenario reddened by its defect
+- [x] #2 Module saves chats, diary and memories; smoke scenario reddened by its defect
 - [ ] #3 Live run where the owner's only step is signing in; the agent checks that the history still loads and exports everything
 <!-- AC:END -->
 
@@ -75,6 +75,7 @@ Step 2 follow-ups for the live run (Step 3):
 - Widen the allowlist from the zip's `unsaved_fields` tally (also shown on the page).
 - If Replika pages inclusively (the last batch is only the cursor message), or answers the oldest page by repeating seen messages instead of `[]`, the history ends "stopped moving backwards" instead of done (PR #173 review item 7): check which end signal Replika sends and treat it as complete.
 - Adding the media host to host_permissions in an update makes Chrome disable the installed extension until the new permission warning is accepted (PR #173 review item 6): say so in that release's README/notes.
+- PR #173 final review (PASS) live-run items: (2) a socket auth-error frame is ignored, so a refused login waits 30 s and says "no reply": capture the real error frame and map it to signed-out; (3) until the media host is allowed, each item burns 3 tries: consider stopping the media step after N consecutive MEDIA_FETCH_FAILED; (6) once the host is known, add a smoke check that a picture lands in media/; (1) also consider a batch shorter than `limit` as the end of history. Code-side lows (4, 5, 7, 8, 9) are TASK-34.
 - Version: Step 2 (PR #173) leaves manifest/package at 0.4.0; the Step 3 PR that completes the module bumps to 0.5.0 with its release notes (as 0.4.0 did for Messenger, 48cf7ba).
 - Low: the not-saved count says "picture(s) or voice clip(s)" but also counts messages of a kind Leket doesn't read (stickers, say); word it as "item(s)" or split the count.
 <!-- SECTION:NOTES:END -->
