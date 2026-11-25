@@ -16,6 +16,7 @@ test("parseLikes reads the counts YouTube displays, and blank or junk as 0", () 
   assert.equal(parseLikes(""), 0);
   assert.equal(parseLikes(null), 0);
   assert.equal(parseLikes("abc"), 0);
+  assert.equal(parseLikes("Infinity"), 0);
 });
 
 test("formatTimestamp writes the transcript panel's stamps", () => {
@@ -85,6 +86,19 @@ test("threadsFromYtDlp puts a reply-to-a-reply in its thread and drops replies w
   assert.deepEqual(threadsFromYtDlp(undefined), { threads: [], droppedReplies: 0 });
 });
 
+test("threadsFromYtDlp walks the parent chain, so a thread is found even when ids don't share its prefix", () => {
+  const { threads, droppedReplies } = threadsFromYtDlp([
+    { id: "T1", parent: "root", author: "@a", text: "top" },
+    { id: "r1", parent: "T1", author: "@b", text: "one" },
+    { id: "r2", parent: "r1", author: "@c", text: "two" },
+    // a loop that never reaches a thread is dropped, not followed forever
+    { id: "L1", parent: "L2", author: "@d", text: "loop" },
+    { id: "L2", parent: "L1", author: "@e", text: "loop" },
+  ]);
+  assert.deepEqual(threads[0].replies.map((r) => r.text), ["one", "two"]);
+  assert.equal(droppedReplies, 2);
+});
+
 test("buildExtract keeps the v1 shape, sorts by likes stably, and adds extra metadata only when set", () => {
   const x = buildExtract({
     extractedAt: "2026-01-01T00:00:00.000Z",
@@ -123,10 +137,26 @@ test("renderMarkdown keeps the console script's layout, fences past any backtick
   assert.match(md, /- \*\*Transcript note:\*\* No captions\.\n/);
   assert.match(md, /\n````\n0:01\tcode ``` here\n````\n/);
   assert.match(md, /1\. \*\*@a\*\* — 2 likes · now · PINNED\n {3}> line one line two\n {3}- ↳ \*\*@b\*\* \(0\): ok > not a quote\n/);
+  assert.match(md, /Comments captured:\*\* 1 top-level \+ 1 replies/);
 });
 
-test("baseName slugs the title like the console script, with a fallback", () => {
-  assert.equal(baseName("A Synthetic Test Video!"), "a-synthetic-test-video-");
+test("renderMarkdown escapes < outside the transcript fence and indents past a two-digit marker", () => {
+  const comments = Array.from({ length: 10 }, (_, i) => ({ author: `@u${i}`, likes: String(10 - i), time: "", text: `t${i}`, replies: [] }));
+  comments[9].text = "<img src=x onerror=alert(1)> hi";
+  comments[9].replies = [{ author: "<b>@r</b>", likes: "0", text: "r" }];
+  const md = renderMarkdown(buildExtract({ metadata: { title: "<script>", url: "u" }, transcript: [{ time: "0:00", text: "a <b> c" }], comments }));
+  assert.match(md, /\*\*Title:\*\* &lt;script>/);
+  assert.match(md, /\n10\. \*\*@u9\*\* — 1 likes\n {4}> &lt;img src=x onerror=alert\(1\)> hi\n {4}- ↳ \*\*&lt;b>@r&lt;\/b>\*\* \(0\): r\n/);
+  // inside the fence the text is literal already, so it stays as said
+  assert.match(md, /\n0:00\ta <b> c\n/);
+  assert.doesNotMatch(md, /<img|<script|<b>@r/);
+});
+
+test("baseName slugs the title like the console script, trims outer dashes, and adds a well-formed video id", () => {
+  assert.equal(baseName("A Synthetic Test Video!"), "a-synthetic-test-video");
+  assert.equal(baseName("A Video", "abc_-123"), "a-video-abc_-123");
+  assert.equal(baseName("A Video", "../x"), "a-video");
   assert.equal(baseName(""), "youtube");
+  assert.equal(baseName("!!!", "id1"), "youtube-id1");
   assert.equal(baseName("x".repeat(80)).length, 60);
 });

@@ -19,8 +19,8 @@ export function parseLikes(s) {
   let m = 1;
   if (/K$/i.test(s)) { m = 1e3; s = s.replace(/K/i, ""); }
   else if (/M$/i.test(s)) { m = 1e6; s = s.replace(/M/i, ""); }
-  const n = parseFloat(s);
-  return Number.isNaN(n) ? 0 : n * m;
+  const n = parseFloat(s) * m;
+  return Number.isFinite(n) ? n : 0;
 }
 
 // milliseconds → the transcript panel's own stamp: "0:14", "12:03", "1:02:03"
@@ -72,8 +72,9 @@ export function pickCaptionTrack(info, lang) {
 
 // yt-dlp's flat comment list (parent "root" or the parent's id) → v1 threads. YouTube
 // threads are two levels deep, but yt-dlp gives a reply to a reply that reply's id as
-// its parent; every reply id is "<thread id>.<suffix>", so the thread is the parent's
-// part before the first dot. A reply whose thread isn't in the list (a cap cut it off)
+// its parent: the parent chain is walked up to the thread, and where it leaves the list,
+// the reply id's own form ("<thread id>.<suffix>") names the thread. A reply whose
+// thread isn't in the list (a cap cut it off)
 // is dropped rather than promoted to a top-level comment it never was; the caller
 // counts it via droppedReplies.
 export function threadsFromYtDlp(comments) {
@@ -94,10 +95,22 @@ export function threadsFromYtDlp(comments) {
     byId.set(c.id, t);
     threads.push(t);
   }
+  // every comment by id, so a reply's parent chain can be walked up to its thread
+  const parentOf = new Map(list.filter((c) => c && c.id).map((c) => [c.id, c.parent]));
+  const threadOf = (c) => {
+    let id = c.parent;
+    for (let hops = 0; hops < 16 && id && id !== "root"; hops++) {
+      if (byId.has(id)) return byId.get(id);
+      if (!parentOf.has(id)) break;
+      id = parentOf.get(id);
+    }
+    // the chain left the list (or looped): fall back on the id's thread prefix
+    return byId.get(String(c.parent ?? "").split(".")[0]);
+  };
   let droppedReplies = 0;
   for (const c of list) {
     if (!c || c.parent === "root") continue;
-    const t = byId.get(String(c.parent ?? "").split(".")[0]);
+    const t = threadOf(c);
     if (!t) { droppedReplies++; continue; }
     t.replies.push({ author: c.author || "", likes: String(c.like_count ?? 0), time: c._time_text || "", text: c.text || "" });
   }
@@ -144,39 +157,50 @@ export function buildExtract({ metadata = {}, transcript = [], comments = [], ex
 }
 
 // One line, so a multi-line comment stays inside its list item and blockquote.
-const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+// One line, so a multi-line comment stays inside its list item and blockquote, with
+// every `<` escaped so a title or comment can't open raw HTML (the reddit module's
+// plain() does the same). Links and emphasis stay: the text is read, not executed.
+const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim().replace(/</g, "&lt;");
 
 // The console script's save() layout, from a v1 object.
 export function renderMarkdown(x) {
   const m = x.metadata;
+  const replies = x.comments.reduce((n, c) => n + c.replies.length, 0);
   let md = "# YouTube Video Reference File\n\n> Machine-readable extract (transcript + comments) for AI ingestion.\n\n## Metadata\n\n";
   md += `- **Title:** ${oneLine(m.title)}\n- **Channel:** ${oneLine(m.channel)}\n`;
-  md += `- **URL:** ${m.url}\n- **Total comments (reported):** ${oneLine(m.total_comments_reported)}\n`;
-  md += `- **Comments captured:** ${m.comments_captured} (sorted by likes)\n`;
+  md += `- **URL:** ${oneLine(m.url)}\n- **Total comments (reported):** ${oneLine(m.total_comments_reported)}\n`;
+  md += `- **Comments captured:** ${m.comments_captured} top-level + ${replies} replies (sorted by likes)\n`;
   md += `- **Transcript segments:** ${m.transcript_segment_count}\n`;
   if (m.transcript_kind) md += `- **Transcript:** ${m.transcript_language} (${m.transcript_kind})\n`;
   if (m.transcript_note) md += `- **Transcript note:** ${oneLine(m.transcript_note)}\n`;
   if (m.comments_note) md += `- **Comments note:** ${oneLine(m.comments_note)}\n`;
   md += "\n## Full Transcript\n\nFormat: [timestamp]\\ttext\n\n";
   // a fence longer than any backtick run in the text, so no segment can close it
-  const longest = Math.max(2, ...x.transcript.map((r) => Math.max(0, ...(r.text.match(/`+/g) || []).map((b) => b.length))));
+  let longest = 2;
+  for (const r of x.transcript) for (const run of String(r.text).matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
   const fence = "`".repeat(longest + 1);
   md += `${fence}\n`;
   for (const r of x.transcript) md += `${r.time}\t${r.text}\n`;
   md += `${fence}\n\n## Comments (${x.comments.length} captured)\n\n`;
   x.comments.forEach((c, i) => {
-    md += `${i + 1}. **${oneLine(c.author)}** — ${c.likes} likes`;
+    const marker = `${i + 1}. `;
+    // continuation lines indent by the marker's width, or from "10. " on the quote
+    // and replies would fall out of their list item
+    const pad = " ".repeat(marker.length);
+    md += `${marker}**${oneLine(c.author)}** — ${oneLine(c.likes)} likes`;
     if (c.time) md += ` · ${oneLine(c.time)}`;
     if (c.pinned) md += " · PINNED";
     if (c.reply_count_label) md += ` · ${oneLine(c.reply_count_label)}`;
-    md += `\n   > ${oneLine(c.text)}\n`;
-    for (const r of c.replies) md += `   - ↳ **${oneLine(r.author)}** (${r.likes}): ${oneLine(r.text)}\n`;
+    md += `\n${pad}> ${oneLine(c.text)}\n`;
+    for (const r of c.replies) md += `${pad}- ↳ **${oneLine(r.author)}** (${oneLine(r.likes)}): ${oneLine(r.text)}\n`;
     md += "\n";
   });
   return md;
 }
 
-// the console script's baseName(): the title, slugged, at most 60 characters
-export function baseName(title) {
-  return (String(title || "").replace(/[^a-z0-9]+/gi, "-").slice(0, 60).toLowerCase() || "youtube");
+// The console script's baseName() (the title, slugged, at most 60 characters, outer
+// dashes trimmed), then the video id, so two videos with one title never share a file.
+export function baseName(title, videoId) {
+  const slug = String(title || "").replace(/[^a-z0-9]+/gi, "-").slice(0, 60).toLowerCase().replace(/^-+|-+$/g, "") || "youtube";
+  return /^[A-Za-z0-9_-]+$/.test(videoId || "") ? `${slug}-${videoId}` : slug;
 }

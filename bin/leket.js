@@ -9,8 +9,9 @@
 //   2. this script fetches the chosen caption track's json3 itself, from the URL that
 //      info.json lists.
 // Exit codes: 0 saved (an empty transcript with a note means the video has no captions
-// in that language); 1 nothing saved; 2 usage; 3 saved, but the caption fetch failed
-// (the note says why; comments and metadata are complete).
+// in that language); 1 nothing saved; 2 usage; 3 saved but incomplete: the caption
+// fetch failed, or yt-dlp stopped partway after writing the video info (the notes in
+// the files and on stderr say which).
 import { spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
@@ -25,29 +26,40 @@ import {
 
 const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max-comments N]
 
-  Saves <title>-transcript-comments.json (youtube-extract/v1) and .md into DIR
-  (default: the current directory).
+  Saves <title>-<video id>-transcript-comments.json (youtube-extract/v1) and .md
+  into DIR (default: the current directory), replacing an earlier save of the video.
   --lang CODE        caption language (default en): a manual track first, then auto
   --max-comments N   stop after N comments, replies included (default: all)
 
   yt-dlp: $LEKET_YTDLP if set (a path), else yt-dlp on PATH, else uvx.
-  Exit: 0 saved; 1 failed; 2 usage; 3 saved without captions (fetch refused; see note).`;
+  Exit: 0 saved; 1 nothing saved; 2 usage; 3 saved but incomplete (captions refused,
+  or yt-dlp stopped partway; the notes say which).`;
 
 // How to run yt-dlp: an explicit path, one on PATH, or uvx (with curl_cffi, which
 // YouTube's extractor asks for to impersonate a browser).
 export function ytDlpCommand(env = process.env, probe = spawnSync) {
   if (env.LEKET_YTDLP) return { cmd: env.LEKET_YTDLP, pre: [] };
-  const onPath = probe("yt-dlp", ["--version"], { stdio: "ignore" });
+  const onPath = probe("yt-dlp", ["--version"], { stdio: "ignore", timeout: 15_000 });
   if (!onPath.error && onPath.status === 0) return { cmd: "yt-dlp", pre: [] };
   return { cmd: "uvx", pre: ["--with", "curl_cffi", "yt-dlp"] };
 }
 
+// A YouTube video address: youtube.com (www, m, music) or youtu.be, over http(s).
+// yt-dlp would take any of its thousand sites; this subcommand is YouTube's.
+export function isYouTubeUrl(s) {
+  let u;
+  try { u = new URL(s); } catch { return false; }
+  return /^https?:$/.test(u.protocol) && /^((www|m|music)\.)?youtube\.com$|^youtu\.be$/.test(u.hostname);
+}
+
 // yt-dlp's arguments for step 1. YouTube's player needs a JS runtime to solve its
-// challenge, and yt-dlp enables only deno by default: hand it this node.
+// challenge, and yt-dlp enables only deno by default: hand it this node. Its own
+// config files are ignored, so a personal -o or format setting can't move the output.
 export function ytDlpArgs(url, dir, { maxComments } = {}) {
   const ex = ["comment_sort=top"];
   if (maxComments) ex.unshift(`max_comments=${maxComments},all,all,all`);
   return [
+    "--ignore-config",
     "--js-runtimes", `node:${process.execPath}`,
     "--skip-download", "--ignore-no-formats-error", "--no-playlist",
     "--write-info-json", "--write-comments",
@@ -79,7 +91,7 @@ function run(cmd, args) {
 export async function fetchTranscript(info, lang, { fetch: doFetch = fetch } = {}) {
   const track = pickCaptionTrack(info, lang);
   if (!track) {
-    return { transcript: [], note: `This video has no captions in "${lang}".`, failed: false };
+    return { transcript: [], note: `YouTube lists no captions in "${lang}" for this video.`, failed: false };
   }
   let r;
   try {
@@ -93,21 +105,34 @@ export async function fetchTranscript(info, lang, { fetch: doFetch = fetch } = {
       : `YouTube answered ${r.status} to the caption request`;
     return { transcript: [], kind: track.kind, note: `${why}; the comments are saved. Run again later, or save from the browser with the Leket extension.`, failed: true };
   }
+  const fail = (note) => ({ transcript: [], kind: track.kind, note, failed: true });
+  let raw;
+  try {
+    raw = await r.text();
+  } catch (e) {
+    return fail(`The caption download broke off (${(e && e.message) || e}); run again later.`);
+  }
   let body;
   try {
-    body = JSON.parse(await r.text());
+    body = JSON.parse(raw);
   } catch {
-    return { transcript: [], kind: track.kind, note: "YouTube answered the caption request with something that isn't a caption file.", failed: true };
+    body = null;
+  }
+  if (!body || !Array.isArray(body.events)) {
+    return fail("YouTube answered the caption request with something that isn't a caption file.");
   }
   const transcript = json3ToTranscript(body);
   return { transcript, kind: track.kind, note: transcript.length ? "" : "The caption track was empty.", failed: false };
 }
 
 // Steps 1 and 2 → the v1 object, given an info.json already read.
-export async function extractFromInfo(info, { lang = "en", log = "", fetch: doFetch, extractedAt } = {}) {
+// ytDlpExit: yt-dlp's exit code; nonzero with an info.json written means it stopped
+// partway (the comments especially may be cut short), which the notes and exit 3 say.
+export async function extractFromInfo(info, { lang = "en", log = "", ytDlpExit = 0, fetch: doFetch, extractedAt } = {}) {
   const { threads, droppedReplies } = threadsFromYtDlp(info.comments);
   const cap = await fetchTranscript(info, lang, { fetch: doFetch });
   const notes = [];
+  if (ytDlpExit) notes.push(`yt-dlp exited ${ytDlpExit} after writing the video info, so the comments may be incomplete.`);
   if (!Array.isArray(info.comments)) notes.push("yt-dlp returned no comment list (comments may be off for this video).");
   if (droppedReplies) notes.push(`${droppedReplies} replies whose thread wasn't fetched were left out.`);
   const extract = buildExtract({
@@ -127,7 +152,7 @@ export async function extractFromInfo(info, { lang = "en", log = "", fetch: doFe
     transcript: cap.transcript,
     comments: threads,
   });
-  return { extract, captionsFailed: cap.failed };
+  return { extract, partial: cap.failed || !!ytDlpExit };
 }
 
 export async function youtube(url, { out = ".", lang = "en", maxComments } = {}) {
@@ -135,26 +160,31 @@ export async function youtube(url, { out = ".", lang = "en", maxComments } = {})
   const work = await mkdtemp(join(tmpdir(), "leket-yt-"));
   try {
     const { code, log } = await run(yt.cmd, [...yt.pre, ...ytDlpArgs(url, work, { maxComments })]);
-    let info;
+    let info = null;
     try {
       info = JSON.parse(await readFile(join(work, "video.info.json"), "utf8"));
-    } catch {
-      process.stderr.write(`leket: yt-dlp ${code === 127 ? "could not start" : `exited ${code}`} and wrote no video info; nothing saved.\n`);
+    } catch { /* reported below */ }
+    if (!info || typeof info !== "object" || Array.isArray(info)) {
+      const how = code === 127 ? "could not start" : code ? `exited ${code}` : "finished";
+      process.stderr.write(`leket: yt-dlp ${how} and wrote no readable video info; nothing saved.\n`);
       return 1;
     }
-    const { extract, captionsFailed } = await extractFromInfo(info, { lang, log });
+    const { extract, partial } = await extractFromInfo(info, { lang, log, ytDlpExit: code });
+    // both files are rendered before either is written, so a render error saves nothing
+    const json = `${JSON.stringify(extract, null, 2)}\n`;
+    const md = renderMarkdown(extract);
     const dir = resolve(out);
     await mkdir(dir, { recursive: true });
-    const base = join(dir, `${baseName(extract.metadata.title)}-transcript-comments`);
-    await writeFile(`${base}.json`, `${JSON.stringify(extract, null, 2)}\n`);
-    await writeFile(`${base}.md`, renderMarkdown(extract));
+    const base = join(dir, `${baseName(extract.metadata.title, extract.metadata.video_id)}-transcript-comments`);
+    await writeFile(`${base}.json`, json);
+    await writeFile(`${base}.md`, md);
     const m = extract.metadata;
     const replies = extract.comments.reduce((n, c) => n + c.replies.length, 0);
     process.stdout.write(`${base}.json\n${base}.md\n`);
     process.stderr.write(`leket: ${m.transcript_segment_count} transcript segments, ${m.comments_captured} comments + ${replies} replies${m.total_comments_reported ? ` (YouTube reports ${m.total_comments_reported})` : ""}.\n`);
     if (m.transcript_note) process.stderr.write(`leket: transcript: ${m.transcript_note}\n`);
     if (m.comments_note) process.stderr.write(`leket: comments: ${m.comments_note}\n`);
-    return captionsFailed ? 3 : 0;
+    return partial ? 3 : 0;
   } finally {
     await rm(work, { recursive: true, force: true });
   }
@@ -180,6 +210,10 @@ export async function main(argv) {
   const { values: v, positionals } = parsed;
   if (v.help) { process.stdout.write(`${USAGE}\n`); return 0; }
   if (positionals.length !== 1) { process.stderr.write(`${USAGE}\n`); return 2; }
+  if (!isYouTubeUrl(positionals[0])) {
+    process.stderr.write("leket: give a YouTube video address (youtube.com/watch?v=… or youtu.be/…)\n");
+    return 2;
+  }
   const max = v["max-comments"];
   if (max !== undefined && !/^[1-9]\d*$/.test(max)) {
     process.stderr.write("leket: --max-comments takes a whole number above 0\n");
