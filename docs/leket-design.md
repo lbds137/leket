@@ -91,6 +91,20 @@ evidence.
   redact hook landed with the Etsy module, 8d275bd, and was removed in 0.3.38).
   Script received from Jackalope 11-04 with its personal-data literals flagged out;
   changes to the Etsy logic go back to Jackalope as a diff, same as collector.js.
+- **Replika** (any my.replika.com / my.replika.ai page) — one command, *Save everything*:
+  the page reads the sign-in from the matched tab's localStorage (readReplikaAuth via
+  chrome.scripting), pages the chat history backwards over Replika's `wss://ws.replika.com/v17`
+  socket (cursor = the oldest timestamp in each batch, a stuck or empty-moving batch
+  stops it), then the diary (previews by offset, details by id chunks of 50) and the
+  memories (both endpoints), then signs and fetches each picture and voice clip one at
+  a time. Everything lands in one `replika-<date>-<time>.zip` (data.json + index.html +
+  media/). Every output field is allowlisted; raw API objects are never written, and
+  what the builders don't read is counted per kind under `unsaved_fields` so a live run
+  can widen the allowlist. A 401/403 stops the remaining steps; whatever was read is
+  still saved, and a re-run never overwrites an earlier zip (uniquify, second-resolution
+  names). Auth token, user id, device id and signed URLs never reach output or logs.
+  Written fresh against the endpoints from TASK-33's premise notes (owner ruling,
+  TASK-33 Step 1: no add-on code copied); the live run re-checks each premise row.
 
 ## The popup
 
