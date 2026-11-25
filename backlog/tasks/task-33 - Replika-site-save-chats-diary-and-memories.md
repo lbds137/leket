@@ -21,12 +21,14 @@ Step 1: evaluate the open-source prior art and decide what to implement here. Ch
 - Chrome "Replika Export: Chat, Diary, Memory" (source unknown): https://chromewebstore.google.com/detail/replika-export-chat-diary/immbjhielfhbemfnjfnddblchipnefmf
 Record which API or DOM each one reads, its license, and what it misses.
 
-Step 2: before building, confirm on a live account that the web app still loads the history (a lapsed subscription may limit it); this needs the account owner signed in. Then build the module (registry entry, popup command, background wiring, a smoke scenario reddened with the defect it guards), with synthetic fixtures only.
+Step 2: build the module (registry entry, popup command, background wiring, a smoke scenario reddened with the defect it guards), with synthetic fixtures only. The evaluation, build and tests need no account.
+
+Step 3, the live run, is hands-off for the account owner: signing in once, in the browser profile the agent drives, is their only step. The agent then checks that the web app still serves the history (a lapsed subscription may limit it), runs the export and hands over the files. Export everything (chats, diary, memories); the owner decides what to keep after seeing it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Prior-art evaluation (approach, license, gaps) recorded in the task
-- [ ] #2 Live check that the web app still serves the history
+- [ ] #2 Live run where the owner's only step is signing in; the agent checks that the history still loads and exports everything
 - [ ] #3 Module saves chats, diary and memories; smoke scenario reddened by its defect
 <!-- AC:END -->
