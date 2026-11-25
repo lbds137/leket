@@ -73,6 +73,7 @@ Hosts: my.replika.com, my.replika.ai and ws.replika.com (WebSocket), plus the im
 Step 2 follow-ups for the live run (Step 3):
 - The image/voice host isn't in host_permissions yet, so expect every picture "not saved: the file host refused or failed" until the live run names it and it's added.
 - Widen the allowlist from the zip's `unsaved_fields` tally (also shown on the page).
-- If Replika pages inclusively (the last batch is only the cursor message), the history ends "stopped moving backwards" instead of done: check the end line.
+- If Replika pages inclusively (the last batch is only the cursor message), or answers the oldest page by repeating seen messages instead of `[]`, the history ends "stopped moving backwards" instead of done (PR #173 review item 7): check which end signal Replika sends and treat it as complete.
+- Adding the media host to host_permissions in an update makes Chrome disable the installed extension until the new permission warning is accepted (PR #173 review item 6): say so in that release's README/notes.
 - Low: the not-saved count says "picture(s) or voice clip(s)" but also counts messages of a kind Leket doesn't read (stickers, say); word it as "item(s)" or split the count.
 <!-- SECTION:NOTES:END -->
