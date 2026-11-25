@@ -75,5 +75,6 @@ Step 2 follow-ups for the live run (Step 3):
 - Widen the allowlist from the zip's `unsaved_fields` tally (also shown on the page).
 - If Replika pages inclusively (the last batch is only the cursor message), or answers the oldest page by repeating seen messages instead of `[]`, the history ends "stopped moving backwards" instead of done (PR #173 review item 7): check which end signal Replika sends and treat it as complete.
 - Adding the media host to host_permissions in an update makes Chrome disable the installed extension until the new permission warning is accepted (PR #173 review item 6): say so in that release's README/notes.
+- Version: Step 2 (PR #173) leaves manifest/package at 0.4.0; the Step 3 PR that completes the module bumps to 0.5.0 with its release notes (as 0.4.0 did for Messenger, 48cf7ba).
 - Low: the not-saved count says "picture(s) or voice clip(s)" but also counts messages of a kind Leket doesn't read (stickers, say); word it as "item(s)" or split the count.
 <!-- SECTION:NOTES:END -->

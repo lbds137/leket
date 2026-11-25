@@ -14,7 +14,7 @@ import {
   SignedOut, headers, call, readReplikaAuth, readDiary, readMemories,
   createHistoryPager, readHistory, signedImageUrl, usableMediaUrl,
   HISTORY_SOCKET, HISTORY_NO_LIST, HISTORY_NO_DATE, HISTORY_STUCK, HISTORY_CLOSED,
-  HISTORY_SILENT, DIARY_PARTIAL, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
+  HISTORY_SILENT, DIARY_PARTIAL, DIARY_STUCK, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
   MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED,
 } from "../src/modules/replika/api.js";
 import {
@@ -206,7 +206,7 @@ test("call turns 401 and 403 into SignedOut with the fixed sign-in message, with
       () => call(REST_URL, { auth: AUTH, fetchFn: fn, sleep: instant }),
       (e) => {
         assert.ok(e instanceof SignedOut, "a SignedOut, not a plain Error");
-        assert.equal(e.message, "Replika answered 401/403: sign in again at my.replika.com and rerun");
+        assert.equal(e.message, "Replika answered 401/403: sign in again on Replika and rerun");
         assert.equal(fn.calls.length, 1); // retrying cannot sign in
         return true;
       },
@@ -286,12 +286,27 @@ test("readDiary pages previews by offset until an empty array, then fetches the 
   }
 });
 
-test("readDiary: a non-array previews reply throws — it is an error, not the end of the list", async () => {
+test("readDiary: a non-array previews reply is a partial failure with nothing read, not a throw", async () => {
   const fn = fakeFetch(() => reply({ nope: true }));
-  await assert.rejects(
-    () => readDiary({ auth: AUTH, fetchFn: fn, sleep: instant }),
-    (e) => e.message === "the diary previews reply was not a list",
-  );
+  const { entries, previews, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(partial, DIARY_PARTIAL);
+  assert.equal(signedOut, false);
+  assert.equal(previews.length, 0);
+  assert.equal(entries.length, 0);
+});
+
+test("readDiary: a non-array previews reply after some pages keeps their ids and fetches their details", async () => {
+  const fn = fakeFetch((url, init) => {
+    if (url === PREVIEW_URL(0)) return reply([{ id: "d1" }, { id: "d2" }]);
+    if (url === PREVIEW_URL(2)) return reply({ nope: true });
+    if (url === BY_IDS_URL) return reply(JSON.parse(init.body).ids.map((id) => ({ id, type: "diary" })));
+    throw new Error(`unexpected ${url}`);
+  });
+  const { entries, previews, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(partial, DIARY_PARTIAL);
+  assert.equal(previews.length, 2);
+  assert.deepEqual(entries.map((e) => e.id), ["d1", "d2"]);
+  assert.deepEqual(fn.calls.filter((c) => c.url === BY_IDS_URL).map((c) => c.body.ids), [["d1", "d2"]]);
 });
 
 test("readDiary: a failure after some pages keeps what was read and names a fixed partial reason", async () => {
@@ -310,6 +325,33 @@ test("readDiary: a failure after some pages keeps what was read and names a fixe
   assert.equal(entries.length, 2); // the details of the first page were kept
 });
 
+test("readDiary: a list that repeats the same page at every offset stops as stuck, with no duplicates", async () => {
+  const fn = fakeFetch((url, init) => {
+    if (url.includes("saved_chat_items/previews")) return reply([{ id: "d1" }, { id: "d2" }]);
+    if (url === BY_IDS_URL) return reply(JSON.parse(init.body).ids.map((id) => ({ id, type: "diary" })));
+    throw new Error(`unexpected ${url}`);
+  });
+  const { entries, previews, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(partial, DIARY_STUCK);
+  assert.equal(signedOut, false);
+  assert.equal(previews.length, 2);
+  assert.deepEqual(entries.map((e) => e.id), ["d1", "d2"]);
+  assert.equal(fn.calls.filter((c) => c.url.includes("previews")).length, 2); // the first page, then the repeat that proves it
+  assert.deepEqual(fn.calls.filter((c) => c.url === BY_IDS_URL).map((c) => c.body.ids), [["d1", "d2"]]);
+});
+
+test("readDiary: a list that never ends stops at maxPages as stuck and keeps what was read", async () => {
+  const fn = fakeFetch((url, init) => {
+    if (url.includes("saved_chat_items/previews")) return reply([{ id: `d${new URL(url).searchParams.get("offset")}` }]);
+    if (url === BY_IDS_URL) return reply(JSON.parse(init.body).ids.map((id) => ({ id, type: "diary" })));
+    throw new Error(`unexpected ${url}`);
+  });
+  const { entries, previews, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, maxPages: 3 });
+  assert.equal(partial, DIARY_STUCK);
+  assert.equal(previews.length, 3);
+  assert.equal(entries.length, 3);
+});
+
 test("readDiary: a non-array details reply is a failure with what was read kept, not a throw", async () => {
   const fn = fakeFetch((url) => (url === PREVIEW_URL(0) ? reply([{ id: "d1" }]) : url === PREVIEW_URL(1) ? reply([]) : reply("not a list")));
   const { entries, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
@@ -321,7 +363,7 @@ test("readDiary: a 401 keeps nothing but names the sign-in reason and marks the 
   const fn = fakeFetch(() => reply({}, 401));
   const { entries, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
   assert.equal(signedOut, true);
-  assert.equal(partial, "Replika answered 401/403: sign in again at my.replika.com and rerun");
+  assert.equal(partial, "Replika answered 401/403: sign in again on Replika and rerun");
   assert.equal(entries.length, 0);
 });
 
@@ -974,7 +1016,13 @@ test("render: the page is self-contained, esc'd, light and dark, and names the s
   assert.ok(html.includes("Complete — 2 here."), "each section says its status in words");
   // a partial section says so in words, not only colour
   const partialHtml = render({ ...data, status: { ...data.status, diary: DIARY_PARTIAL } });
-  assert.ok(partialHtml.includes("Saved partway — "));
+  assert.ok(partialHtml.includes(`Saved partway (${DIARY_PARTIAL}) — `));
+  // the media step: a partial one shows in the header with its escaped reason; a complete one adds nothing
+  const mediaHtml = render({ ...data, status: { ...data.status, media: "some <b>pictures</b> not saved" } });
+  assert.ok(mediaHtml.includes('<p class="status warn">Saved partway (some &lt;b&gt;pictures&lt;/b&gt; not saved).</p></header>'), "media partial shows in the header, esc'd");
+  const completeHtml = render({ ...data, status: { ...data.status, media: "complete" } });
+  const header = completeHtml.slice(completeHtml.indexOf("<header>"), completeHtml.indexOf("</header>"));
+  assert.ok(!header.includes('class="status'), "a complete media step adds no status line to the header");
 });
 
 // ---------- buildZip ----------
@@ -1198,7 +1246,7 @@ test("a SignedOut on the diary stops the remaining steps but still saves the cha
     auth: AUTH, leketVersion: "0.4.0", now: new Date(2026, 10, 25, 14, 30, 5),
     fetchFn, sleep: instant, WebSocketCtor: Socket, timeoutMs: 1000, pause: instant,
   });
-  const signedOutMessage = "Replika answered 401/403: sign in again at my.replika.com and rerun";
+  const signedOutMessage = "Replika answered 401/403: sign in again on Replika and rerun";
   assert.equal(data.status.chat, "complete");
   assert.equal(data.status.diary, signedOutMessage);
   assert.equal(data.status.memories, signedOutMessage);
