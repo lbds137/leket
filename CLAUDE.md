@@ -4,7 +4,8 @@ A Chrome extension (Manifest V3) with one module per site (`src/modules/registry
 Discord, Etsy, Reddit, claude.ai sessions and claude.ai chat outputs. The Discord module
 saves a DM, channel or thread — attachments included — as one zip that opens offline: the
 collector reads the conversation from the open Discord tab; the export tab fetches the
-attachments and builds the zip.
+attachments and builds the zip. `bin/leket.js` is the command-line side (YouTube via yt-dlp
+so far); it shares its output builders with the extension (`src/modules/youtube/extract.js`).
 
 - Tests: `npm test` (node --test; the zip and build tests shell out to python3 for the zip check).
 - Smoke: `npm run smoke` must be green before pushing any change to `src/background.js`, the popup,
