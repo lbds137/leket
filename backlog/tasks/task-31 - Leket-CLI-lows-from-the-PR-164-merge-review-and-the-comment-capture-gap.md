@@ -4,6 +4,7 @@ title: 'Leket CLI: lows from the PR #164 merge review, and the comment-capture g
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:39:00Z'
+updated_date: '2026-11-25T20:09:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -22,3 +23,9 @@ From the PASS review of 7895c0d (PR #164, merged 11-25) plus one gap seen live:
 6. Live run on nwHtAdyEAtQ captured 59 comments + 26 replies of ~97 reported (~88%): find out whether the rest are hidden/held comments YouTube counts but never serves, or a yt-dlp paging limit (compare against the browser count).
 Ruled out: a caption-host check (URL comes from the yt-dlp the user runs; raised as optional in all three rounds). Dismissed: "TASK-30 notes empty" (they were filled; the reviewer read an older tree).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Item 6 DONE (branch task-31-comment-sort): the gap was YouTube's top order, not hidden comments or paging. Live 11-25 on nwHtAdyEAtQ: comment_sort=top extracted 85, comment_sort=new 97 (= reported ~97); the 12 missing were all 0-like, 1-3 days old (7 roots, 5 replies); shared 85 identical in text/likes/author/reply order. Fix: full saves use comment_sort=new (file is sorted by likes anyway); --max-comments keeps top so a cap keeps the best-liked. CLI rerun: 66 + 31 = 97, exit 0. Scope: one video measured.
+<!-- SECTION:NOTES:END -->

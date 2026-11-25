@@ -30,7 +30,8 @@ const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max
   into DIR (default: the current directory), replacing an earlier save of the video.
   --lang CODE        caption language (default en): a manual track (en, else a regional
                      one such as en-US), then auto
-  --max-comments N   stop after N comments, replies included (default: all)
+  --max-comments N   stop after N comments, replies included, taken in YouTube's
+                     top order, which can skip fresh unliked ones (default: all)
 
   yt-dlp: $LEKET_YTDLP if set (a path), else yt-dlp on PATH, else uvx. It needs a
   release that knows --js-runtimes.
@@ -65,8 +66,11 @@ export function isYouTubeUrl(s) {
 // yt-dlp's arguments for step 1. YouTube's player needs a JS runtime to solve its
 // challenge, and yt-dlp enables only deno by default: hand it this node. Its own
 // config files are ignored, so a personal -o or format setting can't move the output.
+// YouTube's "top" order leaves out some fresh comments with no likes (live 11-25: 85 of
+// 97 by top, all 97 by newest), so a full save asks for newest; the saved file is sorted
+// by likes either way. A capped save keeps top, so the cap keeps the best-liked.
 export function ytDlpArgs(url, dir, { maxComments } = {}) {
-  const ex = ["comment_sort=top"];
+  const ex = [maxComments ? "comment_sort=top" : "comment_sort=new"];
   if (maxComments) ex.unshift(`max_comments=${maxComments},all,all,all`);
   return [
     "--ignore-config",

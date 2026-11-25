@@ -21,7 +21,8 @@ test("ytDlpArgs hands yt-dlp this node, skips media, and caps comments only when
   const a = ytDlpArgs("https://youtu.be/x", "/w");
   assert.deepEqual(a.slice(0, 3), ["--ignore-config", "--js-runtimes", `node:${process.execPath}`]);
   for (const f of ["--skip-download", "--ignore-no-formats-error", "--write-info-json", "--write-comments", "--no-playlist"]) assert.ok(a.includes(f), f);
-  assert.equal(a[a.indexOf("--extractor-args") + 1], "youtube:comment_sort=top");
+  // uncapped: newest order, because top order skips fresh unliked comments
+  assert.equal(a[a.indexOf("--extractor-args") + 1], "youtube:comment_sort=new");
   assert.equal(a[a.indexOf("-o") + 1], join("/w", "video.%(ext)s"));
   // the URL comes after --, so a URL starting with - can't read as an option
   assert.deepEqual(a.slice(-2), ["--", "https://youtu.be/x"]);
