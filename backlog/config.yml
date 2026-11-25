@@ -1,7 +1,7 @@
 project_name: "leket"
 default_status: "To Do"
 statuses: ["To Do", "In Progress", "Done", "Deferred"]
-labels: [discord, etsy, reddit, sessions, chat-outputs, messenger, facebook, release, needs-lila, at-the-deck, owner-decision, ruled-out]
+labels: [discord, etsy, reddit, sessions, chat-outputs, messenger, facebook, replika, epic, release, needs-lila, at-the-deck, owner-decision, ruled-out]
 date_format: yyyy-mm-dd
 max_column_width: 20
 auto_open_browser: false
