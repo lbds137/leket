@@ -61,7 +61,7 @@ What they miss, and so what Step 2 must do:
 - The diary detail is one unchunked POST. The module will chunk it.
 - The free add-on's open issue #1 says message reactions come out blank. The module will keep reactions if the history payload carries them; the live run checks whether it does.
 - The output is txt, JSON or CSV with no viewer. The module will write Leket's usual offline zip (HTML + JSON, images inside).
-- Content types other than text and images (voice, for example) aren't handled. The module will record them as "not captured", with the reason.
+- Voice messages: the free add-on saves only each `content.voice_message_url`, not the audio (an earlier version of this note said voice wasn't handled; re-read 2026-11-25). The module will fetch the audio into the zip and never write that URL, which may be signed. Content types other than text, images and voice will be recorded as "not captured", with the reason.
 - There is no retry, and an error partway through the history just stops the export. The module will say what's partial, like Leket's other modules.
 
 Leket's own requirements (not gaps in the prior art, which doesn't leak these):
