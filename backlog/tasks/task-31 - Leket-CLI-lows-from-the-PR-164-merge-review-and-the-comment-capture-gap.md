@@ -4,7 +4,7 @@ title: 'Leket CLI: lows from the PR #164 merge review, and the comment-capture g
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:39:00Z'
-updated_date: '2026-11-25T20:09:00Z'
+updated_date: '2026-11-25T20:18:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -27,5 +27,7 @@ Ruled out: a caption-host check (URL comes from the yt-dlp the user runs; raised
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Item 6 DONE (branch task-31-comment-sort): the gap was YouTube's top order, not hidden comments or paging. Live 11-25 on nwHtAdyEAtQ: comment_sort=top extracted 85, comment_sort=new 97 (= reported ~97); the 12 missing were all 0-like, 1-3 days old (7 roots, 5 replies); shared 85 identical in text/likes/author/reply order. Fix: full saves use comment_sort=new (file is sorted by likes anyway); --max-comments keeps top so a cap keeps the best-liked. CLI rerun: 66 + 31 = 97, exit 0. Scope: one video measured.
+Item 6 DONE (PR #168, merged 11-25): the gap was YouTube's top order, not hidden comments or paging. Live 11-25 on nwHtAdyEAtQ: comment_sort=top extracted 85, comment_sort=new 97 (= reported ~97); the 12 missing were all 0-like, 1-3 days old (7 roots, 5 replies); shared 85 identical in text/likes/author/reply order. Fix: uncapped saves use comment_sort=new (file is sorted by likes anyway); --max-comments keeps top so a capped save keeps YouTube's top selection. CLI rerun: 66 + 31 = 97, exit 0. Scope: one video measured.
+Item 7 (from the #168 PASS review, low): the end-to-end bin test (test/cli.test.js, the fake yt-dlp run) covers only the capped path; add an uncapped run that checks comment_sort=new, so a break in passing maxComments from main to youtube() shows.
+Ruled out (from the #168 review): pinning the order of equal-like comments. Ties keep fetch order (now newest first), which the ytDlpArgs comment states; a fixed tie order would mean recording YouTube's rank per comment for no reader-visible gain.
 <!-- SECTION:NOTES:END -->
