@@ -3,12 +3,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ytDlpArgs, ytDlpCommand, reportedTotal, fetchTranscript, extractFromInfo, isYouTubeUrl } from "../bin/leket.js";
+import { ytDlpArgs, ytDlpCommand, reportedTotal, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair } from "../bin/leket.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -38,6 +38,15 @@ test("ytDlpCommand: LEKET_YTDLP, else yt-dlp on PATH, else uvx with curl_cffi", 
 test("isYouTubeUrl takes YouTube's hosts only", () => {
   for (const u of ["https://youtu.be/abc", "https://www.youtube.com/watch?v=abc", "https://m.youtube.com/watch?v=abc", "https://music.youtube.com/watch?v=abc", "http://youtube.com/watch?v=abc"]) assert.ok(isYouTubeUrl(u), u);
   for (const u of ["https://vimeo.com/1", "https://youtube.com.evil.test/watch", "ftp://youtu.be/abc", "-x", "u"]) assert.ok(!isYouTubeUrl(u), u);
+});
+
+test("isYouTubeUrl takes one video's address, never a channel or playlist that yt-dlp would walk", () => {
+  for (const u of ["https://www.youtube.com/shorts/abc_-1", "https://www.youtube.com/live/abc", "https://www.youtube.com/watch?v=abc&list=PLx", "https://youtu.be/abc?t=5"]) assert.ok(isYouTubeUrl(u), u);
+  for (const u of [
+    "https://www.youtube.com/@somechannel", "https://www.youtube.com/@somechannel/videos", "https://www.youtube.com/channel/UCx",
+    "https://www.youtube.com/playlist?list=PLx", "https://www.youtube.com/watch", "https://www.youtube.com/watch?v=",
+    "https://www.youtube.com/", "https://youtu.be/", "https://youtu.be/a/b", "https://www.youtube.com/shorts/",
+  ]) assert.ok(!isYouTubeUrl(u), u);
 });
 
 test("reportedTotal reads yt-dlp's estimate line, or nothing", () => {
@@ -98,6 +107,11 @@ test("extractFromInfo assembles v1 with the CLI's metadata and notes", async () 
   assert.equal(m.source, "leket-cli/yt-dlp");
   assert.equal(m.transcript_language, "en");
   assert.equal(m.transcript_kind, "auto");
+  // a regional manual track records its own key as the language
+  const us = await extractFromInfo({ subtitles: { "en-US": [{ ext: "json3", url: "https://y.test/us" }] }, comments: [] }, {
+    lang: "en", fetch: async () => reply(200, JSON.stringify({ events: [{ tStartMs: 0, segs: [{ utf8: "hi" }] }] })),
+  });
+  assert.deepEqual([us.extract.metadata.transcript_language, us.extract.metadata.transcript_kind], ["en-US", "manual"]);
   assert.match(m.transcript_note, /429/);
   assert.equal(m.comments_note, "1 replies whose thread wasn't fetched were left out.");
   assert.equal(extract.comments.length, 1);
@@ -163,6 +177,89 @@ test("leket youtube saves and exits 3 when yt-dlp stops partway after writing th
     assert.equal(x.comments.length, 2);
   } finally {
     rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube hands --lang and --max-comments through to yt-dlp and the caption pick", () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const argsFile = join(out, "args.json");
+    const r = runBin(["youtube", VIDEO, "--out", out, "--lang", "de", "--max-comments", "7"], { FAKE_YTDLP_ARGS: argsFile });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(readFileSync(argsFile, "utf8"));
+    assert.equal(a[a.indexOf("--extractor-args") + 1], "youtube:max_comments=7,all,all,all;comment_sort=top");
+    assert.deepEqual(a.slice(-2), ["--", VIDEO]);
+    assert.match(r.stderr, /no captions in "de"/);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube: yt-dlp missing, too old, killed, or handing back a playlist", () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const missing = runBin(["youtube", VIDEO, "--out", out], { LEKET_YTDLP: join(out, "no-such-yt-dlp") });
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /yt-dlp could not start and wrote no readable video info/);
+    const old = runBin(["youtube", VIDEO, "--out", out], { FAKE_YTDLP_MODE: "old" });
+    assert.equal(old.status, 1);
+    assert.match(old.stderr, /too old to know --js-runtimes; update it/);
+    const playlist = runBin(["youtube", VIDEO, "--out", out], { FAKE_YTDLP_MODE: "playlist" });
+    assert.equal(playlist.status, 1);
+    assert.match(playlist.stderr, /wrote a playlist, not one video; nothing saved/);
+    assert.deepEqual(readdirSync(out), []);
+    // a signal is a stop, not a clean finish: saved, but exit 3
+    const killed = runBin(["youtube", VIDEO, "--out", out], { FAKE_YTDLP_MODE: "kill" });
+    assert.equal(killed.status, 3, killed.stderr);
+    assert.match(killed.stderr, /comments: yt-dlp exited 1 after writing the video info/);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube: when the .md can't be written, the .json is kept and the exit is 3; no temp files stay", () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    mkdirSync(join(out, `${STEM}.md`)); // a directory where the .md goes: its rename fails
+    const r = runBin(["youtube", VIDEO, "--out", out]);
+    assert.equal(r.status, 3, r.stderr);
+    assert.match(r.stderr, /but the \.md couldn't be written/);
+    assert.equal(r.stdout, join(out, `${STEM}.json`) + "\n");
+    assert.deepEqual(readdirSync(out).sort(), [`${STEM}.json`, `${STEM}.md`]);
+    assert.equal(JSON.parse(readFileSync(join(out, `${STEM}.json`), "utf8")).schema, "youtube-extract/v1");
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("writePair: a failed write replaces nothing and leaves no temp files", async () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const base = join(out, "x");
+    writeFileSync(`${base}.json`, "old");
+    mkdirSync(`${base}.json.leket-tmp-${process.pid}`); // the temp write fails
+    const r = await writePair(base, "new", "md");
+    assert.equal(r.saved, "none");
+    assert.equal(readFileSync(`${base}.json`, "utf8"), "old");
+    assert.deepEqual(readdirSync(out).sort(), ["x.json", `x.json.leket-tmp-${process.pid}`]);
+    rmSync(`${base}.json.leket-tmp-${process.pid}`, { recursive: true });
+    assert.deepEqual(await writePair(base, "new", "md"), { saved: "both", error: "" });
+    assert.deepEqual(readdirSync(out).sort(), ["x.json", "x.md"]);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket runs through a symlink, the way npm link puts it on PATH", () => {
+  const dir = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const link = join(dir, "leket");
+    symlinkSync(BIN, link);
+    const r = spawnSync(process.execPath, [link, "--help"], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^usage: leket youtube/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
