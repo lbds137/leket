@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // A stand-in for yt-dlp in test/cli.test.js (LEKET_YTDLP points here): writes a
 // synthetic video.info.json where -o says, and logs the comment estimate the way
-// yt-dlp does. FAKE_YTDLP_MODE=fail exits 1 without writing anything. Every name and
-// text below is invented.
+// yt-dlp does. FAKE_YTDLP_MODE: fail exits 1 without writing anything; partial writes
+// the info and then exits 1; null writes the JSON literal null. Every name and text
+// below is invented.
 import { writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -25,4 +26,9 @@ const info = {
   ],
 };
 process.stderr.write("[youtube] Downloading ~5 comments\n");
-writeFileSync(tmpl.replace("%(ext)s", "info.json"), JSON.stringify(info));
+const mode = process.env.FAKE_YTDLP_MODE;
+writeFileSync(tmpl.replace("%(ext)s", "info.json"), mode === "null" ? "null" : JSON.stringify(info));
+if (mode === "partial") {
+  process.stderr.write("ERROR: [youtube] fake: comment page failed\n");
+  process.exit(1);
+}
