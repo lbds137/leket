@@ -47,7 +47,7 @@ Step 1, prior-art evaluation (2026-11-25). The licenses come from the AMO API (`
 | Can Leket borrow code? | No (GPL into MIT) | No | No |
 | Cost | Free | Paid: ExtensionPay, a Payhip link, a Supabase license check | "Offers in-app purchases" (store listing) |
 
-The Chrome item, from its store listing only (fetched 2026-11-25): it says "Export your Replika chat messages, diary and memory entries.", is version 12026.2.25 (updated 2026-02-25), and links a privacy policy on index.garden. Inference, not verified: it is the Chrome build of the paid Firefox add-on, which has the same index.garden support site and the same date-shaped version number (12025.1.19). If so, its update in February 2026 is the newest sign that these endpoints still worked then.
+The Chrome item, from its store listing only (fetched 2026-11-25): it says "Export your Replika chat messages, diary and memory entries.", is version 12026.2.25 (updated 2026-02-25), and links a privacy policy on index.garden; its output formats are not stated in its listing. Inference, not verified: it is the Chrome build of the paid Firefox add-on, which has the same index.garden support site and the same date-shaped version number (12025.1.19). If so, its update in February 2026 is the newest sign that the exporter was maintained.
 
 How the two readable add-ons work. The endpoints below were read from the free add-on's `api.js`. A grep for URLs over the paid add-on's `bg.js` and `main.js` found the same diary, memory, image and WebSocket endpoints; its auth handling wasn't read in its minified form.
 - Auth: the signed-in web app keeps `auth` (userId, deviceId, authToken), `ws` (chatId) and `profile` (user first name, bot name) in my.replika.com localStorage. REST calls send `x-user-id`, `x-auth-token`, `x-device-id` and `x-timestamp-hash` (an MD5 of a fixed prefix plus the device id).
@@ -63,7 +63,9 @@ What they miss, and so what Step 2 must do:
 - The output is txt, JSON or CSV with no viewer. The module will write Leket's usual offline zip (HTML + JSON, images inside).
 - Content types other than text and images (voice, for example) aren't handled. The module will record them as "not captured", with the reason.
 - There is no retry, and an error partway through the history just stops the export. The module will say what's partial, like Leket's other modules.
-- Never write the auth token, user id, device id or any signed URL into the zip's JSON or HTML, or into logs. Each saved object is built from a list of fields it may carry; the request context is never dumped. A test feeds a message object containing those values and checks they're absent from the output.
+
+Leket's own requirements (not gaps in the prior art, which doesn't leak these):
+- Never write the auth token, user id, device id or any signed URL into the zip's JSON or HTML, or into logs. Each saved object is built from a list of fields it may carry; the request context is never dumped. A test feeds a message object containing those values and checks they're absent from the output and from captured console/log output.
 
 Decision: write the module fresh against the endpoints above (endpoints are facts, not code), reading auth from the signed-in tab's localStorage as the Discord collector reads its tab. Every protocol detail above comes from 2024–25 code, so the live run re-checks each endpoint before trusting it.
 Hosts: my.replika.com, my.replika.ai and ws.replika.com (WebSocket), plus the image host once the live run names it.
