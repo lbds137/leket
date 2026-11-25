@@ -1,7 +1,7 @@
 # Leket
 
 A Chrome extension (Manifest V3) with one module per site (`src/modules/registry.js`):
-Discord, Etsy, Reddit, claude.ai sessions and claude.ai chat outputs. The Discord module
+Discord, Etsy, Reddit, claude.ai sessions, claude.ai chat outputs and Replika. The Discord module
 saves a DM, channel or thread — attachments included — as one zip that opens offline: the
 collector reads the conversation from the open Discord tab; the export tab fetches the
 attachments and builds the zip. `bin/leket.js` is the command-line side (YouTube via yt-dlp

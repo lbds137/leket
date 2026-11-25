@@ -69,4 +69,10 @@ Leket's own requirements (not gaps in the prior art, which doesn't leak these):
 
 Decision: write the module fresh against the endpoints above (endpoints are facts, not code), reading auth from the signed-in tab's localStorage as the Discord collector reads its tab. Every protocol detail above comes from 2024–25 code, so the live run re-checks each endpoint before trusting it.
 Hosts: my.replika.com, my.replika.ai and ws.replika.com (WebSocket), plus the image host once the live run names it.
+
+Step 2 follow-ups for the live run (Step 3):
+- The image/voice host isn't in host_permissions yet, so expect every picture "not saved: the file host refused or failed" until the live run names it and it's added.
+- Widen the allowlist from the zip's `unsaved_fields` tally (also shown on the page).
+- If Replika pages inclusively (the last batch is only the cursor message), the history ends "stopped moving backwards" instead of done: check the end line.
+- Low: the not-saved count says "picture(s) or voice clip(s)" but also counts messages of a kind Leket doesn't read (stickers, say); word it as "item(s)" or split the count.
 <!-- SECTION:NOTES:END -->

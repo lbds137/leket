@@ -17,7 +17,12 @@
 // then runs again and must replace that day's file, not add a renamed copy.
 // The Etsy page, prefilled from the tab, pages a synthetic message-list endpoint and
 // saves four times over one file: twice from the prefilled box, then from an emptied
-// box (the tab's conversation), then with a second id that fails. Each scenario runs on
+// box (the tab's conversation), then with a second id that fails. The Replika page
+// probes the matched tab's localStorage, pages a scripted history socket (the harness's
+// interception can't cover a WebSocket handshake, so the page's WebSocket is swapped for
+// a fake that answers three batches), walks the diary and memories on both Replika hosts,
+// and must leave a picture whose signed host the manifest has no permission for as not
+// captured — a served-but-forbidden fetch is exactly what's tested. Each scenario runs on
 // its own: a throw fails it and the next one starts.
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
@@ -134,6 +139,15 @@ const ETSY_CONVO = `https://www.etsy.com/messages/${ETSY_ID}`;
 const ETSY_GONE = "999999";
 const etsyPage = (offset, id = ETSY_ID) => `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list?offset=${offset}&fetch_older=true&load_shop_convos=false`;
 const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
+// replika: the signed-in page (its inline script plants the localStorage keys the probe
+// reads), the diary and memories endpoints on both hosts, the sign call — and the signed
+// picture itself, served from a host the manifest has no permission for
+const REPLIKA_HOME = "https://my.replika.com/";
+const REPLIKA_MEM_14 = "https://my.replika.ai/api/mobile/1.4/memory";
+const replikaPage = `<!doctype html><html><head><title>my replika</title></head><body><p>my replika</p>`
+  + `<script>localStorage.setItem("auth", JSON.stringify({ userId: "smoke-user", deviceId: "smoke-device", authToken: "smoke-token" }));`
+  + `localStorage.setItem("ws", JSON.stringify({ chatId: "smoke-chat" }));`
+  + `localStorage.setItem("profile", JSON.stringify({ userProfile: { first_name: "Ada" }, bot: { name: "Echo" } }));</script></body></html>`;
 const messengerCollectorPage = `<!doctype html><html><head><title>(2) Ada Example | Messenger</title></head><body>`
   + `<div role="main"><div id="scroller" style="height:200px;overflow-y:auto"></div></div>`
   + `<script>(() => {
@@ -246,6 +260,27 @@ const WEB = new Map([
   [etsyPage(0, ETSY_GONE), { type: "application/json", body: "{}", status: 500 }],
   ["https://www.messenger.com/e2ee/t/123", { type: "text/html", body: html("a messenger thread") }],
   [MESSENGER_COLLECTOR_URL, { type: "text/html", body: messengerCollectorPage }],
+  [REPLIKA_HOME, { type: "text/html", body: replikaPage }],
+  ["https://my.replika.com/api/mobile/1.4/saved_chat_items/previews?t=diary&offset=0&limit=100",
+    { type: "application/json", body: JSON.stringify([{ id: "sd1" }, { id: "sd2" }]) }],
+  ["https://my.replika.com/api/mobile/1.4/saved_chat_items/previews?t=diary&offset=2&limit=100",
+    { type: "application/json", body: "[]" }],
+  ["https://my.replika.com/api/mobile/1.4/saved_chat_items/actions/get_by_ids", { type: "application/json", body: JSON.stringify([
+    { id: "sd1", type: "diary", creation_timestamp: "2026-02-01T09:00:00Z", entries: [{ text: "a diary day" }] },
+    { id: "sd2", type: "moment", timestamp: "2026-02-02T09:00:00Z", entries: [{ text: "another day" }] },
+  ]) }],
+  [REPLIKA_MEM_14, { type: "application/json", body: JSON.stringify({ facts: [
+    { text: "likes tea", creation_timestamp: "2026-01-05T00:00:00Z" },
+  ] }) }],
+  ["https://my.replika.ai/api/mobile/1.5/memory/v3/", { type: "application/json", body: JSON.stringify({
+    customer_facts: [{ text: "has a sister", creation_timestamp: "2026-01-06T00:00:00Z" }],
+    robot_facts: [{ text: "Echo remembers walks", creation_timestamp: "2026-01-07T00:00:00Z" }],
+  }) }],
+  ["https://my.replika.ai/api/mobile/1.5/images/signed/actions/get_url",
+    { type: "application/json", body: JSON.stringify({ image_url: "https://images.example.org/smoke-signed.png?sig=smoke-sig" }) }],
+  // served, but the extension page has no permission for this host, so the read of the
+  // response is refused and the picture must come out not captured
+  ["https://images.example.org/smoke-signed.png?sig=smoke-sig", { type: "image/png", body: SMOKE_PNG }],
 ]);
 
 // ---- a small CDP client over Node's own WebSocket ----
@@ -910,6 +945,91 @@ async function scenarios(cdp, downloads) {
       check(end.fails.length === 0, `etsy save ${round}: nothing is listed as failed (${end.fails.length} failures)`);
       const blobs = await evalIn(ep, `Promise.all(window.smokeBlobs.map((u) => fetch(u).then(() => "readable", () => "freed")))`);
       check(JSON.stringify(blobs) === '["freed"]', `etsy save ${round}: the page made one blob and freed its URL (${JSON.stringify(blobs)})`);
+    }
+  });
+
+  // ---- replika: popup -> the module's page -> the localStorage probe on the matched tab,
+  // a scripted history socket (three batches, the picture's raw link inside), the diary
+  // and memories on both hosts, and one picture whose signed host the manifest has no
+  // permission for: served, but refused, so it must come out not captured ----
+  await scenario("replika", async () => {
+    console.log("smoke: replika save");
+    await open(REPLIKA_HOME);
+    await clickPopup("Save everything");
+    const rp = (await target((s) => s.type === "page" && /\/src\/modules\/replika\/page\.html\?tab=\d+$/.test(s.url), "the replika page (with its tab id)")).sessionId;
+    await wired(rp, "replika-run", "replika");
+    // the harness's CDP interception covers HTTP but not a WebSocket handshake, so the
+    // page's WebSocket is swapped for a fake before the click (page.js reads the global
+    // at click time): batch 1 newest-first with the picture message, batch 2 one older
+    // message, batch 3 empty to end it
+    const swapped = await evalIn(rp, `(() => {
+      const batches = [
+        [
+          { id: "sm1", content: { type: "text", text: "hello from Echo" }, meta: { nature: "Robot", timestamp: "2026-03-03T10:00:00Z" } },
+          { id: "sm2", content: { type: "text", text: "hello from Ada" }, meta: { nature: "Customer", timestamp: "2026-03-02T10:00:00Z" } },
+          { id: "sm3", content: { type: "images", text: "https://images.example.org/raw.png" }, meta: { nature: "Robot", timestamp: "2026-03-01T10:00:00Z" } },
+        ],
+        [
+          { id: "sm0", content: { type: "text", text: "oldest" }, meta: { nature: "Customer", timestamp: "2026-02-28T10:00:00Z" } },
+        ],
+        [],
+      ];
+      class FakeSocket {
+        constructor(url) { globalThis.smokeReplikaSocketUrl = url; this.listeners = {}; }
+        send(text) {
+          const n = (globalThis.smokeReplikaSends = (globalThis.smokeReplikaSends || 0) + 1);
+          const batch = batches[Math.min(n - 1, batches.length - 1)];
+          setTimeout(() => {
+            const frame = { data: JSON.stringify({ event_name: "history", payload: { messages: batch } }) };
+            if (this.onmessage) this.onmessage(frame);
+            for (const f of this.listeners.message || []) f(frame);
+          }, 0);
+        }
+        addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+        close() {}
+      }
+      globalThis.WebSocket = FakeSocket;
+      return true; })()`);
+    check(swapped === true, "replika: the page's WebSocket is swapped for the scripted fake");
+    // a test-side lever, the sessions scenario's pattern: the picture's fetch is refused,
+    // and fetchFile's 3 s retry wait would idle the scenario for 30 s — 3000 ms becomes 0
+    // on this page alone (the fake socket's 0 ms dispatch and the history timer are untouched)
+    await evalIn(rp, `(() => {
+      const st = window.setTimeout;
+      window.setTimeout = (f, ms, ...a) => st(f, ms === 3000 ? 0 : ms, ...a);
+      return true; })()`);
+    await evalIn(rp, `document.getElementById("replika-run").click(), true`);
+    const end = await waitFor(() => evalIn(rp, `(() => { const p = document.getElementById("replika-status"); const t = p.hidden ? "" : p.textContent;
+      return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,
+        fails: [...document.getElementById("replika-problems").children].map((li) => li.textContent) }; })()`),
+    "the replika page's end line", 90000).catch(soft((e) => ({ t: e.message, fails: [] })));
+    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 0 pictures and voice clips \(1 picture\(s\) or voice clip\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
+      `replika: the end line names the file and the counts and warns of the picture not saved (it said: ${end.t} [${end.cls}])`);
+    check(JSON.stringify(end.fails) === JSON.stringify(["1 picture(s) or voice clip(s) not saved: the file host refused or failed"]),
+      `replika: the problems list counts the not-captured picture by its reason (${JSON.stringify(end.fails)})`);
+    const zipName = landed().find((f) => /^replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip$/.test(f));
+    if (check(zipName, `replika: a replika-….zip landed (${landed().filter((f) => f.startsWith("replika-")).join(", ") || "none"})`)) {
+      const info = JSON.parse(execFileSync("python3", ["-I", "-c",
+        "import json,sys,zipfile\nz = zipfile.ZipFile(sys.argv[1])\nprint(json.dumps({n: z.read(n).decode('utf-8', 'replace') for n in z.namelist()}))",
+        join(downloads, zipName)], { encoding: "utf8" }));
+      const data = JSON.parse(info["data.json"]);
+      check(data.counts.messages === 4 && data.counts.diary === 2 && data.counts.memories === 3,
+        `replika: the zip's data.json counts 4 messages, 2 diary entries, 3 memories (${JSON.stringify(data.counts)})`);
+      check(data.status.chat === "complete" && data.status.diary === "complete" && data.status.memories === "complete",
+        `replika: chat, diary and memories are complete (${JSON.stringify(data.status)})`);
+      const pic = data.messages.find((m) => m.kind === "images");
+      check(pic && pic.not_captured === "the file host refused or failed" && !pic.media && !pic.text,
+        `replika: the picture is not captured with its reason, its raw link unwritten (${JSON.stringify(pic)})`);
+      check(info["index.html"].includes("Ada") && info["index.html"].includes("Echo"),
+        "replika: index.html names Ada and Echo");
+      const blob = JSON.stringify(info);
+      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "smoke-sig", "raw.png"]) {
+        check(!blob.includes(secret), `replika: no file in the zip contains ${secret}`);
+      }
+      const socketUrl = await evalIn(rp, "globalThis.smokeReplikaSocketUrl");
+      check(socketUrl === "wss://ws.replika.com/v17", `replika: the fake socket was opened on the history URL (${socketUrl})`);
+      check(requested.includes(REPLIKA_MEM_14),
+        "replika: the my.replika.ai memory endpoint was requested (the second host's permission works)");
     }
   });
 

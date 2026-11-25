@@ -38,6 +38,17 @@ const openEtsyPage = async (tab, { tabs = chrome.tabs } = {}) => {
   return "Opened the Etsy page.";
 };
 
+// Like the chat outputs page, the Replika page runs against the tab the popup matched:
+// its probe reads that tab's localStorage (readReplikaAuth runs there via
+// chrome.scripting), so the open carries its id as a query. Tabless calls (the tests)
+// open the page bare — it refuses to run without a tab id.
+const openReplikaPage = async (tab, { tabs = chrome.tabs } = {}) => {
+  const page = chrome.runtime.getURL("src/modules/replika/page.html");
+  const url = tab && tab.id != null ? `${page}?tab=${tab.id}` : page;
+  await tabs.create({ url });
+  return "Opened the Replika page.";
+};
+
 export const COMMANDS = {
   discord: discordCommands,
   messenger: messengerCommands,
@@ -49,6 +60,9 @@ export const COMMANDS = {
   },
   "claude-chat": {
     outputs: openChatOutputsPage,
+  },
+  replika: {
+    save: openReplikaPage,
   },
   etsy: {
     messages: openEtsyPage,

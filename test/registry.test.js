@@ -158,6 +158,33 @@ test("claude.ai pages that are not /code do not match, and /codeX is not /code",
   }
 });
 
+test("any page on my.replika.com or my.replika.ai matches the replika module", () => {
+  for (const url of [
+    "https://my.replika.com/", // the app itself
+    "https://my.replika.com/chat", // any path
+    "https://my.replika.com/deep/path?q=1#x", // query and fragment are not part of the match
+    "https://my.replika.ai/", // the other signed-in host
+    "https://my.replika.ai/some/deep/path",
+  ]) {
+    const m = match(url);
+    assert.ok(m, `no match for ${url}`);
+    assert.equal(m.id, "replika");
+  }
+});
+
+test("hosts that only look like Replika's, and http, do not match the replika module", () => {
+  for (const url of [
+    "http://my.replika.com/", // https only: the host permissions are https
+    "https://replika.com/", // a different host entirely
+    "https://www.replika.com/", // the bare www host is nobody's territory
+    "https://my.replika.com.evil.example/", // a suffix of another host
+    "https://evil.example/my.replika.com", // a path on another host
+    "https://ws.replika.com/v17", // the socket host is not a page host
+  ]) {
+    assert.equal(match(url), null, `unexpected match for ${url}`);
+  }
+});
+
 test("anything else is no match at all", () => {
   for (const url of [
     "https://discord.com/",
@@ -257,6 +284,46 @@ test("the chat outputs command without a tab opens the bare page and says so", a
     assert.equal(said, "Opened the chat outputs page.");
     assert.deepEqual(created, [
       { url: "chrome-extension://test-extension-id/src/modules/claude-chat/page.html" },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
+  }
+});
+
+test("the replika save command opens the module's own page with the tab id, and says so", async () => {
+  // like the chat outputs page, the page runs against the tab the popup matched: its
+  // probe reads that tab's localStorage, so the open carries its id as a query.
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const m = match("https://my.replika.com/");
+    assert.ok(m && m.id === "replika");
+    assert.deepEqual(m.commands.map((c) => c.id), ["save"]);
+    assert.equal(m.commands[0].label, "Save everything");
+    const said = await COMMANDS.replika.save({ id: 7 }, { tabs });
+    assert.equal(said, "Opened the Replika page.");
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/replika/page.html?tab=7" },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
+  }
+});
+
+test("the replika save command without a tab opens the bare page and says so", async () => {
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const said = await COMMANDS.replika.save(undefined, { tabs });
+    assert.equal(said, "Opened the Replika page.");
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/replika/page.html" },
     ]);
   } finally {
     delete globalThis.chrome; // the stub never leaks past this test

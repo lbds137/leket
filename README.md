@@ -7,6 +7,7 @@ A Chrome extension that saves what you can see on a few sites, to files you keep
 - **Etsy**: your conversations with shops or buyers, as one dated JSON.
 - **Reddit**: a post with its comments, as Markdown, with its JSON alongside.
 - **claude.ai**: your claude.ai/code sessions (export, rename, delete), and the files Claude delivered in your chats.
+- **Replika**: your chats, diary and memories, with their pictures and voice clips, as one zip you can open offline.
 
 Click its toolbar button on one of these sites and it offers what it can do there; anywhere else it lists them.
 
@@ -112,6 +113,15 @@ These two pages are bulk tools for claude.ai. Their input lists come from script
 
 **Chat outputs** (on a claude.ai chat page, click the **Leket** button, then **Save chat outputs**): paste a list of `[chat id, name, source]` entries. Every file Claude delivered in those chats is saved into one `claude-chat-outputs-<date>.json`, text as text and everything else as base64 (the date is UTC, so it can be a day off from yours near midnight). Saving again on the same date replaces that file.
 
+## Save Replika
+
+1. Sign in to [my.replika.com](https://my.replika.com) in Chrome and let the chat load, then open any page there.
+2. Click the **Leket** button in the toolbar, then **Save everything**. Leket's Replika page opens in a new tab.
+3. Click **Save everything** there and keep the tab open. It reads the chat history over Replika's chat socket (paging backwards until the conversation's start), then the diary and the memories, then fetches each picture and voice clip one at a time with a short pause between files, and saves `replika-<date>-<time>.zip` to your Downloads folder. Each save gets its own file — saving again never replaces an earlier one.
+4. Unzip the file and open `index.html`.
+
+The zip holds the whole chat with both sides labelled by name, the diary entries and the memories (yours and the companion's), with pictures and voice clips inline. A picture or voice clip that couldn't be fetched is listed in its message's place with the reason, and anything Replika stopped halfway is said in words at the top of its section — what was read is saved either way. If Leket signed out (Replika answered 401/403), sign in at my.replika.com again and rerun: the new save lands beside the old one. Each kind of message field Leket didn't read is counted in the zip's `data.json` under `unsaved_fields`, so a future version can read more.
+
 ## From the command line
 
 `bin/leket.js` runs saves from a shell, with no browser. So far it saves YouTube videos:
@@ -153,6 +163,7 @@ Layout:
 - `src/modules/etsy/`: the Etsy module. `page.html`, `page.js`: its page; `messages.js`: paging through each conversation (no extension APIs).
 - `src/modules/claude-sessions/`: the claude.ai sessions module. `page.html`, `page.js`: its page; `listing.js`: lists every session; `export.js`, `save.js`, `narration.js`: the export, its downloads, and what the page says about the export, rename and delete; `rename.js`, `delete.js`: rename and delete, each read back.
 - `src/modules/claude-chat/`: the claude.ai chat-outputs module. `page.html`, `page.js`: its page; `outputs.js`: lists and fetches each chat's delivered files (no extension APIs).
+- `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.

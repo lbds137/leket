@@ -119,6 +119,26 @@ export const MODULES = [
     commands: [{ id: "outputs", label: "Save chat outputs" }],
   },
   {
+    id: "replika",
+    // any page on my.replika.com or my.replika.ai: the module's page reads the sign-in
+    // from the matched tab's localStorage (readReplikaAuth via chrome.scripting) and
+    // runs the history socket and every REST fetch from its own page, where the
+    // manifest's host permissions carry them. The open carries the tab id as a query.
+    matches: (url) => {
+      try {
+        const u = new URL(url);
+        // https only: the manifest's host permissions are https
+        if (u.protocol !== "https:") return false;
+        return u.hostname === "my.replika.com" || u.hostname === "my.replika.ai";
+      } catch {
+        return false;
+      }
+    },
+    title: "Replika",
+    blurb: "Save your Replika chats, diary and memories, with their pictures and voice clips, as one zip you can open offline.",
+    commands: [{ id: "save", label: "Save everything" }],
+  },
+  {
     id: "etsy",
     matches: (url) => {
       try {
