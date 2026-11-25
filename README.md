@@ -112,6 +112,16 @@ These two pages are bulk tools for claude.ai. Their input lists come from script
 
 **Chat outputs** (on a claude.ai chat page, click the **Leket** button, then **Save chat outputs**): paste a list of `[chat id, name, source]` entries. Every file Claude delivered in those chats is saved into one `claude-chat-outputs-<date>.json`, text as text and everything else as base64 (the date is UTC, so it can be a day off from yours near midnight). Saving again on the same date replaces that file.
 
+## From the command line
+
+`bin/leket.js` runs saves from a shell, with no browser. So far it saves YouTube videos:
+
+```
+node bin/leket.js youtube https://youtu.be/<id> [--out DIR] [--lang CODE] [--max-comments N]
+```
+
+It writes `<title>-transcript-comments.json` (the `youtube-extract/v1` schema) and a `.md` beside it: the captions (a manual track in `--lang` if there is one, else YouTube's automatic ones; default `en`) and every comment with its replies, sorted by likes. It needs [yt-dlp](https://github.com/yt-dlp/yt-dlp): set `LEKET_YTDLP` to its path, or have `yt-dlp` on your PATH, or have [uv](https://docs.astral.sh/uv/) installed, and Leket runs it with `uvx`. Captions and comments are fetched separately, so if YouTube refuses the captions (it rate-limits them per network), the comments are still saved and the exit code is 3 instead of 0. Exit 1 means nothing was saved. `npm link` (or a symlink to `bin/leket.js`) puts it on your PATH as `leket`.
+
 ## For developers
 
 `npm test` runs the tests (Node 24, and `python3` for checking the zips). There are no dependencies.
@@ -143,6 +153,8 @@ Layout:
 - `src/modules/etsy/`: the Etsy module. `page.html`, `page.js`: its page; `messages.js`: paging through each conversation (no extension APIs).
 - `src/modules/claude-sessions/`: the claude.ai sessions module. `page.html`, `page.js`: its page; `listing.js`: lists every session; `export.js`, `save.js`, `narration.js`: the export, its downloads, and what the page says about the export, rename and delete; `rename.js`, `delete.js`: rename and delete, each read back.
 - `src/modules/claude-chat/`: the claude.ai chat-outputs module. `page.html`, `page.js`: its page; `outputs.js`: lists and fetches each chat's delivered files (no extension APIs).
+- `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
+- `bin/leket.js`: the command-line saves (see above).
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.
