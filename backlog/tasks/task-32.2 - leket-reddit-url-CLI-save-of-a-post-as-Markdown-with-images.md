@@ -4,8 +4,9 @@ title: 'leket reddit <url>: CLI save of a post as Markdown with images'
 status: To Do
 assignee: []
 created_date: '2026-11-26T11:27:00Z'
+updated_date: '2026-11-26T11:52:00Z'
 labels:
-  - convert
+  - cli
 dependencies: []
 parent_task_id: TASK-32
 priority: medium
@@ -15,7 +16,7 @@ ordinal: 39000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Row E: the CLI half of the Reddit exporter (images saved beside the Markdown, --from-json for a browser save), sharing src/modules/reddit/md.js with the extension. Generic only (public repo): every name, timezone and output layout is a flag; the private archive keeps a thin wrapper. Fixtures are synthetic, never a real conversation. Spec: the existing private converter (path kept in the Leket role file), ported as-is first. TASK-32 ruling 2026-11-26, docs/tools-inventory.md.
+Row E: the CLI half of the Reddit exporter (images saved beside the Markdown, --from-json for a browser save), sharing src/modules/reddit/md.js with the extension. Generic only (public repo): every name, timezone and output layout is a flag; the private archive keeps a thin wrapper. Fixtures are synthetic, never a real post. Spec: the existing private converter (path kept in the Leket role file), ported as-is first. TASK-32 ruling 2026-11-26, docs/tools-inventory.md.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

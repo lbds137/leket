@@ -3,8 +3,8 @@
 Lila 11-25: stop keeping one-off scrapers and converters scattered across repos; anything that
 belongs in a "pull it and make it readable" tool moves into Leket, on purpose, not as a
 kitchen sink. This doc lists every candidate found on 2026-11-26 and recommends IN, OUT,
-RETIRE (Leket already does it) or DEFERRED (with what promotes it). **The list is Lila's
-call** (TASK-32 AC2); nothing below is built until she has ruled.
+RETIRE (Leket already does it) or DEFERRED (with what promotes it). **Lila ruled on it
+2026-11-26** (TASK-32 AC2; see Ruling below); the IN rows are TASK-32.1 to 32.12.
 
 Public-repo rule: the candidates live in private repos. This doc names them by kind and
 input format only; the exact script paths are kept privately with the Leket session.

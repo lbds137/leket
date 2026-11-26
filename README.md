@@ -126,7 +126,17 @@ The zip holds the whole chat with both sides labelled by name, the diary entries
 
 ## From the command line
 
-`bin/leket.js` runs saves from a shell, with no browser. So far it saves YouTube videos:
+`bin/leket.js` runs saves from a shell, with no browser, and turns saves into readable Markdown.
+
+### Discord saves to Markdown
+
+```
+node bin/leket.js convert discord <save>... [--out DIR] [--by none|year|month] [--tz ZONE] [--name USERNAME=LABEL]...
+```
+
+A save is Leket's Discord zip (for a save in parts, part 1, which holds the messages) or the `.json` inside it; several saves of the same conversation are merged by message id. It writes one Markdown transcript, or one per year or month (`--by`; a server channel defaults to month), with each day under its own heading and each message's replies, forwards and attachments shown in words. A server channel also gets a participants table (nicknames, roles, first and last message) and an index of its files. Times are shown in `--tz` (default: this computer's zone). `--name` shows an account under a label of your choosing, `--embeds` adds link previews' titles, and `--voice` adds machine transcripts of voice messages; `node bin/leket.js convert --help` lists every option.
+
+### YouTube videos
 
 ```
 node bin/leket.js youtube https://youtu.be/<id> [--out DIR] [--lang CODE] [--max-comments N]
@@ -151,6 +161,7 @@ Layout:
   - `collector.js`: the panel. It runs in the page's own world, because Discord's message objects are on its React elements.
   - `bridge.js`: hands the collector's export from the page to the export tab, in pieces.
   - `export.html`, `export.js`: the export tab. With `src/lib/`, it fetches the attachments, writes `index.html` and builds the zip.
+  - `convert.js`: saves to Markdown transcripts (pure), used by `leket convert discord`.
 - `src/modules/messenger/`: the Messenger module.
   - `launch.js`: its command.
   - `read.js`: pure helpers (dates, message fields, file names, the Markdown), shared by the panel, the export tab and the tests.
@@ -168,7 +179,7 @@ Layout:
 - `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
-- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
+- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.
 - `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).

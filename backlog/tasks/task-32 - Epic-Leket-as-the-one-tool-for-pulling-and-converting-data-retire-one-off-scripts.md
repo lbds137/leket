@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:44:00Z'
-updated_date: '2026-11-26T11:27:00Z'
+updated_date: '2026-11-26T11:52:00Z'
 labels:
   - epic
 dependencies: []
@@ -44,4 +44,6 @@ Constraints:
 Replika is IN via TASK-33 (owner's direct ask, 2026-11-25); the inventory doesn't need to rule on it.
 
 Lila ruled 2026-11-26: 'Wider: historical too' (recommended set plus rows K and L); children TASK-32.1-32.12 filed; deferred: O (claude.ai export converter, trigger: Lila wants that archive readable) and D's site module (trigger: console script breaks or she wants it in the toolbar).
+
+Owners of G, I and J told 2026-11-26 to retire them (Deck's TASK-395 carries it; its proof is the 11-29 claude.ai export run through Leket's Export page).
 <!-- SECTION:NOTES:END -->

@@ -119,12 +119,15 @@ badge-flag helper moves behind the popup's launch path.
 
 ## The CLI contract
 
-The headline: **the CLI tools change nothing.**
+The headline: **the extension's saves keep the names and shapes the existing command-line
+tools read, so those tools need no change.** Leket's own CLI (`bin/leket.js`) reads them too,
+one converter at a time as TASK-32 moves the one-off scripts in.
 
 | Saved file (same name, same ~/Downloads) | CLI that reads it |
 |---|---|
 | `claude-sessions-<run>-partNN.jsonl`, `-done.json` | bin/claude-sessions-weekly → claude-sessions-split |
-| `reddit-<post id>.json` | `reddit-export --from-json` |
+| `discord-<name>-<channel id>.zip` (or `-partN.zip`; the messages are in part 1), or the `.json` inside it | `leket convert discord` (Markdown transcript; TASK-32.1) |
+| `reddit-<post id>.json` | a private Reddit CLI's `--from-json` until TASK-32.2 moves it into `leket reddit` |
 | `reddit-<post id>.md` | opens directly |
 | `claude-chat-outputs-<date>.json` | read directly (no tool wired yet) |
 | `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical; a same-day save overwrites it; unredacted, so the reader's guard hides any name) |
