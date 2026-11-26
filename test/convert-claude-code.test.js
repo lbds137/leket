@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { minute, plan, render, titleOf, turns } from "../src/convert/claude-code.js";
+import { readClaudeCodeSessions } from "../bin/leket.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -129,6 +130,14 @@ test("titleOf: the session's name, else the start of its first prompt, cut at a 
   assert.equal(titleOf({ title: "", turns: [{ role: "user", text: `${long}\n\nmore` }] }), "Please help me rename every file in the photos folder so…");
   assert.equal(titleOf({ title: " ", turns: [{ role: "user", text: "Short\none" }] }), "Short one");
   assert.equal(titleOf({ title: "", turns: [{ role: "assistant", text: "x" }] }), "Untitled session");
+  // an answer isn't a prompt: the first prompt names the session
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", text: "*(answering the question)*\n\nQ → **A**" }, { role: "user", text: "Real start" }] }), "Real start");
+  // no space past the 30th character: cut at 60 code points, an emoji kept whole
+  const smile = String.fromCodePoint(0x1f600);
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", text: `${"a".repeat(59)}${smile}b` }] }), `${"a".repeat(59)}${smile}…`);
+  // a prompt of only a character JavaScript calls space but Python doesn't: still a title
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", text: String.fromCharCode(0xfeff) }] }), String.fromCharCode(0xfeff));
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", text: String.fromCharCode(0x3000) }] }), "Untitled session");
 });
 
 test("render: heading, span, labels and times in the zone given", () => {
@@ -142,6 +151,12 @@ test("render: heading, span, labels and times in the zone given", () => {
     "## Helper · 2024-03-05 09:02", "", "It is.", "",
   ].join("\n"));
   assert.equal(minute("not a time"), "");
+  // a session name with a line break and a trailing #, and labels with markup, each stay on one heading line
+  const named = { ...s, title: "Fix\n# the build #" };
+  const r = render(named, { user: "*me*", assistant: "C#", timeZone: "UTC" });
+  assert.match(r, /^# Fix # the build \\#\n/);
+  assert.match(r, /\n## \\\*me\\\* · 2024-03-05 14:00\n/);
+  assert.match(r, /\n## C# · 2024-03-05 14:02\n/);
 });
 
 test("plan: oldest first, clashing names told apart by the session id, empty sessions counted by kind", () => {
@@ -149,14 +164,16 @@ test("plan: oldest first, clashing names told apart by the session id, empty ses
   const p = plan([
     sess("bbbbbbbb-2", 10, [prompt(10, "Same title")]),
     sess("aaaaaaaa-1", 5, [prompt(5, "Same title")]),
-    sess("cccccccc-3", 0, [prompt(0, "Run nightly", "scheduled"), reply(1, text("ok"))]), // only the reply
-    sess("dddddddd-4", 0, [prompt(0, "Nightly", "scheduled")]), // a prompt, none theirs
-    sess("eeeeeeee-5", 0, [{ ...base(0), type: "user", message: { content: "old format" } }]), // no turnOrigin anywhere
+    sess("bbbbbbbb-9", 20, [prompt(20, "SAME TITLE")]), // a case-blind clash, the same id start
+    // a scheduled run's reply alone is left out, as is an old transcript's
+    sess("cccccccc-3", 0, [prompt(0, "Run nightly", "scheduled"), reply(1, text("ok"))]),
+    sess("dddddddd-4", 0, [prompt(0, "Nightly", "scheduled")]),
+    sess("eeeeeeee-5", 0, [{ ...base(0), type: "user", message: { content: "old format" } }, reply(1, text("answer"))]),
   ], { timeZone: "UTC" });
   assert.deepEqual(p.files.map((f) => f.name), [
-    "2024-03-05 Untitled session.md", "2024-03-05 Same title.md", "2024-03-05 Same title (bbbbbbbb).md",
+    "2024-03-05 Same title.md", "2024-03-05 Same title (bbbbbbbb).md", "2024-03-05 SAME TITLE (bbbbbbbb 2).md",
   ]);
-  assert.deepEqual(p.stats, { sessions: 3, turns: 3, noPrompt: 1, noOrigin: 1, unparsed: 0 });
+  assert.deepEqual(p.stats, { sessions: 3, turns: 3, noPrompt: 2, noOrigin: 1, unparsed: 0 });
   const j = plan([sess("aaaaaaaa-1", 5, [prompt(5, "Hi")])], { json: true });
   assert.equal(j.files[0].name, "2024-03-05 Hi.json");
   assert.deepEqual(JSON.parse(j.files[0].text), { id: "aaaaaaaa-1", source: "aaaaaaaa-1.jsonl", title: "Hi", turns: [{ at: at(5), role: "user", text: "Hi" }] });
@@ -181,6 +198,20 @@ test("CLI: a folder's top-level transcripts become one file each; the summary na
   const j = leket(["convert", "claude-code", join(src, "sess-0001-aaaa.jsonl"), "--out", out, "--json"]);
   assert.equal(j.status, 0, j.stderr);
   assert.equal(JSON.parse(readFileSync(join(out, "2024-03-05 Hello there.json"), "utf8")).turns.length, 2);
+});
+
+test("reader: lines end at \\n only, a CRLF's \\r goes, and the file name is the id when no record has one", async () => {
+  const d = tmp(), f = join(d, "named-by-file.jsonl");
+  const ls = String.fromCharCode(0x2028), ps = String.fromCharCode(0x2029);
+  const { sessionId, ...noId } = prompt(0, `one${ls}two${ps}three`);
+  writeFileSync(f, `${JSON.stringify({ ...noId, sessionId: "  " })}\r\n${JSON.stringify(reply(1, text("ok")))}`);
+  const [s] = await readClaudeCodeSessions([f]);
+  assert.deepEqual(shape(s), [["user", `one${ls}two${ps}three`], ["assistant", "ok"]]);
+  assert.equal(s.unparsed, 0);
+  // the blank id is passed over; the reply's record names the session
+  assert.equal(s.id, sessionId);
+  writeFileSync(f, JSON.stringify(noId));
+  assert.equal((await readClaudeCodeSessions([f]))[0].id, "named-by-file");
 });
 
 test("CLI: usage errors exit 2; a missing transcript or an empty folder exits 1 with nothing written", () => {

@@ -58,7 +58,7 @@ export function turns() {
     try { d = JSON.parse(line); } catch { unparsed++; return; }
     if (!obj(d)) return;
     if (d.type === "custom-title" && typeof d.customTitle === "string") title = d.customTitle;
-    if (!sessionId && typeof d.sessionId === "string") sessionId = d.sessionId;
+    if (!sessionId && typeof d.sessionId === "string") sessionId = pyStrip(d.sessionId);
     if (d.isSidechain || (d.type !== "user" && d.type !== "assistant")) return;
     const when = str(d.timestamp);
     let content = obj(d.message)?.content;
@@ -115,11 +115,15 @@ export function minute(at, timeZone = "UTC") {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }
 
-// one line, at most 60 characters, cut at a word where it can be
+const SPACES = new RegExp(`[${PYSPACE}]+`, "g");
+
+// one line, at most 60 characters (code points, so an emoji is never cut in half), cut at a
+// word where it can be
 function firstLine(text) {
-  const s = pyStrip(text.replace(/\s+/g, " "));
-  if (s.length <= 60) return s;
-  const cut = s.slice(0, 60);
+  const s = pyStrip(text.replace(SPACES, " "));
+  const cps = [...s];
+  if (cps.length <= 60) return s;
+  const cut = cps.slice(0, 60).join("");
   const space = cut.lastIndexOf(" ");
   return `${space > 30 ? cut.slice(0, space) : cut}…`;
 }
@@ -129,7 +133,7 @@ export function titleOf(session) {
   const named = pyStrip(session.title.replace(/[\r\n]+/g, " "));
   if (named) return named;
   const first = session.turns.find((t) => t.role === "user" && !t.text.startsWith("*(answering"));
-  return first ? firstLine(first.text) : "Untitled session";
+  return (first && firstLine(first.text)) || "Untitled session";
 }
 
 // One session ({ id, source, ...end()'s result }) → Markdown
@@ -147,8 +151,9 @@ export function render(session, { user = "User", assistant = "Claude", timeZone 
   return lines.join("\n");
 }
 
-// Sessions → { files: [{ name, text, id }], stats }. Sessions with no turn are left out
-// (counted apart: no prompt typed by a person, or a transcript too old to tell). File names:
+// Sessions → { files: [{ name, text, id }], stats }. A session with no prompt or answer from
+// the person is left out, its replies too (counted apart: no prompt typed by a person, such
+// as a scheduled run's, or a transcript too old to tell whose its prompts are). File names:
 // "YYYY-MM-DD Title.md" (the first turn's day); two that would share one (on a case-blind
 // disk too) are told apart by the first 8 characters of the session id, then a number.
 // Sessions are taken oldest first (then by id), so which one gets the suffix doesn't depend
@@ -160,7 +165,7 @@ export function plan(sessions, { json = false, ...opts } = {}) {
   const at = (s) => { const t = Date.parse(str(s.turns[0]?.at)); return Number.isNaN(t) ? Infinity : t; };
   const ordered = sessions.filter((s) => {
     stats.unparsed += s.unparsed;
-    if (s.turns.length) return true;
+    if (s.turns.some((t) => t.role === "user")) return true;
     if (s.origins) stats.noPrompt++; else stats.noOrigin++;
     return false;
   }).sort((a, b) => at(a) - at(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
