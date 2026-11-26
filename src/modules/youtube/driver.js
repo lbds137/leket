@@ -65,12 +65,17 @@ export async function driveYouTube(opts) {
     panel.style.transition = "";
     panel.style.opacity = "";
   }
-  // a run a newer one superseded keeps narrating into a line nobody sees: the panel is
-  // the newer run's now (runToken is set below, before the first say)
+  // this run's token: a newer run ("Save again") overwrites it, and from then on the tab
+  // and its panel are that run's. The token lives in the extension's isolated world,
+  // which every injection into this page shares
+  const runToken = String(Math.random());
+  window.__leketYouTubeRun = runToken;
+  const owned = () => window.__leketYouTubeRun === runToken;
+  // a run a newer one superseded keeps narrating into a line nobody sees
   const say = (text) => {
     const p = document.createElement("div");
     p.textContent = text;
-    if (window.__leketYouTubeRun === runToken) panel.appendChild(p);
+    if (owned()) panel.appendChild(p);
     return p;
   };
 
@@ -99,14 +104,11 @@ export async function driveYouTube(opts) {
 
   // why the run must stop early, or "": the time budget is spent; YouTube navigated
   // in-site to another video (autoplay, a recommendation clicked), so what loads now
-  // belongs to a different video than the title above; or a newer run ("Save again")
-  // took over this tab. The token lives in the extension's isolated world, which
-  // every injection into this page shares
-  const runToken = String(Math.random());
-  window.__leketYouTubeRun = runToken;
+  // belongs to a different video than the title above; or a newer run took over this
+  // tab (its token replaced runToken, above)
   let aborted = "";
   const stopReason = () => {
-    if (window.__leketYouTubeRun !== runToken) return "superseded";
+    if (!owned()) return "superseded";
     let v = "";
     try { v = new URL(location.href).searchParams.get("v") || ""; } catch { /* keep "" */ }
     if (v !== videoId) return "video-changed";
@@ -335,13 +337,13 @@ export async function driveYouTube(opts) {
   // asked for reduced motion
   const fadeOut = () => {
     setTimeout(() => {
-      if (window.__leketYouTubeRun !== runToken || !panel.isConnected) return;
+      if (!owned() || !panel.isConnected) return;
       let still = false;
       try { still = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { /* fade */ }
       if (still) { panel.remove(); return; }
       panel.style.transition = "opacity .6s";
       panel.style.opacity = "0";
-      setTimeout(() => { if (window.__leketYouTubeRun === runToken) panel.remove(); }, 700);
+      setTimeout(() => { if (owned()) panel.remove(); }, 700);
     }, 6000);
   };
   if (aborted === "superseded") {
