@@ -155,6 +155,8 @@ export function lineKeeper(keep = new RegExp(`${ESTIMATE.source}|${TOO_OLD.sourc
     push(chunk) {
       const lines = (partial + chunk).split(/\r\n|\r|\n/);
       partial = lines.pop();
+      // line 0 ends the line that was cut: when its match was recorded at the cut, the
+      // tail held here would record it a second time
       lines.forEach((l, i) => { if (!(i === 0 && hit) && keep.test(l)) kept += `${l}\n`; });
       if (lines.length) hit = false;
       if (partial.length > 65_536) {
@@ -296,7 +298,11 @@ export async function youtube(url, { out = ".", lang = "en", maxComments } = {})
   // fails at once rather than after a long comment fetch
   const dir = resolve(out);
   // the first folder this run made on the way to dir (mkdir returns it), if any: a run
-  // that ends with nothing saved removes those folders again, deepest first
+  // that ends with nothing saved removes those folders again, deepest first. Known
+  // limits, both rare and harmless to saved files: a second run sharing a new --out
+  // can find the folder gone if this one fails first while it is still empty (its save
+  // then reports the write error); and a run killed by a signal skips `finally`, so
+  // the folders it made stay.
   let made;
   const unmake = async () => {
     if (!made) return;

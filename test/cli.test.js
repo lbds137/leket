@@ -278,6 +278,53 @@ test("leket youtube: a run that saves nothing removes the folders it made for --
   }
 });
 
+// root ignores file modes, so the permission cases below can't fail a write there
+const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+test("leket youtube: a relative --out that saves nothing is removed against the cwd", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const r = spawnSync(process.execPath, [BIN, "youtube", VIDEO, "--out", join("rel", "new")], {
+      encoding: "utf8", cwd, env: { ...process.env, LEKET_YTDLP: FAKE, FAKE_YTDLP_MODE: "fail" },
+    });
+    assert.equal(r.status, 1);
+    assert.deepEqual(readdirSync(cwd), []);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube: files that can't be written (writePair saves none) exit 1 and remove the folder made", { skip: asRoot }, () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  const made = join(out, "made");
+  try {
+    const r = runBin(["youtube", VIDEO, "--out", made], { FAKE_YTDLP_CHMOD: made });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /couldn't write the files \(EACCES\); nothing saved/);
+    assert.deepEqual(readdirSync(out), [], "the empty read-only folder this run made is gone");
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube: a folder it made but can't write into fails before yt-dlp and is removed", { skip: asRoot }, () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  const args = join(out, "..", `${out.split("/").pop()}-args.json`);
+  try {
+    // umask 0277 makes the new folder r-x: mkdir succeeds and the writable check fails
+    const r = spawnSync("sh", ["-c", "umask 0277 && exec \"$0\" \"$@\"", process.execPath, BIN, "youtube", VIDEO, "--out", join(out, "new")], {
+      encoding: "utf8", env: { ...process.env, LEKET_YTDLP: FAKE, FAKE_YTDLP_ARGS: args },
+    });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /can't save into .*new \(EACCES\); nothing saved/);
+    assert.deepEqual(readdirSync(out), []);
+    assert.throws(() => readFileSync(args), /ENOENT/, "yt-dlp never ran");
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    rmSync(args, { force: true });
+  }
+});
+
 test("leket youtube saves and exits 3 when yt-dlp stops partway after writing the info", () => {
   const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
   try {

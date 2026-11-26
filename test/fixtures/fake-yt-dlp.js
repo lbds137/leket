@@ -5,11 +5,13 @@
 // way a yt-dlp without --js-runtimes does; partial writes the info and then exits 1;
 // kill writes the info and then dies by SIGTERM; null writes the JSON literal null;
 // playlist writes a playlist's info. FAKE_YTDLP_ARGS names a file to record argv in.
-// Every name and text below is invented.
-import { writeFileSync } from "node:fs";
+// FAKE_YTDLP_CHMOD names a folder made read-only (0555) first, so the CLI's own writes
+// there fail after yt-dlp succeeded. Every name and text below is invented.
+import { chmodSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 if (process.env.FAKE_YTDLP_ARGS) writeFileSync(process.env.FAKE_YTDLP_ARGS, JSON.stringify(args));
+if (process.env.FAKE_YTDLP_CHMOD) chmodSync(process.env.FAKE_YTDLP_CHMOD, 0o555);
 if (process.env.FAKE_YTDLP_MODE === "fail") {
   process.stderr.write("ERROR: [youtube] fake: Video unavailable\n");
   process.exit(1);
