@@ -144,7 +144,9 @@ const pathTo = (from, to) => {
   const a = from ? from.split("/") : [], b = to.split("/");
   let i = 0;
   while (i < a.length && i < b.length - 1 && a[i] === b[i]) i++;
-  return [...a.slice(i).map(() => ".."), ...b.slice(i)].map(encodeURIComponent).join("/");
+  // ( and ) too: encodeURIComponent keeps them, and an unbalanced one ends a Markdown link
+  const enc = (p) => encodeURIComponent(p).replace(/[()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return [...a.slice(i).map(() => ".."), ...b.slice(i)].map(enc).join("/");
 };
 
 // Every file to write: [{ folder, name, text, kind: "chat" | "other" | "canvas", id?, prompts? }]
@@ -184,7 +186,7 @@ export function plan({ rows, other: otherProducts = 0 }, {
   for (const e of rows) {
     const doc = canvasDoc(e);
     if (!doc) continue;
-    const base = safeTitle(`${day(e)} ${[...clean(e.title.replace(CANVAS, ""))].slice(0, 60).join("").trim()}`);
+    const base = safeTitle(`${day(e)} ${[...clean(e.title.replace(CANVAS, ""))].slice(0, 60).join("").trim() || "untitled"}`);
     let name = `${base}.md`;
     for (let k = 2; takenCanvas.has(name.toLowerCase()); k++) name = `${base} (${k}).md`;
     takenCanvas.add(name.toLowerCase());
