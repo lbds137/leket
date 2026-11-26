@@ -1,10 +1,10 @@
 ---
 id: TASK-32.5
 title: 'leket convert character-chat: character-chat site export to Markdown'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-26T11:27:00Z'
-updated_date: '2026-11-26T16:11:00Z'
+updated_date: '2026-11-26T16:28:00Z'
 labels:
   - convert
 dependencies: []
@@ -23,5 +23,11 @@ Row D: the converter only (conversations plus character cards); the toolbar modu
 <!-- AC:BEGIN -->
 - [x] #1 One .md per conversation plus a cards file
 - [x] #2 Unit tests on a synthetic fixture cover the format's edge cases the original handles
-- [ ] #3 The original's owning session is told it can retire its copy once this ships
+- [x] #3 The original's owning session is told it can retire its copy once this ships
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in #203 (0.11.0). AC3: Chats told 11-26 (invocation, deliberate differences, real-export counts).
+<!-- SECTION:NOTES:END -->
