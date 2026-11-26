@@ -114,3 +114,15 @@ test("cli: usage errors exit 2; an unreadable log exits 1 with nothing written",
   assert.match(r.stderr, /x\.html: no "Chatlog between … and …" heading .*; nothing written\./);
   assert.deepEqual(readdirSync(out), []);
 });
+
+test("review lows: an auto-response name holding ')'; \\r\\n; text before the first entry; a -# line; __proto__", () => {
+  const { entries } = parse(head() + "[23:59] Pat (away) (auto-response from Pat (away)) out<br/>\n");
+  assert.deepEqual([entries[0].who, entries[0].html], ["Pat (away)", "out"]);
+  const crlf = parse((head() + recv("23:58", "pixel42", "a<br>\nb")).replace(/\n/g, "\r\n"));
+  assert.deepEqual(crlf.entries.map((e) => e.html), ["a<br>\r\nb"]);
+  const r = plan([{ folder: "f", file: "a.html", text: `${head()}stray<br/>\n${recv("23:58", "__proto__", "-# not a header<br>\n# nor this<font>x</font>")}` }]);
+  assert.equal(r.stats.stray, 1);
+  assert.deepEqual(Object.entries(r.stats.senders), [["__proto__", 1]]);
+  assert.deepEqual({ ...r.stats.unknown }, { font: 1 });
+  assert.match(r.files[0].text, /^> -# __proto__ — .*\n> \\-# not a header\\\n> \\# nor thisx$/m);
+});

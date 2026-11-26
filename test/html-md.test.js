@@ -143,3 +143,10 @@ test("a slash ending an unquoted value is the value's; one after it or a quote c
   assert.equal(md("<a href=\"x\"/>t"), "[x](x)t");
   assert.equal(md("<b/>t"), "t");
 });
+
+test("an unquoted value runs to a space or the tag's end, = and / inside it its own", () => {
+  assert.equal(md("<a href=/>home</a>"), "[home](/)");
+  assert.equal(md("<a target=x href=http://v.example/watch?v=1&feature=r>v</a>"), "[v](http://v.example/watch?v=1&feature=r)");
+  assert.equal(md("<a href='x'/>t"), "[x](x)t");
+  assert.equal(md("<a b/>t"), "t");
+});

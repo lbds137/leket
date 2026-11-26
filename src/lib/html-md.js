@@ -33,19 +33,23 @@ const clean = (s) => decode(s).replace(/\u0000/g, REPLACEMENT);
 
 function attrsOf(s) {
   const out = Object.create(null);
-  for (const m of s.matchAll(/([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
+  // an unquoted value runs to a space or the tag's end, as browsers read it: "=" and "/"
+  // inside it are its own ("href=http://x.com/watch?v=1&b=2", "href=/")
+  for (const m of s.matchAll(/([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>][^\s>]*)))?/g)) {
     out[m[1].toLowerCase()] = clean(m[2] ?? m[3] ?? m[4] ?? "");
   }
   return out;
 }
 
-// HTML → a tree of { tag, attrs, children } and strings (text, entities decoded)
 // a tag's attributes end in "/" that closes it ("<span/>", "<a href=x />"), not a slash
-// that ends an unquoted value ("<a href=http://x.com/>" opens a link to http://x.com/)
+// that ends an unquoted value ("<a href=http://x.com/>" opens a link to http://x.com/,
+// "<a href=/>" one to /)
 function selfClosing(attrs) {
   const s = attrs.trimEnd();
-  return s.endsWith("/") && !/=\s*[^\s"'=<>`]+$/.test(s.slice(0, -1));
+  return s.endsWith("/") && !/=\s*(?:[^\s"'>][^\s>]*)?$/.test(s.slice(0, -1));
 }
+
+// HTML → a tree of { tag, attrs, children } and strings (text, entities decoded)
 
 export function parse(html) {
   const root = { tag: "#root", attrs: {}, children: [] };
