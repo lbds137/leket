@@ -39,20 +39,21 @@ test("driveYouTube's source references none of its module's other top-level name
   }
 });
 
-// Runs the driver against a page with no comments, no transcript segments and, unless
-// `button` is set, no transcript button either, on a fake clock that a sleep advances
-// at once. `now(clock)` may move the clock (a hook for the deadline race);
-// `href(clock)` is the address bar at each read.
-async function stubRun(opts, { now = () => {}, href, button = false }) {
+// Runs the driver against a page with no comments and, unless `button` is set, no
+// transcript button, on a fake clock that a sleep advances at once. `now(clock)` may
+// move the clock (a hook for the deadline race); `href(clock)` is the address bar at
+// each read; `segments(clock)` says whether one transcript segment shows.
+async function stubRun(opts, { now = () => {}, href, button = false, segments = () => false }) {
   let clock = 0;
   const el = () => ({ style: {}, setAttribute() {}, appendChild() {}, replaceChildren() {}, textContent: "" });
+  const seg = { querySelector: () => ({ textContent: "0:00 hello" }) };
   const document = {
     title: "Fake - YouTube",
     documentElement: { appendChild() {}, lang: "en", scrollHeight: 0 },
     getElementById: () => null,
     createElement: el,
     querySelector: (sel) => (button && /transcript-section-renderer button$/.test(sel) ? { click() {} } : null),
-    querySelectorAll: () => [],
+    querySelectorAll: (sel) => (sel === "transcript-segment-view-model" && segments(clock) ? [seg] : []),
   };
   const location = { get href() { return href(clock); } };
   const FakeDate = { now() { const t = clock; clock = now(t) ?? clock; return t; } };
@@ -95,5 +96,24 @@ test("the segments wait, too, is a stop when its end was the deadline the clock 
     button: true,
   });
   assert.equal(r.aborted, "time");
+  assert.equal(r.metadata.transcript_note, "Not read: the save stopped before the transcript loaded.");
+});
+
+test("a wait never sleeps past its own end, so a stop just after it doesn't mark it unread", async () => {
+  // the button wait ends at 1000, the run's deadline at 1200; sleeps of 333 would carry
+  // the last one to 1332, past the deadline, before the wait's last check
+  const r = await stubRun({ stepMs: 666, transcriptWaitMs: 1000, maxMs: 1200 }, { href: () => WATCH });
+  assert.equal(r.aborted, "time");
+  assert.equal(r.metadata.transcript_note, "YouTube shows no transcript for this video.");
+});
+
+test("segments that show up as the tab moves to another video are not read as this video's", async () => {
+  const moved = (clock) => clock >= 400;
+  const r = await stubRun({ stepMs: 400, transcriptWaitMs: 5000 }, {
+    href: (clock) => (moved(clock) ? "https://www.youtube.com/watch?v=other" : WATCH),
+    button: true,
+    segments: moved,
+  });
+  assert.equal(r.aborted, "video-changed");
   assert.equal(r.metadata.transcript_note, "Not read: the save stopped before the transcript loaded.");
 });

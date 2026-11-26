@@ -97,9 +97,9 @@ export function reportedTotal(log) {
 // fetch logs a line per page, and only the estimate and the too-old error are read back.
 // Lines end at \n or \r; an unended line over 64 KB keeps only its last 1 KB, and
 // its match, when it has one, is kept first. A cut line records one match at most:
-// its first, which is all the readers above use. A match that began more than 1 KB
-// before a cut is lost; neither pattern comes near that long. `keep` must not be a g
-// or y regex.
+// its first, which is all the readers above use. A match straddling a cut that began
+// more than 1 KB before it is lost; neither pattern comes near that long. `keep` must
+// not be a g or y regex.
 export function lineKeeper(keep = new RegExp(`${ESTIMATE.source}|${TOO_OLD.source}`)) {
   let partial = "";
   let kept = "";

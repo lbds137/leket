@@ -152,10 +152,12 @@ export async function driveYouTube(opts) {
     // stopped() is tested first in both waits, so `aborted` is set when a wait ended on
     // a stop, and not by a stop that came after it ended on its own. One edge: when the
     // wait's own bound was the run's deadline, the clock can cross it between the stop
-    // check and the bound check; that wait ended on the time budget, so it is a stop
+    // check and the bound check; that wait ended on the time budget, so it is a stop.
+    // A wait's sleeps never run past its own end, so its last check falls inside it
     const endedOnDeadline = (end) => end === deadline && Date.now() >= deadline && stopped();
+    const nap = (end) => sleep(Math.max(0, Math.min(stepMs / 2, end - Date.now())));
     while (!stopped() && !button && Date.now() < buttonEnd) {
-      await sleep(stepMs / 2);
+      await nap(buttonEnd);
       button = document.querySelector("ytd-video-description-transcript-section-renderer button");
     }
     if (!button) endedOnDeadline(buttonEnd);
@@ -166,9 +168,11 @@ export async function driveYouTube(opts) {
     } else if (!aborted) {
       button.click();
       const segEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
-      while (!stopped() && Date.now() < segEnd && readTranscript().length === 0) await sleep(stepMs / 2);
+      while (!stopped() && Date.now() < segEnd && readTranscript().length === 0) await nap(segEnd);
       if (readTranscript().length === 0) endedOnDeadline(segEnd);
-      transcript = readTranscript();
+      // after the tab moved or a newer run took over, what shows belongs to that: a time
+      // stop still keeps this video's segments
+      if (aborted !== "video-changed" && aborted !== "superseded") transcript = readTranscript();
       if (transcript.length === 0) {
         metadata.transcript_note = "The transcript panel never showed its segments within "
           + Math.round(transcriptWaitMs / 1000) + "s.";
