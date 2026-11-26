@@ -430,6 +430,13 @@ test("fetchImage refuses non-image content types, HTTP errors, oversized respons
     }),
     /^Error: not fetched: it redirects to another address$/,
   );
+  // Node's fetch (the CLI) hands back the 3xx itself, type "basic": refused the same way
+  await assert.rejects(
+    fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {
+      fetch: async () => new Response(null, { status: 302, headers: { location: "http://10.0.0.1/x" } }),
+    }),
+    /^Error: not fetched: it redirects to another address$/,
+  );
   // fetch throw
   await assert.rejects(
     fetchImage({ n: 1, u: "https://i.redd.it/a.png", ext: ".png" }, {

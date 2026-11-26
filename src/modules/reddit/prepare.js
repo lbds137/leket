@@ -108,7 +108,15 @@ export function isPrivateHost(hostname) {
   return !h.includes(".") || /(^|\.)(localhost|localdomain|home\.arpa)$|\.(local|internal|lan)$/.test(h);
 }
 
-export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
+// The extension's image fetch: fetchImageData's bytes as a blob URL the worker downloads.
+export async function fetchImage(row, opts) {
+  const { blob, name } = await fetchImageData(row, opts);
+  return { url: URL.createObjectURL(blob), name };
+}
+
+// One post image, fetched under the guards below: { blob, name }, name as the CLI numbers
+// it. Shared by the extension (fetchImage) and `leket reddit`, which writes the bytes.
+export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
   // The post author picks the image URL: a GET to a non-https or private host leaks the
   // saver's IP and pokes their network even though CORS hides the reply. Known limit: a
   // public name that resolves by DNS to a private address is not caught (an extension
@@ -148,6 +156,7 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
   } catch (e) {
     throw unreachable(e);
   }
+  // a browser hides a manual redirect as an opaque response; Node's fetch hands back the 3xx
   if (r.type === "opaqueredirect") throw new Error("not fetched: it redirects to another address");
   // a refused response's unread body is cancelled, so its connection closes now rather
   // than at the timeout
@@ -155,6 +164,7 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
     if (r.body && typeof r.body.cancel === "function") r.body.cancel().catch(() => {});
     return new Error(why);
   };
+  if (r.status >= 300 && r.status < 400) throw refuse("not fetched: it redirects to another address");
   if (!r.ok) throw refuse(`the server answered ${r.status}`);
   const rawType = (r.headers && typeof r.headers.get === "function" && r.headers.get("content-type")) || "";
   const ctype = rawType.split(";")[0].trim().toLowerCase();
@@ -184,7 +194,7 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
     chunks.push(value);
   }
   return {
-    url: URL.createObjectURL(new Blob(chunks, { type: ctype })),
+    blob: new Blob(chunks, { type: ctype }),
     name: imageFileName(n, ctype, ext, u),
   };
 }
