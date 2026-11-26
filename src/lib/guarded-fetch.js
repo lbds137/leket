@@ -66,7 +66,8 @@ export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(),
         else {
           const coding = String(res.headers["content-encoding"] || "identity").trim().toLowerCase();
           if (coding === "identity") body = Readable.toWeb(res);
-          else if (DECODERS[coding]) {
+          // own keys only: "constructor" is no decoder
+          else if (Object.hasOwn(DECODERS, coding)) {
             const decoded = res.pipe(DECODERS[coding]());
             // a reset upstream fails the read, as a damaged stream does; a reader that
             // stops early (cancel) closes the connection too, not only the decoder

@@ -110,7 +110,13 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
   let asked;
   const server = createServer(tls, (req, res) => {
     asked = req.headers;
-    if (req.url === "/gz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" }); res.end(gzipSync(Buffer.from([4, 5, 6]))); }
+    if (req.url === "/gz.png") {
+      const gz = gzipSync(Buffer.from([4, 5, 6]));
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip", "content-length": String(gz.length) });
+      res.end(gz);
+    }
+    // an encoding named like an Object.prototype property
+    else if (req.url === "/proto.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "constructor" }); res.end("??"); }
     else if (req.url === "/br.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "br" }); res.end(brotliCompressSync(Buffer.from([7, 8]))); }
     else if (req.url === "/zz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "zz" }); res.end("??"); }
     else { res.writeHead(200, { "content-type": "image/png" }); res.end(Buffer.from([1])); }
@@ -127,6 +133,9 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     const gz = await guardedFetch(`${base}/gz.png`, { lookup: direct, ca: tls.cert });
     assert.deepEqual(new Uint8Array(await gz.arrayBuffer()), new Uint8Array([4, 5, 6]));
     assert.equal(gz.headers.get("content-encoding"), null, "the headers describe the decoded bytes");
+    assert.equal(gz.headers.get("content-length"), null, "the compressed length isn't the decoded one");
+    await assert.rejects(guardedFetch(`${base}/proto.png`, { lookup: direct, ca: tls.cert }),
+      (e) => e.code === "EENCODING" && /encoded as constructor/.test(e.message));
     const br = await guardedFetch(`${base}/br.png`, { lookup: direct, ca: tls.cert });
     assert.deepEqual(new Uint8Array(await br.arrayBuffer()), new Uint8Array([7, 8]));
     await assert.rejects(guardedFetch(`${base}/zz.png`, { lookup: direct, ca: tls.cert }),
@@ -162,6 +171,27 @@ test("guardedFetch: cancelling a compressed answer mid-read closes the connectio
     await reader.cancel();
     const late = new Promise((res) => setTimeout(() => res("still open"), 5000).unref());
     assert.equal(await Promise.race([closed.then(() => "closed"), late]), "closed");
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+test("guardedFetch: a compressed answer that stalls fails the read when the signal aborts, as a plain one does", async () => {
+  const tls = certificate();
+  const server = createServer(tls, (req, res) => {
+    res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" });
+    // a gzip header and then nothing: the download stalls
+    res.write(Buffer.from([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
+  try {
+    const r = await guardedFetch(`https://img.example:${server.address().port}/gz.png`,
+      { lookup: direct, ca: tls.cert, signal: AbortSignal.timeout(300) });
+    const late = new Promise((res) => setTimeout(() => res("hung"), 5000).unref());
+    const read = r.arrayBuffer().then(() => "read", () => "failed");
+    assert.equal(await Promise.race([read, late]), "failed");
   } finally {
     server.closeAllConnections();
     server.close();

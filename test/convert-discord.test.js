@@ -4,7 +4,7 @@
 // test/fixtures/discord-saves.js.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -395,6 +395,32 @@ test("CLI: a folder that can't be made, and a file write that fails partway, say
   assert.equal(partway.status, 1);
   assert.match(partway.stderr, /couldn't write .*c-participants\.md .*; 2 of 4 files written/);
   assert.equal(partway.stdout.trim().split("\n").length, 2);
+});
+
+// leket with its stdout closed before it writes: a reader that stopped early
+const closedStdout = (args) => new Promise((res) => {
+  const child = spawn(process.execPath, [BIN, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.destroy();
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  child.on("close", (code) => res({ code, stderr }));
+});
+
+test("CLI: a closed stdout still lets every file be written (exit 141), and a real failure keeps its own code", async () => {
+  const dir = tmp();
+  const saves = channelSaves().map((s, i) => { const p = join(dir, `c${i}.json`); writeFileSync(p, JSON.stringify(s)); return p; });
+  const out = join(dir, "o");
+  const all = await closedStdout(["convert", "discord", ...saves, "--out", out, "--base", "c"]);
+  // stderr holds convert's usual summary line, no stack trace
+  assert.doesNotMatch(all.stderr, /Error|\n\s+at /);
+  assert.equal(all.code, 141);
+  assert.deepEqual(readdirSync(out).sort(), ["c-2025-01.md", "c-2025-02.md", "c-index.md", "c-participants.md"]);
+  // the third of four files is a folder already: the failure's 1, not the pipe's 141
+  const out2 = join(dir, "o2");
+  mkdirSync(join(out2, "c-participants.md"), { recursive: true });
+  const partway = await closedStdout(["convert", "discord", ...saves, "--out", out2, "--base", "c"]);
+  assert.match(partway.stderr, /couldn't write .*c-participants\.md .*; 2 of 4 files written/);
+  assert.equal(partway.code, 1);
 });
 
 test("a save with no usable newer time adds no span, so the gap check can't crash on it", () => {
