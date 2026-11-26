@@ -60,6 +60,31 @@ test("a header whose date can't be read stops with its line number", () => {
   assert.throws(() => parse("[Feb 30, 2025 10:00:00] <Pat> hi\n"), /line 1: can't read the date/);
   assert.throws(() => parse("[Feb 03, 2025 24:00:00] <Pat> hi\n"), /line 1/);
   assert.throws(() => plan([{ file: "x.txt", text: "[Feb 30, 2025 10:00:00] <Pat> hi\n" }]), /^Error: x\.txt: line 1/);
+  // any month word is a header (and refused), not more text of the message before
+  for (const mon of ["März", "janv.", "3月", `Ma${String.fromCharCode(0x308)}r`]) {
+    assert.throws(() => parse(`[Jan 02, 2025 10:00:00] <Pat> hi\n[${mon} 03, 2025 10:00:00] <Pat> x\n`), /line 2: can't read/, mon);
+  }
+  assert.throws(() => parse("[Jan 02, 0025 10:00:00] <Pat> hi\n"), /line 1/, "a year below 100 isn't read as 19xx");
+  assert.throws(() => parse("[Jan 00, 2025 10:00:00] <Pat> hi\n"), /line 1/);
+  assert.throws(() => parse("[Jan 02, 2025 10:60:00] <Pat> hi\n"), /line 1/);
+});
+
+test("a name holding > stays whole; a *** line is a file only with sent file, else an event", () => {
+  const { entries, messages, events } = parse([
+    "[Jan 02, 2025 10:00:00] <A->B> hello",
+    "[Jan 02, 2025 10:00:01] *** <A->B> sent file \"x.jpg\"",
+    "[Jan 02, 2025 10:00:02] *** <Sam> changed their profile name.",
+    "[Jan 02, 2025 10:00:03] <Pat>",
+  ].join("\n"));
+  assert.deepEqual(entries.map(({ who, event, lines }) => [who, event, lines]), [
+    ["A->B", false, ["hello"]],
+    ["A->B", false, ["[sent file \"x.jpg\"]"]],
+    [null, true, ["[<Sam> changed their profile name.]"]],
+    ["Pat", false, [""]],
+  ]);
+  assert.deepEqual([messages, events], [3, 1]);
+  const ps = String.fromCharCode(0x2029);
+  assert.deepEqual(parse(`[Jan 02, 2025 10:00:00] <Pat> a${ps}b\n`).entries[0].lines, [`a${ps}b`]);
 });
 
 test("names: --name's label, else the first word; an empty name is shown as such", () => {
@@ -108,8 +133,12 @@ test("cli: --title and --base with one export", () => {
 
 test("cli: usage errors exit 2, an unreadable export exits 1 with nothing written", () => {
   const out = tmp();
+  const two = tmp();
+  writeFileSync(join(two, "A (_id1).txt"), "[Jan 02, 2025 10:00:00] <A> hi\n");
+  writeFileSync(join(two, "B (_id2).txt"), "[Jan 02, 2025 10:00:00] <B> hey\n");
   for (const [args, msg] of [
-    [[FIXTURE, FIXTURE, "--title", "x"], /--title goes with one export/],
+    [[two, "--title", "x"], /--title goes with one export .*; 2 were given/],
+    [[two, "--base", "x"], /--base goes with one export/],
     [[FIXTURE, "--base", "a/b"], /--base takes a file name/],
     [[FIXTURE, "--name", "Sam"], /--name takes NAME=LABEL/],
     [[FIXTURE, "--name", "Sam= "], /takes a one-line label/],
