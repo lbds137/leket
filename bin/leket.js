@@ -35,7 +35,7 @@ import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
 import { REDDIT_IMAGES_CAP_MB, REDDIT_JSON_CAP_MB, REDDIT_MAX_IMAGES } from "../src/lib/limits.js";
 import { images as redditImages, postOf, render as renderReddit } from "../src/modules/reddit/md.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
-import { guardedFetch } from "../src/lib/guarded-fetch.js";
+import { guardedFetch, LEKET_UA } from "../src/lib/guarded-fetch.js";
 
 const { MAX_STRING_LENGTH } = bufferConstants;
 // a picture an earlier `leket reddit` saved: its number and one of imageFileName's extensions
@@ -409,8 +409,9 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
     read = [];
     for (const p of paths) read.push(await readDiscordSave(p));
     // the default base is the save's own name, from inside a zip: --base's rule applies to
-    // it too, or a name like ..\..\x would write outside --out on Windows
-    if (!base && /[/\\]/.test(read[0].name)) {
+    // it too, or a name like ..\..\x would write outside --out on Windows (and a:x into an
+    // NTFS alternate stream of a, or C:x onto drive C)
+    if (!base && /[/\\:]/.test(read[0].name)) {
       throw new Error(`the save in ${paths[0]} is named ${shown(JSON.stringify(read[0].name))}, which isn't a file name; give --base NAME`);
     }
     if (voicePath) {
@@ -482,7 +483,7 @@ async function convertMain(rest) {
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   if (v.by !== undefined && !["none", "year", "month"].includes(v.by)) return fail("--by takes none, year or month");
-  if (v.base !== undefined && (!v.base || /[/\\]/.test(v.base))) return fail("--base takes a file name, not a path");
+  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
   if (v.tz !== undefined) {
     try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
   }
@@ -497,7 +498,6 @@ async function convertMain(rest) {
 
 // --- leket reddit
 
-const REDDIT_UA = "leket (personal archiving; https://github.com/lbds137/leket)";
 const REDDIT_HOST = /^((www|old|new|np|m|sh|i)\.)?reddit\.com$|^redd\.it$/;
 
 // A reddit address as an https URL, or null: reddit's own hosts only, on the default
@@ -527,7 +527,7 @@ async function redditGet(start, doFetch, { stopAtPost = false } = {}) {
   for (let hop = 0; hop <= 5; hop++) {
     let r;
     try {
-      r = await doFetch(u.href, { redirect: "manual", headers: { "user-agent": REDDIT_UA }, signal: AbortSignal.timeout(60_000) });
+      r = await doFetch(u.href, { redirect: "manual", headers: { "user-agent": LEKET_UA }, signal: AbortSignal.timeout(60_000) });
     } catch (e) {
       throw new Error(`couldn't reach reddit (${(e && e.message) || e})`);
     }
@@ -628,12 +628,14 @@ export async function saveRedditPost(data, { out, file, fetch: doFetch = guarded
     dest = join(out ?? ".", `reddit-${p.id}.md`);
   }
   const folder = `${dest.replace(/\.md$/i, "")}-images`;
-  // an earlier save's pictures, by number: one this run saves again under another
-  // extension (01.jpg now 01.png) is replaced; one this run couldn't fetch is kept (it
-  // may be the only copy left) and stderr says so
+  // an earlier save's pictures, by number in imageFileName's exact form (01, not 1 or
+  // 001): one this run saves again under another extension (01.jpg now 01.png) is
+  // replaced once the .md that links the new one is written; one this run couldn't
+  // fetch is kept (it may be the only copy left) and stderr says so
   let earlier = [];
   try { earlier = (await readdir(folder)).filter((f) => SAVED_IMAGE.test(f)); } catch { /* no folder yet */ }
-  const earlierOf = (n) => earlier.filter((f) => Number(SAVED_IMAGE.exec(f)[1]) === n);
+  const earlierOf = (n) => earlier.filter((f) => SAVED_IMAGE.exec(f)[1] === String(n).padStart(2, "0"));
+  const superseded = [];
   const saved = {};
   let failed = 0, fetched = 0, bytes = 0;
   for (const [n, u, , ext] of redditImages(p)) {
@@ -647,12 +649,7 @@ export async function saveRedditPost(data, { out, file, fetch: doFetch = guarded
       await mkdir(folder, { recursive: true });
       await writeFile(join(folder, name), Buffer.from(await blob.arrayBuffer()));
       saved[n] = name;
-      for (const old of earlierOf(n)) {
-        if (old !== name) {
-          await rm(join(folder, old), { force: true })
-            .catch((e) => say.err(`leket: couldn't remove ${old}, an earlier save's image ${n} (${shown(e.message)})\n`));
-        }
-      }
+      for (const old of earlierOf(n)) if (old !== name) superseded.push([n, old]);
     } catch (e) {
       failed++;
       const kept = earlierOf(n);
@@ -668,10 +665,17 @@ export async function saveRedditPost(data, { out, file, fetch: doFetch = guarded
     say.err(`leket: couldn't write ${dest} (${shown(e.message)})${Object.keys(saved).length ? `; the images saved in ${folder} stay` : ""}.\n`);
     return 1;
   }
+  // only now: had the .md failed, the earlier one still links these
+  for (const [n, old] of superseded) {
+    await rm(join(folder, old), { force: true })
+      .catch((e) => say.err(`leket: couldn't remove ${old}, an earlier save's image ${n} (${shown(e.message)})\n`));
+  }
   say.out(`${dest}\n`);
   return failed ? 3 : 0;
 }
 
+// `fetch` reaches the post's JSON only; images always go through saveRedditPost's own
+// default, guardedFetch, so the DNS guard can't be swapped out from here
 async function redditMain(args, { fetch: doFetch = fetch } = {}) {
   let parsed;
   try {
@@ -749,12 +753,16 @@ export async function main(argv) {
 const invokedAs = (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href; } catch { return ""; } })();
 if (import.meta.url === invokedAs) {
   // a reader that stops early (leket reddit --file - | head) closes the pipe: stop
-  // quietly with 141, as a program killed by SIGPIPE does, instead of a stack trace
+  // quietly with 141, as a program killed by SIGPIPE does, instead of a stack trace. It
+  // ends as usual rather than by process.exit, so cleanup in finally blocks (youtube's
+  // temporary folder) still runs; writes after the close are dropped.
+  let piped = false;
   process.stdout.on("error", (e) => {
-    if (e.code !== "EPIPE") throw e;
-    process.exit(141);
+    if (e.code !== "EPIPE" && !piped) throw e;
+    piped = true;
+    process.exitCode = 141;
   });
-  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => {
+  main(process.argv.slice(2)).then((code) => { process.exitCode = piped ? 141 : code; }, (e) => {
     process.stderr.write(`leket: ${(e && e.stack) || e}\n`);
     process.exitCode = 1;
   });

@@ -121,9 +121,9 @@ export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } =
   // saver's IP and pokes their network even though CORS hides the reply. Known limit in
   // the extension: a public name that resolves by DNS to a private address is not caught
   // (an extension can't resolve names before fetching); the CLI passes guardedFetch
-  // (src/lib/guarded-fetch.js), whose lookup refuses such an answer. Redirects are not followed: the next hop could be
-  // any scheme or host, and fetch can't show it before sending the request, so an image
-  // behind a redirect keeps its remote link.
+  // (src/lib/guarded-fetch.js), whose lookup refuses such an answer. Redirects are not
+  // followed: the next hop could be any scheme or host, and fetch can't show it before
+  // sending the request, so an image behind a redirect keeps its remote link.
   let parsed;
   try {
     parsed = new URL(u);
@@ -155,8 +155,9 @@ export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } =
   try {
     r = await doFetch(parsed.href, { credentials: "omit", redirect: "manual", signal: AbortSignal.timeout(60_000) });
   } catch (e) {
-    // guardedFetch's lookup refusal is a reason of its own, not a network failure
-    if (e && e.code === "EPRIVATEADDR") throw new Error(e.message);
+    // guardedFetch's refusals (a private DNS answer, an encoding it can't decode) are
+    // reasons of their own, not network failures
+    if (e && (e.code === "EPRIVATEADDR" || e.code === "EENCODING")) throw new Error(e.message);
     throw unreachable(e);
   }
   // a browser hides a manual redirect as an opaque response; Node's fetch hands back the 3xx

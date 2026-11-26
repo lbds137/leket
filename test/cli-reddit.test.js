@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { shown } from "../src/lib/shown.js";
 import { render } from "../src/modules/reddit/md.js";
 import { fetchRedditPost, redditPostId, redditUrl, saveRedditPost } from "../bin/leket.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
@@ -236,6 +237,44 @@ test("a re-save replaces an image saved under another extension, keeps one it co
   assert.equal(r.code, 3, r.stderr);
   assert.deepEqual(readdirSync(folder).sort(), ["01.png", "02.jpg", "1.txt", "notes.txt"]);
   assert.match(r.stderr, /couldn't save image 2 \(the server answered 404\); the \.md links https:\/\/i\.redd\.it\/2\.png; 02\.jpg from an earlier save stays in /);
+});
+
+// --- the #198 review lows ---
+
+test("a re-save matches an earlier image by imageFileName's exact name (01, not 1 or 001) and says when it can't remove one", async () => {
+  const dir = tmp();
+  const folder = join(dir, "reddit-abc123-images");
+  mkdirSync(folder);
+  for (const f of ["001.jpg", "1.jpg"]) writeFileSync(join(folder, f), "not ours");
+  // a non-empty folder named like image 1: rm without recursive can't remove it
+  mkdirSync(join(folder, "01.jpg"));
+  writeFileSync(join(folder, "01.jpg", "inside"), "x");
+  const fetch = async () => new Response(png, { headers: { "content-type": "image/png" } });
+  const r = await captured(gallery(1), { out: dir, fetch });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(readdirSync(folder).sort(), ["001.jpg", "01.jpg", "01.png", "1.jpg"]);
+  assert.match(r.stderr, /^leket: couldn't remove 01\.jpg, an earlier save's image 1 \(/);
+});
+
+test("a re-save whose .md can't be written leaves the earlier images the old .md links", async () => {
+  const dir = tmp();
+  const folder = join(dir, "reddit-abc123-images");
+  mkdirSync(folder);
+  writeFileSync(join(folder, "01.jpg"), "old");
+  // a folder where the .md goes: the write fails after the images are fetched
+  mkdirSync(join(dir, "reddit-abc123.md"));
+  const fetch = async () => new Response(png, { headers: { "content-type": "image/png" } });
+  const r = await captured(gallery(1), { out: dir, fetch });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /couldn't write .*reddit-abc123\.md .*; the images saved in .* stay/);
+  assert.deepEqual(readdirSync(folder).sort(), ["01.jpg", "01.png"]);
+});
+
+test("shown escapes the bidi controls and Unicode line separators too; other text passes", () => {
+  const u = (...cs) => String.fromCharCode(...cs);
+  const bs = "\\";
+  assert.equal(shown(`a${u(0x202e)}b${u(0x2066)}c${u(0x2028)}d${u(0x200f)}e\x1b`), `a${bs}u202eb${bs}u2066c${bs}u2028d${bs}u200fe${bs}x1b`);
+  assert.equal(shown("café שלום"), "café שלום");
 });
 
 test("caps: past the image count the rest link out unfetched; past the total size an image isn't kept", async () => {

@@ -7,7 +7,8 @@ collector reads the conversation from the open Discord tab; the export tab fetch
 attachments and builds the zip. `bin/leket.js` is the command-line side (YouTube via yt-dlp
 so far); it shares its output builders with the extension (`src/modules/youtube/extract.js`).
 
-- Tests: `npm test` (node --test; the zip and build tests shell out to python3 for the zip check).
+- Tests: `npm test` (node --test; the zip and build tests shell out to python3 for the zip check,
+  and the guarded-fetch test to openssl for a throwaway certificate).
 - Smoke: `npm run smoke` must be green before pushing any change to `src/background.js`, the popup,
   an offscreen document, an export/download path or a module's launch — the unit tests stub
   `chrome.*` and can't see wiring breaks. A new flow of that kind adds a scenario to
