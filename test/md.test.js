@@ -673,10 +673,16 @@ test("flair keeps readable text raw: parentheses and intraword underscores", () 
     // whole code points: astral letters, decomposed accents and Devanagari vowel signs are
     // intraword; an emoji is punctuation to CommonMark, so its _ stays escaped
     ["𝐀_𝐁", "(𝐀_𝐁) · 5 points"],
-    ["café_ünder", "(café_ünder) · 5 points"],
+    ["cafe\u0301_u\u0308nder", "(cafe\u0301_u\u0308nder) · 5 points"],
     ["हिंदी_भाषा", "(हिंदी_भाषा) · 5 points"],
     ["😀_😀", "(😀\\_😀) · 5 points"],
+    // a zero-width joiner is not a letter, so its _ is escaped (conservative); a variation
+    // selector is a mark, so it stays intraword
+    ["a\u200D_b", "(a\u200D\\_b) · 5 points"],
+    ["a\uFE0F_b", "(a\uFE0F_b) · 5 points"],
   ];
+  // an editor that normalizes to NFC would make the decomposed case a copy of the precomposed one
+  assert.ok(cases.some(([f]) => f !== f.normalize("NFC")), "the decomposed case is still decomposed");
   for (const [flair, want] of cases) {
     const md = render(postPage({}, [comment({ author_flair_text: flair })]));
     assert.ok(md.includes(want), md);
