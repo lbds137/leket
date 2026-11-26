@@ -397,7 +397,13 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
   try {
     read = [];
     for (const p of paths) read.push(await readDiscordSave(p));
-    if (voicePath) voice = JSON.parse(await readFile(voicePath, "utf8"));
+    if (voicePath) {
+      try { voice = JSON.parse(await readFile(voicePath, "utf8")); } catch (e) { throw new Error(`--voice ${voicePath}: ${e.message}`); }
+      const shape = `--voice ${voicePath} isn't a voice map (a JSON object of "<message id>_<n>": {"duration": seconds, "text": "..."})`;
+      if (!voice || typeof voice !== "object" || Array.isArray(voice)) throw new Error(shape);
+      const odd = Object.entries(voice).find(([, v]) => !v || typeof v !== "object" || !Number.isFinite(v.duration));
+      if (odd) throw new Error(`${shape}: ${odd[0]} has no duration in seconds`);
+    }
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
@@ -412,9 +418,14 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
   }
-  let written = 0;
   try {
     await mkdir(out, { recursive: true });
+  } catch (e) {
+    process.stderr.write(`leket: couldn't make the folder ${out} (${e.message}); nothing written.\n`);
+    return 1;
+  }
+  let written = 0;
+  try {
     for (const f of files) {
       const p = join(out, f.name);
       await writeFile(p, f.text);
@@ -426,7 +437,8 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
     return 1;
   }
   const start = conv.reachedStart ? "from its start" : conv.reachedSince ? `from ${conv.reachedSince}, as asked` : "PARTIAL: the start was not reached";
-  process.stderr.write(`leket: ${conv.messages.length} messages from ${conv.saves} save(s), ${start}; times in ${timeZone}.\n`);
+  const gaps = conv.gaps.length ? `; GAPS: ${conv.gaps.length} stretch(es) no save covers (the Source line names them)` : "";
+  process.stderr.write(`leket: ${conv.messages.length} messages from ${conv.saves} save(s), ${start}${gaps}; times in ${timeZone}.\n`);
   return 0;
 }
 

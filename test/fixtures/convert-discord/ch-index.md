@@ -1,6 +1,6 @@
 # General
 
-Source: 2 save(s) of channel 700 in Test Server, exported 2025-02-01 to 2025-02-03; PARTIAL: the start of the channel was not reached, so older messages are missing.
+Source: 2 save(s) of channel 700 in Test Server, exported 2025-02-01 to 2025-02-03; PARTIAL: the start of the channel was not reached, so older messages are missing; GAP: no save covers 2025-02-02 09:00 UTC to 2025-02-03 09:00 UTC, so messages from then may be missing.
 
 7 messages, 2025-01-31 to 2025-02-03, one file per month; `ch-participants.md` lists every author. Rebuild with `leket convert discord`.
 

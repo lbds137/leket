@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -219,4 +219,73 @@ test("CLI: usage errors exit 2", () => {
   const h = leket(["convert", "--help"]);
   assert.equal(h.status, 0);
   assert.match(h.stdout, /--voice FILE/);
+});
+
+// --- carried #196 lows: gaps, the index label, refusals that name their cause
+
+test("gaps: a stretch no save covers is named in the Source line; overlapping saves have none", () => {
+  assert.deepEqual(mergeSaves(dmSaves()).gaps, [], "the second save reached the start, so it covers the first's span");
+  const [a, b] = channelSaves();
+  assert.deepEqual(mergeSaves([a, b]).gaps, [{ from: "2025-02-02T09:00:00.000Z", to: "2025-02-03T09:00:00.000Z" }]);
+  // the later save reaching back past the earlier one's newest message closes the gap
+  const back = { ...b, messages: [...b.messages, { ...a.messages[5], id: "2050", datetime: "2025-02-02T08:00:00.000Z" }] };
+  assert.deepEqual(mergeSaves([a, back]).gaps, []);
+  // a save asked to stop at a day covers back to that day
+  assert.deepEqual(mergeSaves([a, { ...b, reached_since: "2025-02-01" }]).gaps, []);
+  const md = render(mergeSaves([b, a]), { base: "c", by: "none", timeZone: "UTC" })[0].text;
+  assert.match(md, /; GAP: no save covers 2025-02-02 09:00 UTC to 2025-02-03 09:00 UTC, so messages from then may be missing\./);
+});
+
+test("a message id that isn't a Discord id is refused by name, not by BigInt", () => {
+  const [d] = dmSaves();
+  assert.throws(() => mergeSaves([{ ...d, messages: [...d.messages, { ...d.messages[0], id: "abc" }] }]), /save 1 has a message whose id \("abc"\) isn't a Discord id/);
+  assert.throws(() => mergeSaves([{ ...d, messages: [null] }]), /id \(null\) isn't a Discord id/);
+});
+
+test("the --by none index row escapes the title's | and ] so the cell and link hold", () => {
+  const [a] = channelSaves();
+  const idx = render(mergeSaves([a]), { base: "c", by: "none", title: "a | b] [c", timeZone: "UTC" }).at(-1).text;
+  assert.ok(idx.includes("| [a \\| b\\] \\[c](c.md) | 6 |"), idx);
+});
+
+test("CLI: a bad --voice map, a save that isn't JSON or a bad id write nothing and say why", () => {
+  const dir = tmp(), out = join(dir, "o");
+  const save = join(dir, "s.json");
+  writeFileSync(save, JSON.stringify(dmSaves()[0]));
+  const voice = (name, text) => { const p = join(dir, name); writeFileSync(p, text); return p; };
+  for (const [v, msg] of [
+    [voice("arr.json", "[1]"), /isn't a voice map/],
+    [voice("odd.json", JSON.stringify({ "105_0": { text: "no duration" } })), /isn't a voice map .*: 105_0 has no duration in seconds/],
+    [voice("bad.json", "{"), /--voice .*bad\.json: .*JSON/],
+  ]) {
+    const r = leket(["convert", "discord", save, "--out", out, "--voice", v]);
+    assert.equal(r.status, 1, v);
+    assert.match(r.stderr, msg, v);
+    assert.match(r.stderr, /nothing written/, v);
+  }
+  const junk = voice("junk.json", "<html>");
+  const notJson = leket(["convert", "discord", junk, "--out", out]);
+  assert.equal(notJson.status, 1);
+  assert.match(notJson.stderr, /JSON.*nothing written/);
+  const badId = voice("badid.json", JSON.stringify({ ...dmSaves()[0], messages: [{ id: "x1", datetime: "2025-01-01T00:00:00Z" }] }));
+  const r = leket(["convert", "discord", badId, "--out", out]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /isn't a Discord id; nothing written/);
+  assert.ok(!readdirSync(dir).includes("o"), "nothing written");
+});
+
+test("CLI: a folder that can't be made, and a file write that fails partway, say which", () => {
+  const dir = tmp();
+  const saves = channelSaves().map((s, i) => { const p = join(dir, `c${i}.json`); writeFileSync(p, JSON.stringify(s)); return p; });
+  writeFileSync(join(dir, "afile"), "");
+  const blocked = leket(["convert", "discord", ...saves, "--out", join(dir, "afile", "o"), "--base", "c"]);
+  assert.equal(blocked.status, 1);
+  assert.match(blocked.stderr, /couldn't make the folder .*afile\/o .*; nothing written/);
+  // the third of four files is a folder already: two written, then the failure names it
+  const out = join(dir, "o");
+  mkdirSync(join(out, "c-participants.md"), { recursive: true });
+  const partway = leket(["convert", "discord", ...saves, "--out", out, "--base", "c"]);
+  assert.equal(partway.status, 1);
+  assert.match(partway.stderr, /couldn't write .*c-participants\.md .*; 2 of 4 files written/);
+  assert.equal(partway.stdout.trim().split("\n").length, 2);
 });
