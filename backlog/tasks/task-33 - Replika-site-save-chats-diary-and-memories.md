@@ -39,7 +39,6 @@ Step 3, the live run, is hands-off for the account owner: signing in once, in th
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-<!-- SECTION:NOTES:BEGIN -->
 Step 1, prior-art evaluation (2026-11-25). The licenses come from the AMO API (`/api/v5/addons/addon/<slug>/`); behaviour comes from reading each add-on's XPI (downloaded to session scratch, not kept).
 
 | | Firefox "Replika Chat Export" (v1.0.0, 2024-10-15) | Firefox "replika-export" (v12025.1.19, 2025-01-20) | Chrome "Replika Export: Chat, Diary, Memory" |
@@ -88,7 +87,7 @@ Step 2 follow-ups for the live run (Step 3):
   - Memory: the web app calls `GET my.replika.com/api/mobile/1.5/memory/v3/` (`customer_facts, robot_facts, persons`), plus `memory/v3/unstructured_fact_categories` and `memory/relations`, which look like catalogs (not confirmed). From the page, the `my.replika.ai` memory URLs failed CORS; from the extension, untested.
   - Shapes (second probe): `diaries?limit=N&until=D` answers the days strictly before D, newest first. `diaries/<date>` answers `{date, entries[{id, diary_id, text, timestamp, read, image_count, images[{url, blurred, is_romantic}]}]}`; image urls are on `s3-us-west-1.amazonaws.com` (signed or not: untested). memory/v3 facts carry `id, text, creation_timestamp, read, is_user_edited` (+ `category_id` on customer facts).
   - Loading the unpacked extension into the agent Chrome needs deck-agent-chrome support (the CLI's Extensions category is off and Chrome lacks `--enable-unsafe-extension-debugging`): asked of Deck.
-- Version: Step 2 (PR #173) leaves manifest/package at 0.4.0; the Step 3 PR that completes the module bumps to 0.5.0 with its release notes (as 0.4.0 did for Messenger, 48cf7ba).<!-- SECTION:NOTES:END -->
+- Version: Step 2 (PR #173) leaves manifest/package at 0.4.0; the Step 3 PR that completes the module bumps to 0.5.0 with its release notes (as 0.4.0 did for Messenger, 48cf7ba).
 
 - PR #175 (merged 4ef2a51) review lows, for the live-run PR:
   - (1) `counts.diary` counts days, but the end line says "diary entries". Count the entries across the day records (Chats asked for entry counts), or label it as days.
