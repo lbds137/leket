@@ -4,7 +4,7 @@ title: 'YouTube module: PR #179 review lows'
 status: To Do
 assignee: []
 created_date: '2026-11-26T03:43:00Z'
-updated_date: '2026-11-26T09:09:00Z'
+updated_date: '2026-11-26T09:17:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -31,4 +31,6 @@ Council review (openai/gpt-5.5; agy at its week cap, z.ai never reviews Claude w
 #191 merged (claude-review PASS, one low: pending overlay promise could be an unhandled rejection; fixed in overlayDone with a no-op catch). Finding 1, Lila 11-26 picked 'Transcript: not read': when a stop cuts the transcript wait, the overlay says 'Transcript: not read (the save stopped).' and transcript_note 'Not read: the save stopped before the transcript loaded.'; also found in the new run: after a stop the comments/replies phases still printed their opening lines though their loops never ran, now gated on aborted. New smoke youtube-moves (no transcript section, pushState mid-wait) covers the video-changed stop, which closes live-check (d) for video-changed (superseded mid-run still has no scenario). Red-first: main's driver fails youtube-moves's overlay check. 0.6.7.
 
 Gemini review (gemini-4-argon-high, cross-family) of 480f177: PASS, 2 nits, both decided and fixed: stopped() is sticky (returns !!aborted, so a tab that moved away and back no longer runs the reply clicks for a discarded result), and stops are checked directly at the transcript note and both narration gates and first in the comments-mount loop (a stop in a wait's final slice was short-circuited unrecorded). The sticky path is code-read only: the smoke can't place a move-and-return between the driver's noticing and its next gate deterministically.
+
+#192 merged (0.6.7; claude-review PASS, 3 lows). (1) the post-wait stopped() call could label a wait that ended on its own as 'not read (stopped)': fixed in 0.6.8 (stopped() first in both wait conditions, post-hoc call removed, no transcript click after a stop). (2) a saved-file test of the time-stop transcript note: ruled out on merit, the path is unreachable as shipped (page.js:71 passes no opts, so maxMs is the fixed 15 min while the transcript waits end ~30 s in); revisit only if page.js ever passes a budget. (3) sticky path code-read only, as recorded above.
 <!-- SECTION:NOTES:END -->

@@ -149,17 +149,21 @@ export async function driveYouTube(opts) {
     if (expand) expand.click();
     const buttonEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
     let button = document.querySelector("ytd-video-description-transcript-section-renderer button");
-    while (!button && Date.now() < buttonEnd && !stopped()) {
+    // stopped() is tested first in both waits, so `aborted` is set exactly when a wait
+    // ended on a stop, and not by a stop that came after it ended on its own
+    while (!stopped() && !button && Date.now() < buttonEnd) {
       await sleep(stepMs / 2);
       button = document.querySelector("ytd-video-description-transcript-section-renderer button");
     }
-    if (!button) {
+    if (aborted) {
+      // the note and the overlay line below say it was not read
+    } else if (!button) {
       // the description offers no transcript section: some videos have none at all
       metadata.transcript_note = "YouTube shows no transcript for this video.";
     } else {
       button.click();
       const segEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
-      while (Date.now() < segEnd && readTranscript().length === 0 && !stopped()) await sleep(stepMs / 2);
+      while (!stopped() && Date.now() < segEnd && readTranscript().length === 0) await sleep(stepMs / 2);
       transcript = readTranscript();
       if (transcript.length === 0) {
         metadata.transcript_note = "The transcript panel never showed its segments within "
@@ -167,8 +171,6 @@ export async function driveYouTube(opts) {
       }
     }
   }
-  // the waits above test stopped() last, so a stop in their final slice can go unrecorded
-  stopped();
   // the panel shows the language YouTube chose for this viewer and has no picker
   if (transcript.length > 0) {
     metadata.transcript_note = "As YouTube's transcript panel showed it; the language is YouTube's "
