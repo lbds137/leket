@@ -261,6 +261,12 @@ const SMOKE_REPLIKA_IMG = "https://s3-us-west-1.amazonaws.com/replika-content-im
 const SMOKE_REPLIKA_STRAY = "https://s3-us-west-1.amazonaws.com/someone-elses-bucket/stray.png?sig=smoke-sig";
 const SMOKE_REPLIKA_MOVED = "https://s3-us-west-1.amazonaws.com/replika-content-images/moved.png?sig=smoke-sig";
 const SMOKE_REPLIKA_MOVED_TO = "https://s3-us-west-1.amazonaws.com/replika-content-images/moved-to.png?sig=smoke-sig";
+const SMOKE_REPLIKA_STRAY_RAW = "https://images.example.org/stray-raw.png";
+const SMOKE_REPLIKA_MOVED_RAW = "https://images.example.org/moved-raw.png";
+const SMOKE_REPLIKA_BIG = "https://s3-us-west-1.amazonaws.com/replika-content-images/big.png?sig=smoke-sig";
+const SMOKE_REPLIKA_BIG_RAW = "https://images.example.org/big-raw.png";
+const SMOKE_REPLIKA_SIGNS = new Map([[SMOKE_REPLIKA_STRAY_RAW, SMOKE_REPLIKA_STRAY], [SMOKE_REPLIKA_MOVED_RAW, SMOKE_REPLIKA_MOVED],
+  [SMOKE_REPLIKA_BIG_RAW, SMOKE_REPLIKA_BIG]]);
 const REPLIKA_MEM_15 = "https://my.replika.com/api/mobile/1.5/memory/v3/";
 const replikaPage = `<!doctype html><html><head><title>my replika</title></head><body><p>my replika</p>`
   + `<script>localStorage.setItem("auth", JSON.stringify({ userId: "smoke-user", deviceId: "smoke-device", authToken: "smoke-token" }));`
@@ -403,13 +409,14 @@ const WEB = new Map([
     customer_facts: [{ text: "has a sister", creation_timestamp: "2026-01-06T00:00:00Z" }],
     robot_facts: [{ text: "Echo remembers walks", creation_timestamp: "2026-01-07T00:00:00Z" }],
   }) }],
-  // the sign call answers by the raw link it was given: "stray" signs into another bucket on
-  // the permitted S3 host (Leket's own check refuses it, unfetched), "moved" signs into the
-  // bucket at a link that redirects (a picture's fetch may not follow it)
+  // the sign call answers by the exact raw link it was given: sm5's signs into another
+  // bucket on the permitted S3 host (Leket's own check refuses it, unfetched), sm6's into
+  // the bucket at a link that redirects (a picture's fetch may not follow it), sm7's at a
+  // picture over the size cap; any other link signs the picture that is served
   ["https://my.replika.ai/api/mobile/1.5/images/signed/actions/get_url", (request) => {
     let raw = "";
     try { raw = String(JSON.parse(request.postData || "{}").image_url || ""); } catch { /* an unreadable body signs the default */ }
-    const image_url = raw.includes("stray") ? SMOKE_REPLIKA_STRAY : raw.includes("moved") ? SMOKE_REPLIKA_MOVED : SMOKE_REPLIKA_IMG;
+    const image_url = SMOKE_REPLIKA_SIGNS.get(raw) || SMOKE_REPLIKA_IMG;
     return { type: "application/json", body: JSON.stringify({ image_url }) };
   }],
   // the picture bucket the manifest allows: both pictures (chat and diary) land in
@@ -419,6 +426,8 @@ const WEB = new Map([
   // and its target would show in the request log
   [SMOKE_REPLIKA_MOVED, { status: 302, location: SMOKE_REPLIKA_MOVED_TO, type: "text/plain", body: "" }],
   [SMOKE_REPLIKA_MOVED_TO, { type: "image/png", body: SMOKE_PNG }],
+  // a picture that declares more than the 50 MB cap: refused on its length, body unread
+  [SMOKE_REPLIKA_BIG, { type: "image/png", body: SMOKE_PNG, length: 50 * 1048576 + 1 }],
   // served, but from a host the manifest has no permission for: the read is refused and
   // the clip comes out not captured, its link unwritten
   ["https://images.example.org/voice-raw.mp3", { type: "audio/mpeg", body: "not audio" }],
@@ -582,12 +591,13 @@ async function scenarios(cdp, downloads) {
       const { requestId, request } = m.params;
       requested.push(request.url);
       // a route is a fixed response, or a function of the request that returns one;
-      // a response with a location is served as that redirect
+      // a response with a location is served as that redirect, one with a length declares
+      // that length in place of its body's
       const route = WEB.get(request.url);
       const page = typeof route === "function" ? route(request) : route;
       if (page) {
         await cdp.send("Fetch.fulfillRequest", { requestId, responseCode: page.status || 200,
-          responseHeaders: [{ name: "content-type", value: page.type }, { name: "content-length", value: String(Buffer.byteLength(page.body)) },
+          responseHeaders: [{ name: "content-type", value: page.type }, { name: "content-length", value: String(page.length ?? Buffer.byteLength(page.body)) },
             ...(page.location ? [{ name: "location", value: page.location }] : [])],
           body: Buffer.from(page.body).toString("base64") }, m.sessionId).catch(() => {});
       } else if (/^(https?|wss?|ftp):/.test(request.url)) {
@@ -1154,8 +1164,9 @@ async function scenarios(cdp, downloads) {
           { id: "sm2", content: { type: "text", text: "hello from Ada" }, meta: { nature: "Customer", timestamp: "2026-03-02T10:00:00Z" } },
           { id: "sm3", content: { type: "images", text: "https://images.example.org/raw.png" }, meta: { nature: "Robot", timestamp: "2026-03-01T10:00:00Z" } },
           { id: "sm4", content: { type: "voice_message", text: "", voice_message_url: "https://images.example.org/voice-raw.mp3" }, meta: { nature: "Robot", timestamp: "2026-03-01T09:00:00Z" } },
-          { id: "sm5", content: { type: "images", text: "https://images.example.org/stray-raw.png" }, meta: { nature: "Robot", timestamp: "2026-03-01T08:00:00Z" } },
-          { id: "sm6", content: { type: "images", text: "https://images.example.org/moved-raw.png" }, meta: { nature: "Robot", timestamp: "2026-03-01T07:00:00Z" } },
+          { id: "sm5", content: { type: "images", text: ${JSON.stringify(SMOKE_REPLIKA_STRAY_RAW)} }, meta: { nature: "Robot", timestamp: "2026-03-01T08:00:00Z" } },
+          { id: "sm6", content: { type: "images", text: ${JSON.stringify(SMOKE_REPLIKA_MOVED_RAW)} }, meta: { nature: "Robot", timestamp: "2026-03-01T07:00:00Z" } },
+          { id: "sm7", content: { type: "images", text: ${JSON.stringify(SMOKE_REPLIKA_BIG_RAW)} }, meta: { nature: "Robot", timestamp: "2026-03-01T06:00:00Z" } },
         ],
         [
           { id: "sm0", content: { type: "text", text: "oldest" }, meta: { nature: "Customer", timestamp: "2026-02-28T10:00:00Z" } },
@@ -1186,22 +1197,24 @@ async function scenarios(cdp, downloads) {
       return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,
         fails: [...document.getElementById("replika-problems").children].map((li) => li.textContent) }; })()`),
     "the replika page's end line", 90000).catch(soft((e) => ({ t: e.message, fails: [] })));
-    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 7 messages, 2 diary entries, 3 memories, 2 pictures and voice clips \(3 item\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
-      `replika: the end line names the file and the counts, both pictures (chat and diary) saved, the refused voice clip, the stray and the moved picture not (it said: ${end.t} [${end.cls}])`);
+    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 8 messages, 2 diary entries, 3 memories, 2 pictures and voice clips \(4 item\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
+      `replika: the end line names the file and the counts, both pictures (chat and diary) saved, the refused voice clip, the stray, the moved and the oversized picture not (it said: ${end.t} [${end.cls}])`);
+    // reasons in the order they first appear, the oldest message first
     check(JSON.stringify(end.fails) === JSON.stringify([
+      "1 item(s) not saved: the file is over 50 MB",
       "2 item(s) not saved: the file host refused or failed",
       "1 item(s) not saved: the picture's link points outside Replika's picture storage",
       "Fields Leket didn't save (diary list): diary_entry_id, image_count, read",
       "Fields Leket didn't save (diary): entries[].diary_id, entries[].read, entries[].image_count"]),
-      `replika: the problems list names the refused voice clip and moved picture, the stray picture, then the unsaved-field lines (${JSON.stringify(end.fails)})`);
+      `replika: the problems list names the oversized picture, the refused voice clip and moved picture, the stray picture, then the unsaved-field lines (${JSON.stringify(end.fails)})`);
     const zipName = landed().find((f) => /^replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip$/.test(f));
     if (check(zipName, `replika: a replika-….zip landed (${landed().filter((f) => f.startsWith("replika-")).join(", ") || "none"})`)) {
       const info = JSON.parse(execFileSync("python3", ["-I", "-c",
         "import json,sys,zipfile\nz = zipfile.ZipFile(sys.argv[1])\nprint(json.dumps({n: z.read(n).decode('utf-8', 'replace') for n in z.namelist()}))",
         join(downloads, zipName)], { encoding: "utf8" }));
       const data = JSON.parse(info["data.json"]);
-      check(data.counts.messages === 7 && data.counts.diary === 2 && data.counts.memories === 3,
-        `replika: the zip's data.json counts 7 messages, 2 diary entries, 3 memories (${JSON.stringify(data.counts)})`);
+      check(data.counts.messages === 8 && data.counts.diary === 2 && data.counts.memories === 3,
+        `replika: the zip's data.json counts 8 messages, 2 diary entries, 3 memories (${JSON.stringify(data.counts)})`);
       const clip = data.messages.find((m) => m.kind === "voice_message");
       check(clip && clip.not_captured === "the file host refused or failed" && !clip.media,
         `replika: the voice clip on an unpermitted host is marked not captured, its link unwritten (${JSON.stringify(clip)})`);
@@ -1217,6 +1230,11 @@ async function scenarios(cdp, downloads) {
       check(moved && moved.not_captured === "the file host refused or failed" && !moved.media
         && requested.includes(SMOKE_REPLIKA_MOVED) && !requested.includes(SMOKE_REPLIKA_MOVED_TO),
         `replika: the picture whose link redirects is requested, not followed, and marked not captured (${JSON.stringify(moved)})`);
+      // a picture that declares more than 50 MB is refused on its length, asked for once
+      const big = data.messages.find((m) => m.id === "sm7");
+      check(big && big.not_captured === "the file is over 50 MB" && !big.media
+        && requested.filter((u) => u === SMOKE_REPLIKA_BIG).length === 1,
+        `replika: the picture over the size cap is asked for once and marked not captured (${JSON.stringify(big)}, asked ${requested.filter((u) => u === SMOKE_REPLIKA_BIG).length}x)`);
       const pic = data.messages.find((m) => m.id === "sm3");
       const pngIn = (path) => typeof path === "string" && path.startsWith("media/") && info[path] !== undefined && info[path].includes("PNG");
       check(pic && !pic.not_captured && pngIn(pic.media) && !pic.text,
@@ -1228,7 +1246,7 @@ async function scenarios(cdp, downloads) {
       check(info["index.html"].includes("Ada") && info["index.html"].includes("Echo"),
         "replika: index.html names Ada and Echo");
       const blob = JSON.stringify(info);
-      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "replika-content-images", "smoke-sig", "raw.png", "diary-raw.png", "voice-raw", "someone-elses-bucket", "stray", "moved"]) {
+      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "replika-content-images", "smoke-sig", "raw.png", "diary-raw.png", "voice-raw", "someone-elses-bucket", "stray.png", "stray-raw", "moved.png", "moved-to", "moved-raw", "big.png", "big-raw"]) {
         check(!blob.includes(secret), `replika: no file in the zip contains ${secret}`);
       }
       const socketUrl = await evalIn(rp, "globalThis.smokeReplikaSocketUrl");

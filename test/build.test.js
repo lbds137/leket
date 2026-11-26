@@ -99,6 +99,35 @@ test("an expired link isn't retried; a network error is, then reported", async (
   assert.ok(Date.now() - t1 >= 40, "the waits between the tries back off");
 });
 
+test("maxBytes refuses a file that says or turns out to be larger, once, and lets go of its body", async () => {
+  // a body sent in 4-byte pieces with no content-length, which records its cancel
+  const streamed = (n, onCancel) => new ReadableStream({
+    pull(c) { if (n <= 0) return c.close(); c.enqueue(new Uint8Array(Math.min(4, n))); n -= 4; },
+    cancel() { onCancel(); },
+  });
+  let calls = 0, cancelled = 0;
+  // declared too large: refused before a byte is read, and not tried again
+  const said = await fetchFile(`${CDN}/a`, { fetchFn: async () => { calls++; return new Response(streamed(12, () => cancelled++), { headers: { "content-length": "12" } }); }, wait: 0, maxBytes: 10 });
+  assert.deepEqual([said.error, said.tooBig, said.blob, calls, cancelled], ["over 10 bytes", true, undefined, 1, 1]);
+  // no length given: refused once the read passes the cap, the rest never read
+  calls = 0; cancelled = 0;
+  const grew = await fetchFile(`${CDN}/a`, { fetchFn: async () => { calls++; return new Response(streamed(40, () => cancelled++)); }, wait: 0, maxBytes: 10 });
+  assert.deepEqual([grew.error, grew.tooBig, calls, cancelled], ["over 10 bytes", true, 1, 1]);
+  // exactly the cap is kept
+  const fits = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response(streamed(8, () => {})), wait: 0, maxBytes: 8 });
+  assert.equal((await fits.blob.arrayBuffer()).byteLength, 8);
+  assert.equal(fits.tooBig, undefined);
+  // a compressed response's length is not the file's, so it isn't refused on it; the cap
+  // still holds for what is read
+  const gz = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response(streamed(4, () => {}), { headers: { "content-length": "100", "content-encoding": "gzip" } }), wait: 0, tries: 1, maxBytes: 10 });
+  assert.equal((await gz.blob.arrayBuffer()).byteLength, 4);
+  const gzBig = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response(streamed(40, () => {}), { headers: { "content-encoding": "gzip" } }), wait: 0, tries: 1, maxBytes: 10 });
+  assert.equal(gzBig.tooBig, true);
+  // left out, there is no cap
+  const open = await fetchFile(`${CDN}/a`, { fetchFn: async () => new Response(streamed(40, () => {})), wait: 0 });
+  assert.equal((await open.blob.arrayBuffer()).byteLength, 40);
+});
+
 test("a download that stalls is dropped after the idle time, and the build goes on", async () => {
   const stalls = async (url, { signal }) => new Response(new ReadableStream({
     start(c) {

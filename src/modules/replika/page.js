@@ -7,7 +7,7 @@
 // console.log'd: the save's rule is that credentials never reach a console.
 import { match } from "../registry.js";
 import { readReplikaAuth } from "./api.js";
-import { runSave, endLine, problems, downloadOptions } from "./save.js";
+import { runSave, endLine, problems, downloadParts, downloadProblem } from "./save.js";
 import { trackDownload } from "../../lib/download.js";
 
 const $ = (id) => document.getElementById(id);
@@ -92,38 +92,14 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
     });
     say("Saving…");
     progress(0, parts.length);
-    let ok = true, noWord = false, landed = 0, failedPart = null;
-    for (const part of parts) {
-      say(`Saving ${part.name}… (${landed + 1} of ${parts.length})`);
-      const url = URL.createObjectURL(part.blob);
-      let saved;
-      try {
-        saved = await trackDownload(chrome.downloads, { url, ...downloadOptions(part.name) }, {
-          // a save with no word in 15 minutes may still be reading the blob URL: free it
-          // only once the download truly ends
-          onLate: () => URL.revokeObjectURL(url),
-        });
-      } catch (err) {
-        // a refused download started nothing and watches nothing: the URL is freed here
-        URL.revokeObjectURL(url);
-        throw err;
-      }
-      if (saved !== null) URL.revokeObjectURL(url);
-      if (saved === false) { ok = false; failedPart = part; break; }
-      if (saved === null) { noWord = true; break; }
-      landed++;
-      progress(landed, parts.length);
-    }
-    if (!ok && parts.length > 1) {
-      say(`The download of ${failedPart.name} didn't finish — Chrome interrupted or refused it. ${landed} of ${parts.length} parts were saved. See Chrome's downloads, then save again.`, "warn");
-      return;
-    }
-    if (!ok) {
-      say(`The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads, then save again.`, "warn");
-      return;
-    }
-    if (noWord) {
-      say("No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends.", "warn");
+    const result = await downloadParts(parts, {
+      download: (request, opts) => trackDownload(chrome.downloads, request, opts),
+      onPart: (part, landed) => say(`Saving ${part.name}… (${landed + 1} of ${parts.length})`),
+      onLanded: (landed) => progress(landed, parts.length),
+    });
+    const problem = downloadProblem(result, { total: parts.length, filename });
+    if (problem) {
+      say(problem.text, problem.cls);
       return;
     }
     const end = endLine({ filename, data });
