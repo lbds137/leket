@@ -21,6 +21,8 @@ test("inline marks, code spans and links", () => {
   assert.equal(md("<p><strong>b<em>i</em></strong> wo<strong>rd</strong>s <em> sp </em><strong></strong>x</p>"),
     "**b*i*** wo**rd**s *sp* x");
   assert.equal(md("<p><code>a`b</code> <code>`x`</code> <code>p|q</code></p>"), "``a`b`` `` `x` `` `p|q`");
+  // spaces at a link label's ends stay outside the brackets
+  assert.equal(md('<p>See<a href="https://e.com"> this page </a>for more.</p>'), "See [this page](https://e.com) for more.");
   assert.equal(md('<p><a href="https://e.com/a?b=1&amp;c=2">t</a> <a href="https://e.com">https://e.com</a> <a href="">empty</a> <a href="javascript:x">js</a> <a href="https://e.com/(x)">p</a></p>'),
     "[t](https://e.com/a?b=1&c=2) <https://e.com> empty js [p](<https://e.com/(x)>)");
 });
@@ -33,6 +35,10 @@ test("lists: nesting, start numbers, loose items, empty items, two lists in a ro
   assert.equal(md("<ul><li></li><li>.</li></ul>"), "-\n- .");
   // two lists of one kind would merge without something between them
   assert.equal(md("<ul><li>a</li></ul><ul><li>b</li></ul><ol><li>c</li></ol>"), "- a\n\n<!-- -->\n\n- b\n\n1. c");
+  // in a tight item, text after a quote or a nested list, or a rule under text, gets a
+  // blank line: without it the text joins the quote or list, or the rule makes a heading
+  assert.equal(md("<ul><li><blockquote><p>q</p></blockquote>out</li><li>head<hr>after</li><li>a<ul><li>b</li></ul>c</li></ul>"),
+    "- > q\n\n  out\n- head\n\n  ---\n  after\n- a\n  - b\n\n  c");
   // an unclosed <li> closes at the next one
   assert.equal(md("<ul><li>a<li>b</ul>"), "- a\n- b");
 });
@@ -49,6 +55,11 @@ test("tables: alignment, pipes in cells and code, ragged rows", () => {
     '<tbody><tr><td align="left"><strong>1</strong></td><td><code>p|q</code></td></tr></tbody></table>';
   assert.equal(md(t), "| A | B\\|x | C |\n|:---|:---:|---|\n| **1** | `p\\|q` |  |");
   assert.equal(md("<table></table>"), "");
+  // GFM splits cells before code spans: both pipes of || are escaped, an escaped one isn't
+  // escaped twice; a list or a <pre> in a cell stays one spaced line, the <pre> as code
+  assert.equal(md("<table><tr><th>Op</th></tr><tr><td><code>a || b</code> x\\|y</td></tr></table>"), "| Op |\n|---|\n| `a \\|\\| b` x\\\\\\|y |");
+  assert.equal(md("<table><tr><td><ul><li>First</li><li>Second</li></ul></td><td><pre><code>x * y</code></pre></td></tr></table>"),
+    "| First Second | `x * y` |\n|---|---|");
 });
 
 test("pre: tags inside it are dropped, its text kept; the fence outlasts any inside it", () => {

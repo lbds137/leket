@@ -76,6 +76,12 @@ test("rows of no chat go to other-activity.md; canvases get files; --other moves
   const canvas = (t) => ({ header: "Gemini Apps", title: "Created Gemini Canvas titled Same", time: t, subtitles: [{ name: "x\ny" }] });
   const c = plan(collect([{ rows: [canvas("2025-01-01T01:00:00Z"), canvas("2025-01-01T02:00:00Z")] }]));
   assert.deepEqual(c.files.filter((f) => f.kind === "canvas").map((f) => f.name), ["2025-01-01 Same.md", "2025-01-01 Same (2).md"]);
+  // a title with nothing left is "untitled"; a parenthesis in the link is encoded, or it
+  // would end the Markdown link early
+  const odd = (title) => ({ header: "Gemini Apps", title: `Created Gemini Canvas titled ${title}`, time: "2025-01-01T01:00:00Z", subtitles: [{ name: "x\ny" }] });
+  const o = plan(collect([{ rows: [odd("???"), odd("1) List")] }]));
+  assert.deepEqual(o.files.filter((f) => f.kind === "canvas").map((f) => f.name), ["2025-01-01 untitled.md", "2025-01-01 1) List.md"]);
+  assert.match(byName(o, "other-activity.md").text, /\]\(canvases\/2025-01-01%201%29%20List\.md\)/);
 });
 
 test("--folders, --titles, --unlisted, labels and time zone", () => {

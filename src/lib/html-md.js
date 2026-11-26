@@ -147,9 +147,12 @@ function inline(nodes, ctx) {
       case "a": {
         const href = n.attrs.href || "";
         const label = inline(n.children, ctx);
-        if (!href || /^\s*javascript:/i.test(href)) add(label);
-        else if (textOf(n) === href && /^https?:\/\/[^\s<>]+$/.test(href)) add(`<${href}>`);
-        else add(`[${label.trim() || escapeText(href)}](${linkDest(href)})`);
+        if (!href || /^\s*javascript:/i.test(href)) { add(label); break; }
+        if (textOf(n) === href && /^https?:\/\/[^\s<>]+$/.test(href)) { add(`<${href}>`); break; }
+        // spaces and breaks at the label's ends go outside the brackets, as for **…**
+        const lead = label.match(/^[ \u0000]*/)[0], trail = label.slice(lead.length).match(/[ \u0000]*$/)[0];
+        const core = label.slice(lead.length, label.length - trail.length);
+        add(`${lead}[${core || escapeText(href)}](${linkDest(href)})${trail}`);
         break;
       }
       case "pre": add(codeSpan(textOf(n))); break;
@@ -195,7 +198,8 @@ function table(n, ctx) {
   if (!cells.length) return "";
   const width = Math.max(...cells.map((r) => r.length));
   if (!width) return "";
-  const cell = (c) => (c ? blocks(c.children, ctx, " ", true).replace(/\n/g, " ") : "").replace(/(^|[^\\])((?:\\\\)*)\|/g, "$1$2\\|");
+  // every pipe not already escaped is escaped, code spans included (GFM splits cells first)
+  const cell = (c) => (c ? blocks(c.children, ctx, " ", true).replace(/\n/g, " ") : "").replace(/(?<!\\)((?:\\\\)*)\|/g, "$1\\|");
   const row = (r) => `| ${Array.from({ length: width }, (_, i) => cell(r[i])).join(" | ")} |`;
   const align = (c) => ({ left: ":---", center: ":---:", right: "---:" })[(c?.attrs.align || "").toLowerCase()] || "---";
   return [row(cells[0]), `|${Array.from({ length: width }, (_, i) => align(cells[0][i])).join("|")}|`, ...cells.slice(1).map(row)].join("\n");
@@ -232,13 +236,23 @@ function block(n, ctx) {
 function blocks(nodes, ctx, sep = "\n\n", flat = false) {
   const out = [];
   let run = [], last = null;
-  const flush = () => { const p = flat ? oneLine(run, ctx) : paragraph(run, ctx); if (p) { out.push(p); last = "p"; } run = []; };
+  // in a tight list item (sep "\n"), a line after a quote, a table or a nested list would
+  // join it, and a rule under a line would make it a heading: those get a blank line between
+  const apart = (tag) => sep === "\n" && out.length && (["blockquote", "table"].includes(last) || ["hr", "table"].includes(tag) ||
+    (tag === "p" && (last === "ul" || last === "ol")));
+  const flush = () => {
+    const p = flat ? oneLine(run, ctx) : paragraph(run, ctx);
+    if (p) { if (apart("p")) out.push(""); out.push(p); last = "p"; }
+    run = [];
+  };
   for (const n of nodes) {
     if (isInline(n)) { run.push(n); continue; }
     flush();
-    const s = flat ? oneLine(n.children, ctx) : block(n, ctx);
+    // flat (a table cell): one line, a <pre> as a code span, a container's parts spaced
+    const s = !flat ? block(n, ctx) : n.tag === "pre" ? codeSpan(textOf(n)) : blocks(n.children, ctx, " ", true);
     if (!s) continue;
     if (!flat && (n.tag === "ul" || n.tag === "ol") && last === n.tag) out.push("<!-- -->");
+    else if (apart(n.tag)) out.push("");
     out.push(s);
     last = n.tag;
   }
