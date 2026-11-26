@@ -33,10 +33,22 @@ export function mergeSaves(saves) {
   const people = new Map();
   const hidden = new Map();
   let reachedStart = false, guild = null, guildId = null, title = null;
-  const since = [], extracted = [];
+  const since = [], extracted = [], spans = [];
   for (const [i, d] of saves.entries()) {
     if (!d || typeof d !== "object" || !Array.isArray(d.messages)) throw new Error(`save ${i + 1} has no messages list: not a Discord save`);
     if (d.channel_id !== channel) throw new Error(`save ${i + 1} is of channel ${d.channel_id}, not ${channel}: give saves of one conversation`);
+    const bad = d.messages.find((m) => !m || typeof m.id !== "string" || !/^\d+$/.test(m.id));
+    if (bad !== undefined) throw new Error(`save ${i + 1} has a message whose id (${JSON.stringify(bad && bad.id)}) isn't a Discord id`);
+    // what this save covers: back to the start (or the day it was asked to stop at) or to
+    // its oldest message, and forward to when it was saved (or its newest message)
+    let lo = Infinity, hi = Date.parse(d.extracted_at) || -Infinity;
+    for (const m of d.messages) {
+      const t = Date.parse(m.datetime);
+      if (Number.isFinite(t)) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
+    }
+    if (d.reached_start) lo = -Infinity;
+    else if (d.reached_since && Number.isFinite(Date.parse(d.reached_since))) lo = Math.min(lo, Date.parse(d.reached_since));
+    if (lo <= hi) spans.push([lo, hi]);
     title = title || d.channel || null;
     guild = guild || d.guild_name || null;
     guildId = guildId || d.guild_id || null;
@@ -63,8 +75,17 @@ export function mergeSaves(saves) {
       hidden.set(k, { count: Math.max(was.count, h.count), uncounted: was.uncounted || h.uncounted });
     }
   }
+  // stretches no save covers, between saves that together reach further: messages sent
+  // then may be missing even when the merged saves reached the start
+  spans.sort((a, b) => a[0] - b[0]);
+  const gaps = [];
+  let reach = spans.length ? spans[0][1] : -Infinity;
+  for (const [lo, hi] of spans.slice(1)) {
+    if (lo > reach) gaps.push({ from: new Date(reach).toISOString(), to: new Date(lo).toISOString() });
+    reach = Math.max(reach, hi);
+  }
   return {
-    channel, title, guild,
+    channel, title, guild, gaps,
     // a server channel or thread has a server; a DM (or group DM) has none
     isDm: !guildId && !guild,
     reachedStart,
@@ -99,6 +120,7 @@ const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 const voiceLine = (v) =>
   `[voice message, ${mmss(v.duration)}, machine transcript, not checked against the audio: ${v.text || "(no speech heard)"}]`;
 const cell = (s) => String(s ?? "").replace(/\|/g, "\\|");
+const utc = (iso) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
 
 // The files for one merged conversation: [{name, text}], names relative to the output
 // folder, each starting with `base`. by: "none" (one file), "year" or "month".
@@ -118,7 +140,8 @@ export function render(conv, { base, by = conv.isDm ? "none" : "month", title = 
       : `PARTIAL: the start of the ${what} was not reached, so older messages are missing`;
   const source = `${conv.saves} save(s) of channel ${conv.channel}${conv.isDm ? "" : ` in ${conv.guild || "the server"}`}`
     + (ex.length ? `, exported ${ex[0]}${ex[ex.length - 1] !== ex[0] ? ` to ${ex[ex.length - 1]}` : ""}` : "")
-    + `; ${start}`;
+    + `; ${start}`
+    + conv.gaps.map((g) => `; GAP: no save covers ${utc(g.from)} to ${utc(g.to)}, so messages from then may be missing`).join("");
   const span = (part) => `${at.get(part[0].id).date} to ${at.get(part[part.length - 1].id).date}`;
 
   const body = (m) => {
@@ -219,7 +242,8 @@ export function render(conv, { base, by = conv.isDm ? "none" : "month", title = 
     `${msgs.length} messages, ${span(msgs)}, ${files.length - 1 === 1 ? "in one file" : `one file per ${by}`}; `
     + `\`${base}-participants.md\` lists every author. Rebuild with \`leket convert discord\`.`, "",
     `| ${by === "none" ? "file" : by} | messages |`, "|---|---|",
-    ...[...groups].map(([k, part]) => `| [${k || title}](${encodeURI(fileOf(k))}) | ${part.length} |`)];
+    // the --by none row's label is the title: free text, so a | or ] in it can't end the cell or the link
+    ...[...groups].map(([k, part]) => `| [${cell(k || title).replace(/[[\]]/g, "\\$&")}](${encodeURI(fileOf(k))}) | ${part.length} |`)];
   files.push({ name: `${base}-index.md`, text: `${R.join("\n")}\n` });
   return files;
 }
