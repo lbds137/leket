@@ -1772,20 +1772,22 @@ test("render shows the text before Replika changed it only when it differs, the 
     ...base,
     messages: [
       { from: "replika", kind: "text", at: "2026-06-01T00:00:00Z", text: "said <now>", original_text: "first <draft>", emotion: "happy" },
-      { from: "you", kind: "text", at: "2026-06-01T00:01:00Z", text: "same", original_text: "same" },
+      { from: "you", kind: "text", at: "2026-06-01T00:01:00Z", text: "same", original_text: "same", emotion: "calm" },
+      { from: "replika", kind: "text", at: "2026-06-01T00:01:30Z", text: "trimmed", original_text: "trimmed \n" },
       { from: "replika", kind: "images", at: "2026-06-01T00:02:00Z", original_text: "no text beside it", not_captured: "x" },
     ],
     diary: [{ date: "2026-06-01", title: "a day", entries: [{ text: "wrote", reaction: "love", images: [] }, { text: "plain", images: [] }, { text: "blank", reaction: "", images: [] }] }],
   });
   assert.ok(html.includes('<div class="original"><span class="label">Before Replika changed it:</span> first &lt;draft&gt;</div>'));
-  assert.equal(html.split('class="original"').length - 1, 1, "an unchanged message, and one with no text, show no before-text");
+  assert.equal(html.split('class="original"').length - 1, 1, "an unchanged message, one changed only in whitespace, and one with no text show no before-text");
   assert.ok(!html.includes("no text beside it"));
   assert.ok(html.includes('<span class="tag">emotion: happy</span>'));
-  assert.equal(html.split('class="tag"').length - 1, 1, "a message without an emotion has no tag");
+  assert.equal(html.split('class="tag"').length - 1, 1, "a message without an emotion, or one of yours, has no tag");
+  assert.ok(!html.includes("emotion: calm"), "an emotion is the companion's, so it never shows beside your own message");
   assert.ok(html.includes('<span class="reaction">reaction: love</span>'));
   assert.equal(html.split("reaction: ").length - 1, 1, "an entry without a reaction, or a blank one, shows none");
   assert.ok(render({ ...base, messages: [], diary: [{ date: "d", entries: [{ text: "t", reaction: 0, images: [] }] }] }).includes("reaction: 0"), "a 0 reaction still shows");
-  assert.ok(!html.includes("category") && !html.includes("edited"), "category and edited stay out of the page");
+  assert.ok(html.includes("<li>likes tea</li>"), "a memory's category and edited flag stay out of the page");
 });
 
 // ---------- an unexpected throw never puts its text in an output ----------
