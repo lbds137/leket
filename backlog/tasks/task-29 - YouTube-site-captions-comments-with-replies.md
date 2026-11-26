@@ -1,10 +1,10 @@
 ---
 id: TASK-29
 title: 'YouTube site: captions + comments with replies'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-25T19:09:00Z'
-updated_date: '2026-11-26T03:37:00Z'
+updated_date: '2026-11-26T03:43:00Z'
 labels: []
 dependencies: []
 priority: high
