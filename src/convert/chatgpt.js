@@ -66,7 +66,8 @@ const idOf = (c) => (typeof c.conversation_id === "string" && c.conversation_id)
 // export's copy of a conversation replacing an earlier one's, and every file-name map merged.
 export function collect(exports) {
   const convs = new Map();
-  const names = {};
+  // no prototype: a "__proto__" key in the export's JSON stays an ordinary name
+  const names = Object.create(null);
   for (const [i, e] of exports.entries()) {
     if (!Array.isArray(e.conversations)) throw new Error(`${e.label || `export ${i + 1}`}: its conversations.json isn't a list of conversations`);
     if (e.names && typeof e.names === "object" && !Array.isArray(e.names)) Object.assign(names, e.names);
@@ -84,7 +85,7 @@ export function collect(exports) {
 // One conversation → { title, turns, text, skipped: {content_type: count} }.
 export function render({ id, c }, { names = {}, user = "User", assistant = "ChatGPT", timeZone = "UTC" } = {}) {
   const turns = [];
-  const skipped = {};
+  const skipped = Object.create(null); // keyed by the export's content_type
   const seen = new Set();
   let node = c.current_node;
   while (node) {
@@ -118,7 +119,9 @@ export function safeTitle(title) {
   let s = title.replace(/[/\\:\x00-\x1f\x7f]/g, "-").replace(/\.+$/, "");
   const enc = new TextEncoder();
   if (enc.encode(s).length > 200) {
-    const cps = [...s];
+    // 200 bytes hold at most 200 code points: cut to those first, so a huge title costs
+    // at most 200 short re-encodes
+    const cps = [...s.slice(0, 400)].slice(0, 200);
     while (enc.encode(cps.join("")).length > 200) cps.pop();
     s = cps.join("").replace(/\.+$/, "");
   }
@@ -134,7 +137,8 @@ export function badFolder(f) {
 // Every file to write: [{ folder, name, text, id, turns, skipped }]. folders maps a
 // conversation id to its folder (relative to the output folder); one it doesn't list goes
 // to `unlisted` ("" = the output folder itself). Two conversations that would share a file
-// name (on a case-blind disk too) are told apart by the first 8 characters of their ids.
+// name (on a case-blind disk too) are told apart by the first 8 characters of their ids,
+// then a number: the name stays within 255 bytes.
 export function plan(convs, { folders = {}, unlisted = "", ...opts } = {}) {
   const files = [];
   const taken = new Set();
@@ -144,8 +148,9 @@ export function plan(convs, { folders = {}, unlisted = "", ...opts } = {}) {
     const day = stamp(conv.c.create_time, opts.timeZone).slice(0, 10) || "undated";
     let name = `${day} ${safeTitle(r.title)}.md`;
     const key = (n) => `${folder}/${n}`.toLowerCase();
-    if (taken.has(key(name))) name = `${day} ${safeTitle(r.title)} (${safeTitle(conv.id.slice(0, 8))}).md`;
-    for (let k = 2; taken.has(key(name)); k++) name = `${day} ${safeTitle(r.title)} (${safeTitle(conv.id)} ${k}).md`;
+    const tag = safeTitle(conv.id.slice(0, 8));
+    if (taken.has(key(name))) name = `${day} ${safeTitle(r.title)} (${tag}).md`;
+    for (let k = 2; taken.has(key(name)); k++) name = `${day} ${safeTitle(r.title)} (${tag} ${k}).md`;
     taken.add(key(name));
     files.push({ folder, name, text: r.text, id: conv.id, turns: r.turns, skipped: r.skipped });
   }

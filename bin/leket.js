@@ -509,12 +509,15 @@ export async function readChatgptExport(path) {
 
 // --folders: a tab-separated file with a header row naming an "id" and a "folder" column
 export async function readFolders(path) {
-  const rows = (await readFile(path, "utf8")).split(/\r?\n/).filter((l) => l.trim());
-  const head = (rows.shift() || "").split("\t");
+  const rows = (await readFile(path, "utf8")).split(/\r?\n/);
+  const head = rows.shift().split("\t");
   const ci = head.indexOf("id"), fi = head.indexOf("folder");
   if (ci < 0 || fi < 0) throw new Error(`--folders ${path}: its header row has no "id" and "folder" columns (tab-separated)`);
-  const folders = {};
+  // no prototype: an id "__proto__" is an ordinary key
+  const folders = Object.create(null);
+  // blank lines are skipped in the loop, not filtered out, so k + 2 is the line number
   for (const [k, line] of rows.entries()) {
+    if (!line.trim()) continue;
     const cells = line.split("\t");
     const id = cells[ci], folder = cells[fi];
     if (!id) continue;
@@ -551,7 +554,7 @@ export async function convertChatgpt(paths, { out = ".", user, assistant, tz = "
     return 1;
   }
   const turns = files.reduce((n, f) => n + f.turns, 0);
-  const skipped = {};
+  const skipped = Object.create(null);
   for (const f of files) for (const [k, n] of Object.entries(f.skipped)) skipped[k] = (skipped[k] || 0) + n;
   const notShown = Object.entries(skipped).map(([k, n]) => `${shown(k)} ${n}`).join(", ");
   process.stderr.write(`leket: ${files.length} conversations, ${turns} messages, from ${paths.length} export(s); times in ${tz}.${notShown ? ` Not shown (no text): ${notShown}.` : ""}\n`);
