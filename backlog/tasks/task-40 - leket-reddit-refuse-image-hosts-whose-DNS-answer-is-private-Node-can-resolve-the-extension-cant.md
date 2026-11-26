@@ -3,10 +3,10 @@ id: TASK-40
 title: >-
   leket reddit: refuse image hosts whose DNS answer is private (Node can
   resolve; the extension can't)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-26T12:40:00Z'
-updated_date: '2026-11-26T13:28:00Z'
+updated_date: '2026-11-26T13:43:00Z'
 labels:
   - security
   - reddit
@@ -26,4 +26,6 @@ Council review of #197 (GPT-6.2, 11-26): fetchImageData's isPrivateHost checks t
 
 <!-- SECTION:NOTES:BEGIN -->
 Lila 2026-11-26 (AUQ): built-in lookup fix. CLI image fetches go through node:https.request with a lookup hook that refuses private answers (v4, v6, v4-mapped), no new dependency; the extension keeps its documented limit. Probe 11-26: https.get('https://localhost/', {lookup}) refused ::1 before connecting. Next after TASK-39's PR.
+
+Shipped on task-40-dns-guard (0.8.2): src/lib/guarded-fetch.js, wired as saveRedditPost's default image fetch; Gemini argon review PASS, its 2 lows fixed in the same PR (IP literal judged in guardedFetch itself; empty answer list = ENOTFOUND).
 <!-- SECTION:NOTES:END -->
