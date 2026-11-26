@@ -122,6 +122,8 @@ These two pages are bulk tools for claude.ai. Their input lists come from script
 
 The zip holds the whole chat with both sides labelled by name, the diary entries and the memories (yours and the companion's), with pictures and voice clips inline. A picture or voice clip that couldn't be fetched is listed in its message's place with the reason, and anything Replika stopped halfway is said in words at the top of its section — what was read is saved either way. If Leket signed out (Replika answered 401/403), sign in at my.replika.com again and rerun: the new save lands beside the old one. Each kind of message field Leket didn't read is counted in the zip's `data.json` under `unsaved_fields`, so a future version can read more.
 
+**Updating to 0.6.0:** this version adds permission to fetch Replika's diary pictures from their file host (`s3-us-west-1.amazonaws.com/replika-content-images`). If Chrome turns Leket off after the update or asks about the new permission, accept it, or open `chrome://extensions` and switch Leket back on.
+
 ## From the command line
 
 `bin/leket.js` runs saves from a shell, with no browser. So far it saves YouTube videos:

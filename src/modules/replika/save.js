@@ -20,14 +20,16 @@ const reasonOf = (e, fallback = STEP_FAILED) => (e instanceof SignedOut || e ins
 export const MSG_ALLOWED = new Set([
   "id", "content.type", "content.text", "content.voice_message_url",
   "meta.nature", "meta.timestamp", "reactions[]", "meta.reactions[]",
+  "content.originalText", "avatarEmotion.name", "is_romantic", "blurred",
 ]);
 // the diary's two raw shapes: the list items and the day replies
 export const DIARY_LIST_ALLOWED = new Set(["date", "title"]);
 export const DIARY_DAY_ALLOWED = new Set([
   "date", "entries[].id", "entries[].timestamp", "entries[].text",
   "entries[].images[].url", "entries[].images[].blurred", "entries[].images[].is_romantic",
+  "entries[].reaction",
 ]);
-export const FACT_ALLOWED = new Set(["id", "creation_timestamp", "text"]);
+export const FACT_ALLOWED = new Set(["id", "creation_timestamp", "text", "category_id", "is_user_edited"]);
 // the v3 memory list's people: not saved yet, so every field they carry shows in the tally
 export const PERSON_ALLOWED = new Set([]);
 
@@ -66,6 +68,13 @@ export function buildMessage(raw) {
   const reactions = [meta && meta.reactions, raw && raw.reactions]
     .find((r) => Array.isArray(r) && r.every((x) => typeof x === "string" || typeof x === "number"));
   if (reactions) record.reactions = reactions.slice();
+  // seen on live messages: the text before Replika changed it, the
+  // avatar's emotion name, and two picture flags — each copied only in its plain type
+  if (content && typeof content.originalText === "string") record.original_text = content.originalText;
+  const emotion = raw && raw.avatarEmotion && raw.avatarEmotion.name;
+  if (typeof emotion === "string" && TYPE_NAME.test(emotion)) record.emotion = emotion;
+  if (raw && typeof raw.is_romantic === "boolean") record.is_romantic = raw.is_romantic;
+  if (raw && typeof raw.blurred === "boolean") record.blurred = raw.blurred;
   if (kind === "text") return { record, media: null };
   // a kind Leket doesn't read is said so, its short type name in the reason (escaped
   // when it reaches the page)
@@ -105,7 +114,9 @@ export function buildDiary(day, listItem) {
           images.push(record);
         });
       }
-      entries.push({ id: entryId, at: scalar(e.timestamp), text: typeof e.text === "string" ? e.text : null, images });
+      const entry = { id: entryId, at: scalar(e.timestamp), text: typeof e.text === "string" ? e.text : null, images };
+      if (scalar(e.reaction) != null) entry.reaction = scalar(e.reaction);
+      entries.push(entry);
     }
   }
   const record = {
@@ -125,6 +136,8 @@ export function buildFact(raw, about) {
     about,
   };
   if (raw && raw.id != null) record.id = scalar(raw.id);
+  if (raw && scalar(raw.category_id) != null) record.category_id = scalar(raw.category_id);
+  if (raw && typeof raw.is_user_edited === "boolean") record.edited = raw.is_user_edited;
   return record;
 }
 
