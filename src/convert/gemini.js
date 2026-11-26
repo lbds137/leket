@@ -18,10 +18,10 @@
 // Rows that belong to no chat (a Canvas, feedback, phone Assistant actions) go to
 // other-activity.md, and each Canvas document's text to canvases/.
 // Pure: no file access. bin/leket.js reads the exports and writes what plan() returns.
-import { decode, htmlToMarkdown } from "../lib/html-md.js";
+import { codeSpan, decode, escapeText, htmlToMarkdown } from "../lib/html-md.js";
 import { safeTitle, stamp } from "./common.js";
 
-const CONV = /gemini\.google\.com\/app\/([0-9a-f]+)/;
+const CONV = /^https?:\/\/gemini\.google\.com\/app\/([0-9a-f]+)/;
 const PROMPTED = "Prompted ", ADDED = "Added chat from link: ", CANVAS = "Created Gemini Canvas titled ";
 // a reply element Takeout left empty or as bare dots: text it removed
 const EMPTIED = /<(li|p|h[1-6]|td)>(?:\s|\.|<br>|\*)*(?=<\/\1>|<ul>|<ol>)/g;
@@ -93,12 +93,6 @@ export function slug(e) {
   return text || "untitled";
 }
 
-const code = (s) => {
-  const longest = Math.max(0, ...[...s.matchAll(/`+/g)].map((m) => m[0].length));
-  const f = "`".repeat(longest + 1);
-  return `${f}${s.startsWith("`") || s.endsWith("`") ? ` ${s} ` : s}${f}`;
-};
-
 // blockquote lines for what Takeout says about attachments and images
 function fileLines(e) {
   const lines = [], named = new Set();
@@ -107,12 +101,12 @@ function fileLines(e) {
     const url = str(s?.url);
     if (str(s?.name).includes("\n")) continue; // a Canvas document: written to canvases/
     if (/^https?:/.test(url)) text += ` <${url}>`;
-    else if (url) { named.add(url); text += ` (saved as ${code(url)})`; }
+    else if (url) { named.add(url); text += ` (saved as ${codeSpan(url)})`; }
     lines.push(`> ${text}`);
   }
   const extra = [...list(e.attachedFiles).filter((x) => typeof x === "string")];
   if (typeof e.imageFile === "string" && e.imageFile) extra.push(e.imageFile);
-  for (const name of new Set(extra)) if (!named.has(name)) lines.push(`> file: ${code(name)}`);
+  for (const name of new Set(extra)) if (name && !named.has(name)) lines.push(`> file: ${codeSpan(name)}`);
   return lines;
 }
 
@@ -124,7 +118,7 @@ function renderRow(e, { md, user, assistant, timeZone, canvas, inChat }) {
   if (e.title.startsWith(PROMPTED)) out.push(`### ${user} · ${t}`, e.title.slice(PROMPTED.length));
   else if (e.title.startsWith(ADDED)) out.push(`### ${user} · ${t}`, "*(chat added from a shared link)*", "", e.title.slice(ADDED.length));
   else {
-    out.push(`*${e.title} · ${t}*`);
+    out.push(`*${escapeText(e.title.trim())} · ${t}*`);
     const cid = convId(e);
     if (cid && !inChat) out.push(`https://gemini.google.com/app/${cid}`);
     if (canvasDoc(e)) out.push(`Document: ${canvas(e)}`);
@@ -198,7 +192,8 @@ export function plan({ rows, other: otherProducts = 0 }, {
     return `[canvases/${name}](${pathTo(from, `${canvasDir}/${name}`)})`;
   };
 
-  const files = [], taken = new Set();
+  // the canvases' names are taken too: --folders can send a chat into the canvas folder
+  const files = [], taken = new Set(canvasFiles.map((f) => `${f.folder}/${f.name}`.toLowerCase()));
   let prompts = 0, cut = 0, cutChats = 0;
   const order = [...convs].map(([cid, es]) => ({ cid, es, first: es.find(isPrompt) }))
     .sort((a, b) => secs(a.first) - secs(b.first) || (a.cid < b.cid ? -1 : 1));

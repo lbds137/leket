@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { collect, convId, gutted, plan, slug } from "../src/convert/gemini.js";
 import { ZipWriter } from "../src/lib/zip.js";
+import { readGeminiExport } from "../bin/leket.js";
 import { geminiSnapshots } from "./fixtures/gemini-takeout.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -113,6 +114,19 @@ test("the numbers the summary reports", () => {
 test("small parts: the chat id, the gutted test, the row filter", () => {
   assert.equal(convId({ details: [{ name: "x" }, { url: "https://gemini.google.com/app/0fa9?hl=en" }] }), "0fa9");
   assert.equal(convId({ details: "nope" }), null);
+  // only a link that is to gemini.google.com, not one that mentions it
+  assert.equal(convId({ details: [{ url: "https://e.example/?u=gemini.google.com/app/abc" }] }), null);
+  // a row of no chat shows its title as written, inside the *…*
+  const fb = plan(collect([{ rows: [{ header: "Gemini Apps", title: " Gave feedback: *bad* [x] ", time: "2025-01-01T00:00:00Z" }] }]));
+  assert.match(byName(fb, "other-activity.md").text, /\n\*Gave feedback: \\\*bad\\\* \\\[x\\\] · 2025-01-01T00:00:00Z\*\n/);
+  // a chat sent by --folders into the canvas folder never takes a canvas's file name
+  const at = "2025-01-01T01:00:00Z";
+  const rows = [
+    { header: "Gemini Apps", title: "Created Gemini Canvas titled Same", time: at, subtitles: [{ name: "canvas\ntext" }] },
+    { header: "Gemini Apps", title: "Prompted Same", time: at, details: [{ url: "https://gemini.google.com/app/abcdef12" }] },
+  ];
+  const clash = plan(collect([{ rows }]), { folders: { abcdef12: "canvases" } }).files.filter((f) => f.folder === "canvases");
+  assert.deepEqual(clash.map((f) => [f.kind, f.name]).sort(), [["canvas", "2025-01-01 Same.md"], ["chat", "2025-01-01 Same (abcdef).md"]]);
   assert.ok(gutted("<ul><li>.</li><li> </li></ul>"));
   assert.ok(!gutted("<ul><li>.</li><li>ok</li></ul>"));
   // rows that aren't rows are passed over; other products are counted, not kept
@@ -160,6 +174,30 @@ test("CLI: a Takeout zip, and the activity JSON given directly", async () => {
   const r = leket(["convert", "gemini", join(dir, "takeout.zip"), join(dir, "newer.json"), "--out", join(dir, "out")]);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(join(dir, "out", "2025-03-01 Plan a trip to Lisbon 3 days, cheap.md"), "utf8"), LISBON);
+});
+
+test("a JSON file too large to read is passed over and named, in a zip or a folder", async () => {
+  const dir = tmp();
+  const activity = JSON.stringify(geminiSnapshots()[0].rows);
+  const bytes = Buffer.byteLength(activity); // the limit is in bytes: the fixture isn't all ASCII
+  const huge = `[${" ".repeat(bytes + 100)}]`;
+  const w = new ZipWriter();
+  w.add("Takeout/My Activity/Gemini/MyActivity.json", new TextEncoder().encode(activity));
+  w.add("Takeout/Location History/Records.json", new TextEncoder().encode(huge));
+  writeFileSync(join(dir, "takeout.zip"), Buffer.from(await w.parts()[0].arrayBuffer()));
+  mkdirSync(join(dir, "t", "Maps"), { recursive: true });
+  writeFileSync(join(dir, "t", "MyActivity.json"), activity);
+  writeFileSync(join(dir, "t", "Maps", "Records.json"), huge);
+  const limit = bytes + 1;
+  for (const path of [join(dir, "takeout.zip"), join(dir, "t")]) {
+    const skipped = [];
+    const found = await readGeminiExport(path, { skipped, limit });
+    assert.equal(found.length, 1, path);
+    assert.equal(skipped.length, 1, path);
+    assert.match(skipped[0], /Records\.json \(0 MB\)$/);
+  }
+  // nothing else there: the error says what was passed over
+  await assert.rejects(readGeminiExport(join(dir, "t"), { limit: 10 }), /holds no Takeout activity JSON.*passed over as too large: .*MyActivity\.json/);
 });
 
 test("CLI: no activity, a bad file, usage errors", () => {

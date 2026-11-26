@@ -25,6 +25,9 @@ test("inline marks, code spans and links", () => {
   assert.equal(md('<p>See<a href="https://e.com"> this page </a>for more.</p>'), "See [this page](https://e.com) for more.");
   assert.equal(md('<p><a href="https://e.com/a?b=1&amp;c=2">t</a> <a href="https://e.com">https://e.com</a> <a href="">empty</a> <a href="javascript:x">js</a> <a href="https://e.com/(x)">p</a></p>'),
     "[t](https://e.com/a?b=1&c=2) <https://e.com> empty js [p](<https://e.com/(x)>)");
+  // only http(s), mailto and relative links stay links; any other scheme keeps its label
+  assert.equal(md('<p><a href="data:text/html,x">d</a> <a href=" VBScript:x">v</a> <a href="java\nscript:x">j</a> <a href="mailto:a@b.c">m</a> <a href="../r.md">r</a> <a href="#f">f</a> <a href="a/b:c">p</a></p>'),
+    "d v j [m](mailto:a@b.c) [r](../r.md) [f](#f) [p](a/b:c)");
 });
 
 test("lists: nesting, start numbers, loose items, empty items, two lists in a row", () => {
@@ -53,11 +56,15 @@ test("headings, rules, quotes, hard breaks", () => {
 test("tables: alignment, pipes in cells and code, ragged rows", () => {
   const t = '<table><thead><tr><th align="left">A</th><th align="center">B|x</th><th>C</th></tr></thead>' +
     '<tbody><tr><td align="left"><strong>1</strong></td><td><code>p|q</code></td></tr></tbody></table>';
-  assert.equal(md(t), "| A | B\\|x | C |\n|:---|:---:|---|\n| **1** | `p\\|q` |  |");
+  // text B|x is escaped twice: B\| as text, then one more for the cell
+  assert.equal(md(t), "| A | B\\\\|x | C |\n|:---|:---:|---|\n| **1** | `p\\|q` |  |");
   assert.equal(md("<table></table>"), "");
-  // GFM splits cells before code spans: both pipes of || are escaped, an escaped one isn't
-  // escaped twice; a list or a <pre> in a cell stays one spaced line, the <pre> as code
-  assert.equal(md("<table><tr><th>Op</th></tr><tr><td><code>a || b</code> x\\|y</td></tr></table>"), "| Op |\n|---|\n| `a \\|\\| b` x\\\\\\|y |");
+  // GFM splits cells at bare pipes, then drops one backslash before every pipe, code spans
+  // included: each pipe gets one more backslash, so text x\|y and a code span's own \|
+  // come through as written (both checked on GitHub's renderer); a list or a <pre> in a
+  // cell stays one spaced line, the <pre> as code
+  assert.equal(md("<table><tr><th>Op</th></tr><tr><td><code>a || b</code> x\\|y <code>c\\|d</code></td></tr></table>"),
+    "| Op |\n|---|\n| `a \\|\\| b` x\\\\\\\\|y `c\\\\|d` |");
   assert.equal(md("<table><tr><td><ul><li>First</li><li>Second</li></ul></td><td><pre><code>x * y</code></pre></td></tr></table>"),
     "| First Second | `x * y` |\n|---|---|");
 });
@@ -68,6 +75,10 @@ test("pre: tags inside it are dropped, its text kept; the fence outlasts any ins
     "```\nmodel A {\nid String\n}\n-- next & last\n```\n\nafter");
   assert.equal(md("<pre>```\nx\n```</pre>"), "````\n```\nx\n```\n````");
   assert.equal(md("<ol><li>run:\n<pre><code>a\n  b\n</code></pre></li></ol>"), "1. run:\n   ```\n   a\n     b\n   ```");
+  // code keeps its trailing spaces (in a quote too); other lines lose theirs; a NUL in code
+  // shows as U+FFFD
+  assert.equal(md("<pre>a  \nb\t\nc</pre><p>x  </p><blockquote><pre>q \nr</pre></blockquote><pre>n\u0000</pre>"),
+    "```\na  \nb\t\nc\n```\n\nx\n\n> ```\n> q \n> r\n> ```\n\n```\nn\uFFFD\n```");
 });
 
 test("an unknown tag keeps its text and is counted", () => {

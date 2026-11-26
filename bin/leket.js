@@ -23,7 +23,7 @@
 import { constants as bufferConstants } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import { constants, realpathSync } from "node:fs";
-import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir, readdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -623,8 +623,10 @@ async function writeConverted(files, out) {
 
 // One Gemini Takeout: its folder (searched for the activity JSON, whatever the language
 // names it), its zip (not zip64) or the JSON file → [{ label, rows }], one per JSON file
-// that is a list of activity rows. Other JSON files (one attached to a chat) are passed over.
-export async function readGeminiExport(path) {
+// that is a list of activity rows. Other JSON files (one attached to a chat) are passed over,
+// and in a folder or zip one too large to read as one text (a whole-account Takeout's
+// location history) is passed over unread: its label goes into `skipped`. limit is for tests.
+export async function readGeminiExport(path, { skipped = [], limit = MAX_STRING_LENGTH } = {}) {
   const isActivity = (x) => Array.isArray(x) && x.some((e) => e && typeof e === "object" && typeof e.time === "string" && typeof e.title === "string");
   const found = [];
   const consider = (label, text) => {
@@ -632,9 +634,10 @@ export async function readGeminiExport(path) {
     try { data = JSON.parse(text); } catch { return; }
     if (isActivity(data)) found.push({ label, rows: data });
   };
+  const tooLarge = (label, size) => { skipped.push(`${label} (${Math.round(size / 1048576)} MB)`); };
   if (/\.zip$/i.test(path)) {
     for (const e of (await zipEntries(path)).filter((x) => /\.json$/i.test(x.name)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (e.size > MAX_STRING_LENGTH) throw new Error(`${path}: its ${shown(e.name)} is ${Math.round(e.size / 1048576)} MB, too large to read as one text`);
+      if (e.size > limit) { tooLarge(`${path}: ${e.name}`, e.size); continue; }
       consider(`${path}: ${e.name}`, (await readZipEntry(path, e)).toString("utf8"));
     }
   } else {
@@ -650,20 +653,28 @@ export async function readGeminiExport(path) {
       for (const d of (await readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : 1))) {
         const p = join(dir, d.name);
         if (d.isDirectory()) await walk(p);
-        else if (d.isFile() && /\.json$/i.test(d.name)) consider(p, await readFile(p, "utf8"));
+        else if (d.isFile() && /\.json$/i.test(d.name)) {
+          const { size } = await stat(p);
+          if (size > limit) { tooLarge(p, size); continue; }
+          let text;
+          // bytes over-count a string's length, so a file just under the limit can still be too long
+          try { text = await readFile(p, "utf8"); } catch (e) { if (e.code !== "ERR_STRING_TOO_LONG") throw e; tooLarge(p, size); continue; }
+          consider(p, text);
+        }
       }
     };
     await walk(path);
   }
-  if (!found.length) throw new Error(`${path} holds no Takeout activity JSON (a list of rows with "time" and "title")`);
+  if (!found.length) throw new Error(`${path} holds no Takeout activity JSON (a list of rows with "time" and "title")${skipped.length ? `; passed over as too large: ${skipped.map(shown).join(", ")}` : ""}`);
   return found;
 }
 
 export async function convertGemini(paths, { out = ".", user, assistant, tz = "UTC", folders: foldersPath, titles: titlesPath, unlisted = "", other = "" } = {}) {
   let planned;
+  const skipped = [];
   try {
     const snapshots = [];
-    for (const p of paths) snapshots.push(...await readGeminiExport(p));
+    for (const p of paths) snapshots.push(...await readGeminiExport(p, { skipped }));
     const folders = foldersPath ? await readFolders(foldersPath) : {};
     const titles = titlesPath ? await readTitles(titlesPath) : {};
     const collected = collectGemini(snapshots);
@@ -683,6 +694,7 @@ export async function convertGemini(paths, { out = ".", user, assistant, tz = "U
     s.short ? `Replies whose Markdown has under 98% of the HTML's letters: ${s.short}.` : "",
     unknown ? `HTML tags kept as text: ${unknown}.` : "",
     s.otherProducts ? `Rows of other Google products passed over: ${s.otherProducts}.` : "",
+    skipped.length ? `JSON files passed over unread, too large to read as one text: ${skipped.map(shown).join(", ")}.` : "",
     s.unrecognised ? "No row reads as a prompt (\"Prompted …\"): is the Takeout in another language? Every row went to other-activity.md." : "",
   ].filter(Boolean).join("\n") + "\n");
   return 0;
