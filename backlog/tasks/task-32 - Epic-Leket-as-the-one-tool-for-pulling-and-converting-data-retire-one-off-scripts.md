@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:44:00Z'
-updated_date: '2026-11-25T20:14:00Z'
+updated_date: '2026-11-26T11:27:00Z'
 labels:
   - epic
 dependencies: []
@@ -34,7 +34,7 @@ Constraints:
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Inventory and design doc in docs/ (docs/tools-inventory.md), with IN or OUT and a reason per candidate
-- [ ] #2 Lila has ruled on the IN/OUT list (AskUserQuestion, with a recommendation)
+- [x] #2 Lila has ruled on the IN/OUT list (AskUserQuestion, with a recommendation)
 - [ ] #3 After #2's ruling (not before), each IN item has its own task; each retired script's owning session is told once its leket path ships
 <!-- AC:END -->
 
@@ -42,4 +42,6 @@ Constraints:
 
 <!-- SECTION:NOTES:BEGIN -->
 Replika is IN via TASK-33 (owner's direct ask, 2026-11-25); the inventory doesn't need to rule on it.
+
+Lila ruled 2026-11-26: 'Wider: historical too' (recommended set plus rows K and L); children TASK-32.1-32.12 filed; deferred: O (claude.ai export converter, trigger: Lila wants that archive readable) and D's site module (trigger: console script breaks or she wants it in the toolbar).
 <!-- SECTION:NOTES:END -->

@@ -167,7 +167,9 @@ the bare JSON and the full `window.X = {...};` line and parse the payload out.
   read from this session). Its deadname guard stays out of Leket entirely since 0.3.38:
   the reader redacts (see the module paragraph).
 - **Out of scope by spec**: youtube-extractor-guide.md stays a guide, not a module — noted
-  here so it isn't lost; promoting it is Lila's call.
+  here so it isn't lost; promoting it is Lila's call. **Superseded 11-26:** the YouTube
+  module and `leket youtube` now save what the guide walked through, so the guide retires
+  (TASK-32, docs/tools-inventory.md row J, Lila's ruling).
 - **Release note at the rename (PR7)**: this fold-in adds `www`/`old.reddit.com` host
   permissions and the `offscreen` permission — on update, Chrome disables the extension
   for installed users until they re-approve. Say so in the notes so the disable doesn't
