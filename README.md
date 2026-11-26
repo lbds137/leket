@@ -184,6 +184,12 @@ node bin/leket.js convert whatsapp <chat.txt>... [--out DIR] [--name NAME=LABEL]
 
 An export is the `.txt` file WhatsApp's Export chat writes (alone, or inside its "With media" zip), or a folder of them. For now only the day-first header `d.m.yyyy, H:MM - ` is read (some phone languages write it). It writes one `whatsapp-Name.md` per chat in the same day-by-day shape. Attached files appear under the names the export gave them, and WhatsApp's own notices (encryption, members joining, a subject changed) appear as `[WhatsApp, time: notice]`. A sender shows by their name as written (a phone number for a contact not saved) unless `--name` gives a label; the senders found are listed when it finishes. Times are shown as written; `--tz` only names the zone.
 
+```
+node bin/leket.js convert aim <logs>... [--out DIR] [--me LABEL] [--name SCREENNAME=LABEL]... [--tz ZONE] [--title TEXT] [--base NAME]
+```
+
+A log is an AIM chat session saved as HTML (a page headed "Chatlog between A and B on …"), or a folder of them. All the logs given make one transcript, `aim-ScreenName.md`, in the same day-by-day shape: give the logs of one person, under one screen name or several. A message keeps its line breaks, bold and links; an away message's reply is marked `(auto-response)`. The logs' owner shows as `--me` when given; a screen name shows as its `--name` label, matched ignoring case and spaces as AIM did, else as written. A message carries only its clock time: its date is the session's, moved on past midnight. Times are shown as written; `--tz` only names the zone.
+
 ### Reddit posts
 
 ```
@@ -236,8 +242,8 @@ Layout:
 - `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
-- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `sms.js`: `leket convert sms`; `signal.js`: `leket convert signal`; `whatsapp.js`: `leket convert whatsapp`; `common.js`: their times, file names, folder checks and Markdown escapes.
-- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini converter (its text escapes serve the character-chat one too); `xml.js`: a streaming XML reader, for the SMS converter.
+- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `sms.js`: `leket convert sms`; `signal.js`: `leket convert signal`; `whatsapp.js`: `leket convert whatsapp`; `aim.js`: `leket convert aim`; `common.js`: their times, file names, folder checks and Markdown escapes.
+- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini and AIM converters (its text escapes serve the character-chat one too); `xml.js`: a streaming XML reader, for the SMS converter.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.
 - `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).

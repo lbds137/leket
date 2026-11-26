@@ -136,3 +136,10 @@ test("entities: named, numeric, unknown and out of range", () => {
   // non-Latin text passes through, an underscore inside a word stays bare
   assert.equal(md("<p>שלום_עולם _x</p>"), "שלום_עולם \\_x");
 });
+
+test("a slash ending an unquoted value is the value's; one after it or a quote closes the tag", () => {
+  assert.equal(md("<a target=\"_blank\" href=http://b.example/>b</a>"), "[b](http://b.example/)");
+  assert.equal(md("<a href=x />t"), "[x](x)t");
+  assert.equal(md("<a href=\"x\"/>t"), "[x](x)t");
+  assert.equal(md("<b/>t"), "t");
+});

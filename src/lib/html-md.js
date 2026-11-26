@@ -40,6 +40,13 @@ function attrsOf(s) {
 }
 
 // HTML → a tree of { tag, attrs, children } and strings (text, entities decoded)
+// a tag's attributes end in "/" that closes it ("<span/>", "<a href=x />"), not a slash
+// that ends an unquoted value ("<a href=http://x.com/>" opens a link to http://x.com/)
+function selfClosing(attrs) {
+  const s = attrs.trimEnd();
+  return s.endsWith("/") && !/=\s*[^\s"'=<>`]+$/.test(s.slice(0, -1));
+}
+
 export function parse(html) {
   const root = { tag: "#root", attrs: {}, children: [] };
   const stack = [root];
@@ -78,7 +85,7 @@ export function parse(html) {
     if (tag === "td" || tag === "th") { const c = Math.max(open("td"), open("th")); if (c > 0 && c > open("tr")) closeTo(c); }
     if (tag === "tr") { const r = open("tr"); if (r > 0 && r > open("table")) closeTo(r); }
     top().children.push(node);
-    if (!VOID.has(tag) && !m[3]?.trimEnd().endsWith("/")) stack.push(node);
+    if (!VOID.has(tag) && !selfClosing(m[3] || "")) stack.push(node);
   }
   text(html.slice(at));
   return root;

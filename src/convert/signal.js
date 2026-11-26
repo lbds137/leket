@@ -110,8 +110,10 @@ const labelOf = (names) => (who) =>
 export function render({ entries, messages, events }, { source, title, names = {}, timeZone = "" }) {
   const label = labelOf(names);
   const zone = timeZone ? `, in ${timeZone}` : " (the exporting computer's local time)";
-  // the range of them all: a pasted line shaped like a header can be out of order
-  const [first, last] = span(entries.map((e) => e.ms));
+  // the range of the messages, as the summary says (WhatsApp's is too), out of order or
+  // not (a pasted line shaped like a header can be); of the events when there is none
+  const dated = messages ? entries.filter((e) => !e.event) : entries;
+  const [first, last] = span(dated.map((e) => e.ms));
   const L = [`# ${title}`, "",
     `Source: ${codeSpan(source) || "(unnamed)"}, a conversation exported as text by signalbackup-tools.`,
     `${messages} messages, ${local(first).date} to ${local(last).date}. `
@@ -127,6 +129,9 @@ export function render({ entries, messages, events }, { source, title, names = {
       L.push(`## ${t.date} (${t.weekday})`, "");
     }
     L.push(`> -# ${e.event ? "Signal" : escapeTag(label(e.who))} — ${t.stamp}`);
+    // a heuristic, on purpose: the export marks a poll by nothing else, so a message
+    // typed starting "Poll: " also loses the indent of its lines shaped like an option
+    // ("  [2] …"), which costs only that indent
     const poll = !e.event && e.lines[0].startsWith("Poll: ");
     for (const b of e.lines) {
       // a poll's options come indented to line up under the header; in a quote that

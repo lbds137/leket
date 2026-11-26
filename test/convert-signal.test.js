@@ -184,3 +184,10 @@ test("cli: a folder's .TXT exports are read too", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(readdirSync(out), ["signal-Pat.md"]);
 });
+
+test("#208 lows: the range counts messages only (events when there is none); a typed &lt; stays as typed", () => {
+  const md = one("[Jan 01, 2025 09:00:00] *** Missed voice call\n[Jan 02, 2025 10:00:00] <Pat> &lt;3 &amp; \\\\<b>x\n[Jan 03, 2025 11:00:00] *** Missed voice call\n");
+  assert.match(md, /^1 messages, 2025-01-02 to 2025-01-02\./m);
+  assert.match(md, /^> \\&lt;3 \\&amp; \\\\\\<b>x$/m);
+  assert.match(one("[Jan 01, 2025 09:00:00] *** Missed voice call\n[Jan 03, 2025 11:00:00] *** Missed voice call\n"), /^0 messages, 2025-01-01 to 2025-01-03\./m);
+});

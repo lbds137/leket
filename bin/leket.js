@@ -12,7 +12,8 @@
 // (src/convert/claude-code.js), and `leket convert sms <backup.xml>` for an SMS Backup &
 // Restore backup (src/convert/sms.js), and `leket convert signal <export.txt>…` for
 // signalbackup-tools' text export (src/convert/signal.js), and `leket convert whatsapp
-// <chat.txt>…` for WhatsApp's Export chat (src/convert/whatsapp.js).
+// <chat.txt>…` for WhatsApp's Export chat (src/convert/whatsapp.js), and `leket convert aim
+// <logs>…` for AIM chat logs saved as HTML (src/convert/aim.js).
 // `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
@@ -47,6 +48,7 @@ import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert
 import { digits as smsDigits, keyOf as smsKey, messages as smsMessages, plan as planSms } from "../src/convert/sms.js";
 import { plan as planSignal } from "../src/convert/signal.js";
 import { plan as planWhatsapp } from "../src/convert/whatsapp.js";
+import { plan as planAim, screenKey as aimKey } from "../src/convert/aim.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -233,7 +235,29 @@ usage: leket convert whatsapp <chat.txt>... [--out DIR] [--name NAME=LABEL]... [
   --title TEXT    with one export: the heading (default "WhatsApp with Name")
   --base NAME     with one export: the file's name (NAME.md)
   Exit: 0 written; 1 an export couldn't be read, held no message or has a date that
-  doesn't exist (nothing written), or a write failed; 2 usage.`;
+  doesn't exist (nothing written), or a write failed; 2 usage.
+
+usage: leket convert aim <logs>... [--out DIR] [--me LABEL] [--name SCREENNAME=LABEL]...
+         [--tz ZONE] [--title TEXT] [--base NAME]
+
+  Turns AIM chat logs saved as HTML (one page per session, headed "Chatlog between A and
+  B on <date>") into one Markdown transcript of them all, in the shape convert discord
+  writes: give the logs of one person (under one screen name or several). A log is its
+  .html file, or a folder: every .html directly in it. Away-message replies are marked
+  (auto-response). The senders found are listed on stderr.
+  Writes "aim-ScreenName.md" (the contacts' screen names joined by "+") into DIR
+  (default: the current directory), replacing an earlier file of that name.
+  --me LABEL      show the messages the logs' owner sent as LABEL (default: by name)
+  --name S=LABEL  show screen name S as LABEL, matched ignoring case and spaces, as AIM
+                  did (repeatable; default: the name as written)
+  --tz ZONE       the zone the logs' times are in, named in the transcript. The logs
+                  write them with no zone, so they are shown as written, never converted
+                  (default: not named)
+  --title TEXT    the heading (default "AIM with ScreenName")
+  --base NAME     the file's name (NAME.md)
+  Exit: 0 written; 1 a log couldn't be read, has no "Chatlog between" heading or a date
+  that doesn't exist, or the logs hold no message (nothing written), or a write failed;
+  2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -1109,6 +1133,62 @@ async function convertTextLogMain(kind, args) {
   return convertTextLog(kind, positionals, { out: v.out, names, tz: v.tz, title: v.title, base: v.base });
 }
 
+// `convert aim`: every log given → one transcript
+export async function convertAim(paths, { out = ".", me = "", names = {}, tz = "", title, base } = {}) {
+  let planned;
+  try {
+    const inputs = [];
+    for (const f of await inputFiles(paths, ".html", "AIM log")) {
+      inputs.push({ folder: basename(dirname(resolve(f))), file: basename(f), text: await readFile(f, "utf8") });
+    }
+    planned = planAim(inputs, { title, base, me, names, timeZone: tz });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  const unknown = Object.entries(s.unknown).map(([t, n]) => `<${t}> (${n})`).join(", ");
+  process.stderr.write(`leket: ${s.logs} logs, ${s.messages} messages (${s.autos} auto-response${s.autos === 1 ? "" : "s"}); times as logged${tz ? ` (${tz})` : ""}.\n`
+    + `leket: senders: ${Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ")}.\n`
+    + (unknown ? `leket: tags shown as their text: ${unknown}.\n` : "")
+    + (s.stray ? `leket: ${s.stray} logs have text before their first message, not shown.\n` : ""));
+  return 0;
+}
+
+async function convertAimMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args, allowPositionals: true,
+      options: {
+        out: { type: "string" }, me: { type: "string" }, name: { type: "string", multiple: true }, tz: { type: "string" },
+        title: { type: "string" }, base: { type: "string" }, help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  const bad = convertOptionError(v, ["me", "title"]);
+  if (bad) return fail(bad);
+  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  const names = Object.create(null); // no prototype: a screen name can be any word
+  for (const n of v.name || []) {
+    const i = n.indexOf("=");
+    const key = i < 1 ? "" : aimKey(n.slice(0, i));
+    if (!key) return fail(`--name takes SCREENNAME=LABEL, not ${n}`);
+    const label = n.slice(i + 1);
+    if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${n.slice(0, i)}= takes a one-line label`);
+    names[key] = label;
+  }
+  return convertAim(positionals, { out: v.out, me: v.me, names, tz: v.tz, title: v.title, base: v.base });
+}
+
 // The checks every convert main makes: each label given is one line (and not blank,
 // unless blankOk), and --tz is a zone Intl knows. → the first failure's message, or "".
 function convertOptionError(v, labels, { blankOk = false } = {}) {
@@ -1153,6 +1233,7 @@ async function convertMain(rest) {
   if (kind === "claude-code") return convertClaudeCodeMain(args);
   if (kind === "sms") return convertSmsMain(args);
   if (kind === "signal" || kind === "whatsapp") return convertTextLogMain(kind, args);
+  if (kind === "aim") return convertAimMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {
