@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-26T04:20:00Z'
-updated_date: '2026-11-26T05:46:00Z'
+updated_date: '2026-11-26T05:53:00Z'
 labels:
   - replika
 dependencies: []
@@ -40,4 +40,6 @@ Done in 0.6.3: #184 lows (a) and (b) (the smoke secret scan names the fixture fr
 0.6.4 (rendering PR): index.html shows original_text under a message when it differs from text, the message emotion and a diary entry's reaction as worded labels (AA 7.2-8.0:1 both themes, by luminance computation); category_id and edited stay data.json-only per Lila's 'Show some'. Review lows (1) and (3) from #185 done here: src/lib/limits.js holds the one 50 MB cap for Reddit and Replika; fetchFile's header says callers map tooBig. Left in TASK-38: (c) redirect manual, voice_message shape, fact category names — each needs a live save that shows it.
 
 #186 review lows (PASS): (1) emotion showed beside the user's own messages: now the companion's only (README already says so), tested. (3) a whitespace-only change showed a before-line: compared trimmed now, data.json exact. (4) the 'edited' absence assertion keyed on wording: now asserts the memory's exact <li>. All in 0.6.5. (2) DEFERRED: hide a default/neutral emotion if most messages carry one — trigger: a live save shows what share of messages carry which emotion; then it is Lila's taste call, asked with the count.
+
+#187 review lows (PASS): comment now says leading/trailing whitespace (my 'more than whitespace' overstated .trim()); memory assertion pins the whole About list, reddened by an <em>edited</em> beside the line; local smoke run (I had skipped it on #187 against CLAUDE.md's export-path rule; CI smoke was green). Interior-whitespace changes still show a before-line: kept, an interior change is a real edit.
 <!-- SECTION:NOTES:END -->

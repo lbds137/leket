@@ -1787,7 +1787,7 @@ test("render shows the text before Replika changed it only when it differs, the 
   assert.ok(html.includes('<span class="reaction">reaction: love</span>'));
   assert.equal(html.split("reaction: ").length - 1, 1, "an entry without a reaction, or a blank one, shows none");
   assert.ok(render({ ...base, messages: [], diary: [{ date: "d", entries: [{ text: "t", reaction: 0, images: [] }] }] }).includes("reaction: 0"), "a 0 reaction still shows");
-  assert.ok(html.includes("<li>likes tea</li>"), "a memory's category and edited flag stay out of the page");
+  assert.ok(html.includes("<h3>About You</h3><ul><li>likes tea</li></ul><h3>"), "a memory's category and edited flag stay out of the page, inside its line and beside it");
 });
 
 // ---------- an unexpected throw never puts its text in an output ----------
