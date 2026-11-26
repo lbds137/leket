@@ -118,7 +118,9 @@ export async function driveYouTube(opts) {
   const stopped = () => {
     const why = stopReason();
     if (why && !aborted) aborted = why;
-    return !!why;
+    // sticky: a tab that moved away and back is still a stopped run (its result is
+    // discarded on the first reason), so no later phase starts work for nothing
+    return !!aborted;
   };
 
   // ---- the transcript panel: whichever renderer the A/B served. In a
@@ -165,6 +167,8 @@ export async function driveYouTube(opts) {
       }
     }
   }
+  // the waits above test stopped() last, so a stop in their final slice can go unrecorded
+  stopped();
   // the panel shows the language YouTube chose for this viewer and has no picker
   if (transcript.length > 0) {
     metadata.transcript_note = "As YouTube's transcript panel showed it; the language is YouTube's "
@@ -196,17 +200,18 @@ export async function driveYouTube(opts) {
   let scrolledBox = null;
   const firstEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
   for (;;) {
+    if (stopped()) break;
     commentsBox = document.querySelector("ytd-comments");
     if (commentsBox && commentsBox !== scrolledBox) {
       try { commentsBox.scrollIntoView(); } catch { /* nowhere to scroll */ }
       scrolledBox = commentsBox;
     }
-    if (threadCount() > 0 || topContinuation() || Date.now() >= firstEnd || stopped()) break;
+    if (threadCount() > 0 || topContinuation() || Date.now() >= firstEnd) break;
     await sleep(stepMs / 2);
   }
   // after a stop, the phases below are skipped: their lines would narrate work that
   // never ran
-  if (commentsBox && !aborted) {
+  if (commentsBox && !stopped()) {
     const line = say("Loading comments: " + threadCount() + " so far…");
     let threads = threadCount();
     let stalls = 0;
@@ -246,7 +251,7 @@ export async function driveYouTube(opts) {
   // tries. A round is progress only when replies grew or a button never clicked before
   // turned up; stallSteps rounds without progress, the time budget, or a stop reason
   // end the phase ----
-  if (!aborted) say("Opening replies…");
+  if (!stopped()) say("Opening replies…");
   const tries = new WeakMap();
   const threadHasReplies = (b) => {
     const box = b.closest("ytd-comment-replies-renderer");
