@@ -7,7 +7,9 @@
 // CONVERT_USAGE below); `leket convert chatgpt <export>…` does the same for ChatGPT's data
 // export (src/convert/chatgpt.js), and `leket convert gemini <takeout>…` for Google
 // Takeout's Gemini activity (src/convert/gemini.js), and `leket convert character-chat
-// <export>…` for a character-chat site's JSON export (src/convert/character-chat.js).
+// <export>…` for a character-chat site's JSON export (src/convert/character-chat.js), and
+// `leket convert claude-code <transcript>…` for Claude Code's session transcripts
+// (src/convert/claude-code.js).
 // `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
@@ -22,10 +24,11 @@
 // could be written (the notes in the files and on stderr say which).
 import { constants as bufferConstants } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
-import { constants, realpathSync } from "node:fs";
+import { constants, createReadStream, realpathSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 
@@ -37,6 +40,7 @@ import { collect as collectChatgpt, plan as planChatgpt } from "../src/convert/c
 import { badFolder } from "../src/convert/common.js";
 import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
 import { collect as collectCharacterChat, plan as planCharacterChat } from "../src/convert/character-chat.js";
+import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert/claude-code.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -136,6 +140,25 @@ usage: leket convert character-chat <export.json>... [--out DIR] [--user LABEL]
                 (default User)
   --site LABEL  the site's name in the headings (default "Character chat")
   --tz ZONE     the zone times are shown in, e.g. Europe/Paris (default UTC)
+  Exit: as for chatgpt.
+
+usage: leket convert claude-code <transcript>... [--out DIR] [--user LABEL]
+         [--assistant LABEL] [--tz ZONE] [--json]
+
+  Turns Claude Code session transcripts (the .jsonl files under ~/.claude/projects/) into
+  one Markdown file per session: the person's prompts and answers to questions, and the
+  text of each reply (not tool calls or their output, not text written before a tool
+  call, not subagents'). A transcript is its .jsonl file, or a folder: every .jsonl
+  directly in it.
+  Writes "YYYY-MM-DD Title.md" (the session's name in Claude Code, else the start of its
+  first prompt) into DIR (default: the current directory), replacing earlier files of
+  that name; two that would share a name get the start of the session id added.
+  --user LABEL       the person's messages' heading (default User)
+  --assistant LABEL  the replies' heading (default Claude)
+  --tz ZONE          the zone times are shown in, e.g. Europe/Paris (default UTC)
+  --json             write each session's turns as "YYYY-MM-DD Title.json" instead: id,
+                     source, title, turns [{ at (the transcript's UTC time), role (user or
+                     assistant), text (Markdown) }]
   Exit: as for chatgpt.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
@@ -756,6 +779,73 @@ async function convertCharacterChatMain(args) {
   return convertCharacterChat(positionals, { out: v.out, user: v.user, site: v.site, tz: v.tz });
 }
 
+// Claude Code transcripts: each a .jsonl file, or a folder whose .jsonl files (directly in
+// it, not in its subfolders, where subagents' transcripts live) are each one → sessions for
+// planClaudeCode, read a line at a time (a transcript can outgrow one string)
+export async function readClaudeCodeSessions(paths) {
+  const files = [];
+  for (const p of paths) {
+    if ((await stat(p)).isDirectory()) {
+      const names = (await readdir(p, { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => e.name).sort();
+      if (!names.length) throw new Error(`${p} holds no .jsonl transcript`);
+      files.push(...names.map((n) => join(p, n)));
+    } else files.push(p);
+  }
+  const sessions = [];
+  for (const f of files) {
+    const t = claudeCodeTurns();
+    const lines = createInterface({ input: createReadStream(f, { encoding: "utf8" }), crlfDelay: Infinity });
+    for await (const line of lines) t.feed(line);
+    const s = t.end();
+    sessions.push({ ...s, id: s.sessionId || basename(f).replace(/\.jsonl$/, ""), source: f });
+  }
+  return sessions;
+}
+
+export async function convertClaudeCode(paths, { out = ".", user, assistant, tz = "UTC", json = false } = {}) {
+  let planned;
+  try {
+    planned = planClaudeCode(await readClaudeCodeSessions(paths), { user, assistant, timeZone: tz, json });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  process.stderr.write([
+    `leket: ${s.sessions} sessions, ${s.turns} messages; times in ${tz}.`,
+    s.noPrompt ? `Sessions with no prompt typed by a person (scheduled or headless runs), left out: ${s.noPrompt}.` : "",
+    s.noOrigin ? `Sessions left out because no prompt in them says who typed it (a transcript from before Claude Code recorded that, or not a session): ${s.noOrigin}.` : "",
+    s.unparsed ? `Lines that aren't JSON, passed over (a session still running can end in a half-written line): ${s.unparsed}.` : "",
+  ].filter(Boolean).join("\n") + "\n");
+  return 0;
+}
+
+async function convertClaudeCodeMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args, allowPositionals: true,
+      options: {
+        out: { type: "string" }, user: { type: "string" }, assistant: { type: "string" }, tz: { type: "string" },
+        json: { type: "boolean" }, help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  for (const k of ["user", "assistant"]) if (v[k] !== undefined && (!v[k].trim() || /[\r\n]/.test(v[k]))) return fail(`--${k} takes a one-line label`);
+  if (v.tz !== undefined) {
+    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
+  }
+  return convertClaudeCode(positionals, { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, json: !!v.json });
+}
+
 const CONVERT_OPTIONS = {
   out: { type: "string" }, user: { type: "string" }, assistant: { type: "string" }, tz: { type: "string" },
   folders: { type: "string" }, unlisted: { type: "string" }, help: { type: "boolean", short: "h" },
@@ -789,6 +879,7 @@ async function convertMain(rest) {
   if (kind === "-h" || kind === "--help") { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
   if (kind === "chatgpt" || kind === "gemini") return convertExportMain(kind, args);
   if (kind === "character-chat") return convertCharacterChatMain(args);
+  if (kind === "claude-code") return convertClaudeCodeMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {

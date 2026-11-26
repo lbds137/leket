@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { decode, htmlToMarkdown } from "../src/lib/html-md.js";
+import { decode, htmlToMarkdown, oneLineText } from "../src/lib/html-md.js";
 
 const md = (h) => htmlToMarkdown(h).md;
 
@@ -38,6 +38,20 @@ test("a line break inside a tel:/sms: address can't start a heading, list or tab
   assert.equal(md('<p><a href="tel:1\n\n# Injected">call</a></p><h2><a href="tel:2\n- x">c</a></h2>' +
     '<table><tr><td><a href="sms:3\r\n|y">d</a></td></tr></table><p><a href="ftp://h/a b\tc">f</a></p>'),
   "call (tel:1# Injected)\n\n## c (tel:2- x)\n\n| d (sms:3\\\\|y) |\n|---|\n\nf (ftp://h/a bc)");
+});
+
+test("other control characters go from a non-web address as shown too", () => {
+  const c = String.fromCharCode;
+  assert.equal(md(`<p><a href="tel:1${c(1)}2${c(0x1b)}[31m3${c(0x7f)}">call</a></p>`), "call (tel:12\\[31m3)");
+});
+
+test("oneLineText: line breaks become spaces, a trailing # run is kept from CommonMark's closing sequence", () => {
+  assert.equal(oneLineText("Moth\n\n# Keeper\r\n- x"), "Moth # Keeper - x");
+  assert.equal(oneLineText("Issue #"), "Issue \\#");
+  assert.equal(oneLineText("Tags ## \t"), "Tags \\## \t");
+  assert.equal(oneLineText("#"), "\\#");
+  assert.equal(oneLineText("C#"), "C#"); // no space before it: not a closing sequence
+  assert.equal(oneLineText("a #1 b"), "a #1 b");
 });
 
 test("a leading non-ASCII space doesn't unmask a scripted scheme", () => {

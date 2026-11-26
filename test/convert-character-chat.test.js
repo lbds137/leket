@@ -151,6 +151,19 @@ test("names, labels, creators and titles show as written; a blank creator or tit
   assert.match(g["CARDS.md"], /\n## Star\\\*Gazer \\\[beta\\\] \(by a \\\*b\\\*\)\n\n`s` · c \\\| \\\[d\\\]\n/);
 });
 
+test("a line break or a trailing # in a name, persona, label, creator or title stays on its one line", () => {
+  const d = { characters: { c1: { name: "Moth\n# Keeper #", creator_username: "a\nb", title: "keeps\n\n- moths" } }, conversations: [
+    { id: "a", character_id: "c1", meta: { label: "Lamp\ntalk #", userPersona: { name: "Wren\r\n## Owl" } },
+      messages: [msg("a1", "user", "hi", T0), msg("a2", "bot", "ho", T0 + MIN)] },
+  ] };
+  const f = byName(plan(collect([exportOf(d)])).files);
+  const conv = f["Lamp-talk #.md"];
+  assert.match(conv, /^# Lamp talk \\#\n\nCharacter chat conversation with \*\*Moth # Keeper \\#\*\* \(character by a b\), /);
+  assert.match(conv, /\n## Wren ## Owl · 2024-03-05 14:03\n\nhi\n/);
+  assert.match(conv, /\n## Moth # Keeper \\# · 2024-03-05 14:04\n\nho\n/);
+  assert.match(f["CARDS.md"], /\n## Moth # Keeper \\# \(by a b\)\n\n`c1` · keeps - moths\n/);
+});
+
 test("a character id '__proto__' is an ordinary key", () => {
   const d = exportData();
   d.characters = JSON.parse('{"__proto__": {"name": "Proto Bot"}}');

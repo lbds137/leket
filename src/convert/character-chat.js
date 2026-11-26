@@ -19,7 +19,7 @@
 //
 // Pure: no file access. bin/leket.js reads the exports and writes what plan() returns.
 import { shown } from "../lib/shown.js";
-import { codeSpan, escapeText } from "../lib/html-md.js";
+import { codeSpan, escapeText, oneLineText } from "../lib/html-md.js";
 import { pyStrip, safeTitle } from "./common.js";
 
 const str = (x) => (typeof x === "string" ? x : "");
@@ -94,15 +94,15 @@ export function render({ id, c, source }, characters, { user = "User", site = "C
     count === msgs.length ? `${msgs.length} messages, as many as the site counts` :
       `${msgs.length} messages saved of ${count} the site counts (the gap is probably regenerated or deleted replies; not checked)`;
   const lines = [
-    `# ${escapeText(label || name)}`,
+    `# ${oneLineText(label || name)}`,
     "",
-    `${site} conversation with **${escapeText(name)}**${creator ? ` (character by ${escapeText(creator)})` : ""}, ${span}; ${gap}. ` +
+    `${site} conversation with **${oneLineText(name)}**${creator ? ` (character by ${oneLineText(creator)})` : ""}, ${span}; ${gap}. ` +
       `Source: ${codeSpan(source) || "(unnamed)"}, conversation ${codeSpan(id)}.`,
     "",
   ];
   for (const m of msgs) {
     const who = m.role === "user" ? persona : name;
-    lines.push(`## ${escapeText(who)} · ${minute(m.createdAt, timeZone) || "undated"}`, "", pyStrip(str(m.content)), "");
+    lines.push(`## ${oneLineText(who)} · ${minute(m.createdAt, timeZone) || "undated"}`, "", pyStrip(str(m.content)), "");
   }
   return { title: label || name, name, messages: msgs.length, text: lines.join("\n"), short: count !== null && count > msgs.length };
 }
@@ -147,7 +147,7 @@ export function plan(collected, { user, site = "Character chat", timeZone = "UTC
   chars.sort(([, , a], [, , b]) => (a < b ? -1 : a > b ? 1 : 0));
   for (const [cid, ch, name] of chars) {
     const creator = text(ch.creator_username), title = text(ch.title);
-    cards.push(`## ${escapeText(name)}${creator ? ` (by ${escapeText(creator)})` : ""}`, "", `${codeSpan(cid)}${title ? ` · ${escapeText(title)}` : ""}`, "");
+    cards.push(`## ${oneLineText(name)}${creator ? ` (by ${oneLineText(creator)})` : ""}`, "", `${codeSpan(cid)}${title ? ` · ${oneLineText(title)}` : ""}`, "");
     for (const field of ["persona", "scenario", "greeting", "dialogue"]) {
       if (text(ch[field])) cards.push(`**${field}:**`, "", text(ch[field]), "");
     }

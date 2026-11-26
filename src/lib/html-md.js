@@ -103,6 +103,13 @@ export function escapeText(s) {
   return out;
 }
 
+// Text for one line of a heading or a header paragraph: escaped, line breaks as spaces (one
+// would end the heading or start a new block), and a run of # at the end kept (CommonMark
+// reads " #…" at a heading's end as a closing sequence and drops it)
+export function oneLineText(s) {
+  return escapeText(s.replace(/[\r\n]+/g, " ")).replace(/(^|[ \t])(#+)([ \t]*)$/, "$1\\$2$3");
+}
+
 // what would make a line start a block: a heading, list, quote, rule or setext underline
 function escapeLineStart(line) {
   return line
@@ -171,9 +178,10 @@ function inline(nodes, ctx) {
         const core = label.slice(lead.length, label.length - trail.length);
         if (!LINKABLE.test(href.trim())) {
           // the address as text, unless scripted or already the label
-          // tabs and line breaks go from the address, as a browser's URL parser drops them: a
-          // line break would end the paragraph, heading or table row
-          const shown = href.trim().replace(/[\t\n\r]/g, "");
+          // control characters go from the address as shown: a browser's URL parser drops tabs
+          // and line breaks (a line break would end the paragraph, heading or table row) and
+          // percent-encodes the rest, which as raw text would only garble the line
+          const shown = href.trim().replace(/[\x00-\x1f\x7f]/g, "");
           const addr = SCRIPTED.test(shown.replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === shown ? "" : escapeText(shown);
           add(!addr ? label : `${lead}${core ? `${core} (${addr})` : addr}${trail}`);
           break;
