@@ -176,7 +176,7 @@ on two lines</span>
 </ytd-comment-view-model></ytd-comment-thread-renderer>
 <ytd-comment-thread-renderer><ytd-comment-view-model>
 <a id="author-text" href="/@cyd">@Cyd Example</a>
-<span id="content-text">another comment without replies</span>
+<span id="content-text">another comment<br>without replies</span>
 <span id="published-time-text"><a href="/watch?v=SmokeVid001&amp;lc=ugxT3">3 days ago</a></span>
 <span id="vote-count-middle"></span>
 </ytd-comment-view-model></ytd-comment-thread-renderer>
@@ -1101,6 +1101,9 @@ async function scenarios(cdp, downloads) {
     const twoLines = saved.comments.find((c) => c.author === "@Bo Example");
     check(!!twoLines && twoLines.text === "a comment without replies\non two lines",
       `youtube: a comment keeps its line break (${twoLines ? JSON.stringify(twoLines.text) : "comment not found"})`);
+    const brLines = saved.comments.find((c) => c.author === "@Cyd Example");
+    check(!!brLines && brLines.text === "another comment\nwithout replies",
+      `youtube: a <br> in a comment reads as a line break (${brLines ? JSON.stringify(brLines.text) : "comment not found"})`);
     const bidi = saved.comments.find((c) => c.likes_numeric === 1200);
     check(!!bidi && bidi.replies.length === 2 && bidi.replies[0].text === "the first reply" && bidi.replies[1].text === "the second reply",
       `youtube: the bidi-likes thread parses 1200 likes and keeps its 2 replies (${bidi ? `${bidi.likes_numeric} likes, ${bidi.replies.length} replies` : "thread not found"})`);

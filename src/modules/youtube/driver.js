@@ -29,11 +29,19 @@ export async function driveYouTube(opts) {
     return el ? clean(el.textContent) : "";
   };
   // a comment's own text keeps its line breaks (the CLI's yt-dlp path keeps them too):
+  // a newline in a text node or a <br> is a break (which one YouTube uses is unprobed);
   // each line is cleaned, blank lines at either end dropped
   const readBlock = (root, sel) => {
     const el = root ? root.querySelector(sel) : null;
     if (!el) return "";
-    return String(el.textContent).replace(bidi, "").split("\n")
+    const parts = [];
+    const walk = (node) => {
+      if (node.nodeType === 3) parts.push(node.data);
+      else if (node.nodeName === "BR") parts.push("\n");
+      else for (const child of node.childNodes) walk(child);
+    };
+    walk(el);
+    return parts.join("").replace(bidi, "").replace(/\r\n?/g, "\n").split("\n")
       .map((l) => l.replace(/[^\S\n]+/g, " ").trim()).join("\n").replace(/^\n+|\n+$/g, "");
   };
 
@@ -139,19 +147,38 @@ export async function driveYouTube(opts) {
     }
     return null;
   };
-  const commentsBox = document.querySelector("ytd-comments");
+  // the section may mount late, and its first batch renders only once it is near the
+  // screen: wait (within the run's budget) for a thread or the continuation, scrolling
+  // the section into view whenever it appears, before deciding there's nothing to load
+  let commentsBox = null;
+  let scrolledBox = null;
+  const firstEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
+  for (;;) {
+    commentsBox = document.querySelector("ytd-comments");
+    if (commentsBox && commentsBox !== scrolledBox) {
+      try { commentsBox.scrollIntoView(); } catch { /* nowhere to scroll */ }
+      scrolledBox = commentsBox;
+    }
+    if (threadCount() > 0 || topContinuation() || Date.now() >= firstEnd) break;
+    await sleep(stepMs / 2);
+  }
   if (commentsBox) {
-    try { commentsBox.scrollIntoView(); } catch { /* nowhere to scroll */ }
-    // the first batch renders only once the section is near the screen: wait for a
-    // thread or the continuation before deciding there's nothing to load
-    const firstEnd = Date.now() + transcriptWaitMs;
-    while (Date.now() < firstEnd && threadCount() === 0 && !topContinuation()) await sleep(stepMs / 2);
     const line = say("Loading comments: " + threadCount() + " so far…");
     let threads = threadCount();
     let stalls = 0;
+    // YouTube may drop the old continuation a moment before the next batch brings its
+    // replacement: the list is only finished once it has stayed gone a few steps
+    let goneSteps = 0;
     while (Date.now() < deadline) {
       const cont = topContinuation();
-      if (!cont) break;
+      if (!cont) {
+        if (++goneSteps >= 3) break;
+        await sleep(stepMs);
+        const now = threadCount();
+        if (now > threads) { threads = now; line.textContent = "Loading comments: " + threads + " so far…"; }
+        continue;
+      }
+      goneSteps = 0;
       if (stalls >= stallSteps) {
         metadata.comments_note = "YouTube stopped loading more comments after " + threads + " threads.";
         break;
@@ -165,39 +192,37 @@ export async function driveYouTube(opts) {
     }
   }
 
-  // ---- replies: rounds of clicking every thread's #more-replies (each once — the
-  // clicked buttons are tracked in a WeakSet) and every replies-continuation button,
-  // visible or not, waiting half a step after each. A round that found nothing may
-  // just be ahead of the DOM, so it waits a beat before counting as empty; stallSteps
-  // empty rounds in a row, or maxMs, end the phase ----
+  // ---- replies: rounds of clicking every thread's #more-replies (once each) and every
+  // replies-continuation button (up to 3 times each: a click can land before the button
+  // is ready, and YouTube may or may not reuse one element per "more replies" page:
+  // unprobed, so TASK-29's notes carry it for the live check), visible or not, half a
+  // step apart. Clicks are counted per element in a WeakMap, so a button that never
+  // answers runs out of tries. A round is progress only when replies grew or a button
+  // never clicked before turned up; stallSteps rounds without progress, or maxMs, end
+  // the phase ----
   say("Opening replies…");
-  const clicked = new WeakSet();
+  const tries = new WeakMap();
   let emptyRounds = 0;
   while (Date.now() < deadline && emptyRounds < stallSteps) {
-    const toClick = [];
+    const toClick = new Set();
     for (const b of document.querySelectorAll("ytd-comment-replies-renderer #more-replies button")) {
-      if (!clicked.has(b)) toClick.push(b);
+      if (!tries.has(b)) toClick.add(b);
     }
-    // each continuation button once too: a button that never answers must not keep the
-    // phase alive until maxMs. If YouTube reused one element for every "more replies"
-    // (unprobed), only the first page of a long reply chain would load: the reply-count
-    // check in the smoke can't see that, so TASK-29's notes carry it for the live check
     for (const b of document.querySelectorAll("ytd-comment-replies-renderer ytd-continuation-item-renderer button")) {
-      if (!clicked.has(b)) toClick.push(b);
+      if ((tries.get(b) || 0) < 3) toClick.add(b);
     }
+    let fresh = 0;
     const before = replyCount();
     for (const b of toClick) {
+      if (!b.isConnected || b.disabled) continue;
+      if (!tries.has(b)) fresh++;
+      tries.set(b, (tries.get(b) || 0) + 1);
       try { b.scrollIntoView(); } catch { /* nowhere to scroll */ }
       b.click();
-      clicked.add(b);
       await sleep(stepMs / 2);
     }
-    let after = replyCount();
-    if (toClick.length === 0) {
-      await sleep(stepMs / 2);
-      after = replyCount();
-    }
-    if (toClick.length > 0 || after > before) emptyRounds = 0; else emptyRounds++;
+    if (fresh === 0) await sleep(stepMs / 2);
+    if (fresh > 0 || replyCount() > before) emptyRounds = 0; else emptyRounds++;
   }
 
   // ---- the threads, read into the shape buildExtract takes: the top comment is the
@@ -246,9 +271,10 @@ export async function driveYouTube(opts) {
   }
 
   if (comments.length === 0 && !metadata.comments_note) {
+    // the driver can't tell an empty or switched-off section from one that never loaded
     metadata.comments_note = commentsBox
-      ? "YouTube showed no comments for this video."
-      : "This page has no comment section (comments may be turned off).";
+      ? "No comments were collected: the section showed none before the driver moved on."
+      : "No comments were collected: the page never showed a comment section (comments may be turned off).";
   }
   const replyTotal = comments.reduce((n, c) => n + c.replies.length, 0);
   say("Done: " + comments.length + " comments, " + replyTotal + " replies, " + transcript.length
