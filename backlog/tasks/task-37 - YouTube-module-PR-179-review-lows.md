@@ -4,7 +4,7 @@ title: 'YouTube module: PR #179 review lows'
 status: To Do
 assignee: []
 created_date: '2026-11-26T03:43:00Z'
-updated_date: '2026-11-26T06:18:00Z'
+updated_date: '2026-11-26T06:22:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -25,4 +25,6 @@ Live-check items carried from TASK-29 (closed), for the first real run on a larg
 Items 1-3, 5-7 DONE (branch task-37-youtube-lows, 0.6.6): (1) duplicated onLate comment line removed; (2) package.json description names YouTube, and Messenger (also missing; manifest has both); (3) GIVE_UP_MS timer cleared in a finally; (5) the overlay lingers 6 s after Done or the video-changed stop, then fades (.6s; removed at once under prefers-reduced-motion), unless a newer run took the panel; a superseded run no longer writes into the newer run's panel (say() checks the run token); (7) the transcript line ends as 'Transcript: N lines.' or 'Transcript: none. <note>'. (6) covered in the smoke, not node unit tests (the driver is DOM-only and the repo has no DOM library; adding jsdom for one module ruled out): a youtube-old scenario serves the ytd-transcript-segment-renderer A/B and lc-less replies with one re-rendered; readBlock was already covered (\n and <br> checks). Red-first: main's driver fails the two overlay checks; removing the author+text fallback and the old-renderer branch fails the two youtube-old checks. Accessibility: white on #1e1f22 ~16.5:1 by luminance arithmetic, theme-independent (panel paints its own background); no colour signal; no targets. Item 4 stays open: live-run gated (wall time of the serial reply clicks on a ~1500-thread video), with the live-check items (a)-(d) above.
 
 Council review (openai/gpt-5.5; agy at its week cap, z.ai never reviews Claude work) of fd893ef: no blockers; token races, TDZ and the smoke checks judged sound. Applied: runToken set before say (no TDZ trap for a future early say) with an owned() helper. Ruled out: a Symbol/UUID token (a Math.random collision between two runs on one tab is not a real risk); guarding the detached transcriptLine write (harmless on a detached node).
+
+#189 claude-review (PASS, 3 lows): (2) smoke overlay read raced the 6 s linger: lines now polled from the run's start (overlayDone) [decided, test-only]; (3) youtube-old checks the overlay and runs under emulated prefers-reduced-motion, asserting the panel goes with no opacity fade (red-first: disabling the reduced-motion branch fails it). (1) a stop during the transcript wait leaves the overlay line saying 'YouTube shows no transcript' (only reachable on video-changed in the first ~15 s; time can't fire there, superseded and video-changed save nothing): user-visible wording, asked of Lila 11-26.
 <!-- SECTION:NOTES:END -->
