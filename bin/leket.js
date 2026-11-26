@@ -1027,7 +1027,14 @@ export async function readSignalExports(paths) {
 export async function convertSignal(paths, { out = ".", names = {}, tz = "", title, base } = {}) {
   let planned;
   try {
-    planned = planSignal(await readSignalExports(paths), { title, base, names, timeZone: tz });
+    const exports = await readSignalExports(paths);
+    // counted once read: one folder can hold many, two paths can be one file
+    const one = [["title", title], ["base", base]].find(([, x]) => x !== undefined);
+    if (one && exports.length > 1) {
+      process.stderr.write(`leket: --${one[0]} goes with one export (it names that one conversation's file); ${exports.length} were given.\n`);
+      return 2;
+    }
+    planned = planSignal(exports, { title, base, names, timeZone: tz });
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
@@ -1058,9 +1065,6 @@ async function convertSignalMain(args) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   const bad = convertOptionError(v, ["title"]);
   if (bad) return fail(bad);
-  for (const k of ["title", "base"]) {
-    if (v[k] !== undefined && positionals.length > 1) return fail(`--${k} goes with one export (it names that one conversation's file)`);
-  }
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
   const names = Object.create(null); // no prototype: a display name can be any word
   for (const n of v.name || []) {

@@ -28,6 +28,9 @@
 //   - a name is the label --name gives the export's display name, else its first word
 //     (the original showed its owner's name as a fixed label); an empty name is shown
 //     as "(no name)" (the original stopped)
+//   - "*** <Name>" is a file only when "sent file" follows, and a name ends at a ">" that
+//     a space or the line's end follows (the original took any "*** <…>" as a person's
+//     line and cut a name at its first ">")
 //   - a header whose date can't be read (a month not in English, a day that doesn't
 //     exist) stops the run with its line number, as the original did, saying which line
 //   - a file with no message stops with a message (the original failed on it), and the
@@ -38,12 +41,15 @@ import { clock } from "../modules/discord/convert.js";
 import { PYSPACE, safeTitle } from "./common.js";
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// the date as the export writes it (strftime "%b %d, %Y %H:%M:%S" in the exporter's locale;
-// \p{L}: a month in another language is still seen as a header, and refused)
-const DATE = String.raw`\[(\p{L}{3}) (\d{2}), (\d{4}) (\d{2}):(\d{2}):(\d{2})\] `;
-// s: the text can hold line and paragraph separators, which a plain . skips
-const MESSAGE = new RegExp(`^${DATE}(\\*\\*\\* )?<([^>]*)> ?(.*)$`, "su");
-const EVENT = new RegExp(`^${DATE}\\*\\*\\* (.*)$`, "su");
+// the date as the export writes it (strftime "%b %d, %Y %H:%M:%S" in the exporter's locale:
+// any month word, "März", "janv." or "3月", is seen as a header, and refused unless English)
+const DATE = String.raw`\[(?<mon>[^\s\]]+) (?<d>\d{2}), (?<y>\d{4}) (?<hh>\d{2}):(?<mm>\d{2}):(?<ss>\d{2})\] `;
+// s: the text can hold line and paragraph separators, which a plain . skips. A name ends
+// at the first ">" followed by a space or the line's end, so one holding ">" stays whole.
+const FILE = new RegExp(String.raw`^${DATE}\*\*\* <(?<who>.*?)> (?<text>sent file(?: .*)?)$`, "su");
+const MESSAGE = new RegExp(String.raw`^${DATE}<(?<who>.*?)>(?: (?<text>.*)|$)`, "su");
+// one of Signal's own events: any other "*** " line, one starting with "<" too
+const EVENT = new RegExp(String.raw`^${DATE}\*\*\* (?<text>.*)$`, "su");
 const RSTRIP = new RegExp(`[${PYSPACE}]+$`);
 const local = clock("UTC"); // the times have no zone: kept as UTC so they print as written
 
@@ -60,25 +66,26 @@ export function parse(text) {
   const entries = [];
   let messages = 0, events = 0;
   for (const [i, line] of lines.entries()) {
-    const m = MESSAGE.exec(line) || EVENT.exec(line);
+    const file = FILE.exec(line), message = !file && MESSAGE.exec(line), event = !file && !message && EVENT.exec(line);
+    const m = file || message || event;
     if (!m) {
       entries.at(-1)?.lines.push(line); // a line before the first header has no message to go in
       continue;
     }
-    const [, mon, d, y, hh, mm, ss] = m;
+    const { mon, d, y, hh, mm, ss, who, text: said = "" } = m.groups;
     const month = MON.indexOf(mon);
-    const ms = Date.UTC(+y, month, +d, +hh, +mm, +ss);
-    const t = new Date(ms);
-    if (month < 0 || t.getUTCDate() !== +d || t.getUTCHours() !== +hh || +mm > 59 || +ss > 59) {
+    const t = new Date(Date.UTC(2000, month, +d, +hh, +mm, +ss));
+    t.setUTCFullYear(+y, month, +d); // Date.UTC reads years 0-99 as 1900-1999
+    const ms = t.getTime();
+    // a year before 1000 isn't Signal's (and wouldn't print as four digits)
+    if (month < 0 || +y < 1000 || t.getUTCFullYear() !== +y || t.getUTCDate() !== +d || t.getUTCHours() !== +hh || +mm > 59 || +ss > 59) {
       throw new Error(`line ${i + 1}: can't read the date "${mon} ${d}, ${y} ${hh}:${mm}:${ss}" (the export's months must be in English)`);
     }
-    // groups 1-6 are the date; then EVENT has its text, MESSAGE its "*** ", name and text
-    if (m.length === 8) {
-      entries.push({ ms, who: null, event: true, lines: [`[${m[7]}]`] });
+    if (event) {
+      entries.push({ ms, who: null, event: true, lines: [`[${said}]`] });
       events++;
     } else {
-      const body = m[7] ? `[${m[9]}]` : m[9];
-      entries.push({ ms, who: m[8], event: false, lines: [body] });
+      entries.push({ ms, who, event: false, lines: [file ? `[${said}]` : said] });
       messages++;
     }
   }
