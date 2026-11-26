@@ -27,9 +27,12 @@ if (tabId == null) say(NO_TAB, "warn");
 // one run at a time: the run that starts on load and a "Save again" click must not
 // interleave their downloads
 let running = false;
+// a late download's word reaches the status line only while its run is the newest
+let runSeq = 0;
 const run = async () => {
   if (running) return;
   running = true;
+  const seq = ++runSeq;
   try {
     if (tabId == null) {
       say(NO_TAB, "warn");
@@ -49,11 +52,41 @@ const run = async () => {
       say("This tab is no longer on a YouTube watch page — go back to the video, click the toolbar button, and start again.", "warn");
       return;
     }
-    say("Reading the transcript and comments from the YouTube tab… keep both tabs open, the video in front. Its own corner panel says how far along it is.");
-    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: driveYouTube });
+    // the video tab must be in front while the driver scrolls (Chrome throttles a
+    // background tab's timers); pressing "Save again" here just put it behind, so it
+    // comes forward first
+    say("Reading the transcript and comments from the YouTube tab, which Leket brings to the front… keep both tabs open and the video in front. Its own corner panel says how far along it is.");
+    try {
+      await chrome.tabs.update(tabId, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+    } catch { /* the injection below reports a tab that's gone */ }
+    // the driver ends on its own within its 15-minute budget; a tab that's frozen or
+    // discarded never answers, so the page stops waiting a little after that. A late
+    // answer is ignored, and the next run's token stops the old driver
+    const GIVE_UP_MS = 17 * 60 * 1000;
+    let injection;
+    try {
+      [injection] = await Promise.race([
+        chrome.scripting.executeScript({ target: { tabId }, func: driveYouTube }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), GIVE_UP_MS)),
+      ]);
+    } catch (err) {
+      say((err && err.message) === "timeout"
+        ? "The YouTube tab stopped answering — reload it, keep it in front, and press Save again."
+        : `Leket couldn't read the YouTube tab (${(err && err.message) || err}) — reload the video, keep it in front, and press Save again.`, "warn");
+      return;
+    }
     const result = injection && injection.result;
     if (!result || !result.metadata) {
       say("Nothing came back from the YouTube tab — keep the video tab in front, reload it, and press Save again.", "warn");
+      return;
+    }
+    if (result.aborted === "video-changed") {
+      say("The YouTube tab moved to another video during the save, so nothing was saved — go back to the video and press Save again.", "warn");
+      return;
+    }
+    if (result.aborted === "superseded") {
+      say("A newer save took over the YouTube tab, so this one saved nothing — let that one finish.", "warn");
       return;
     }
     const { metadata, transcript = [], comments = [] } = result;
@@ -75,12 +108,20 @@ const run = async () => {
         saved = await trackDownload(chrome.downloads, { url, filename: name, conflictAction: "overwrite" }, {
           // a save with no word in 15 minutes may still be reading the blob URL: free
           // it only once the download truly ends
-          onLate: () => URL.revokeObjectURL(url),
+          // it only once the download truly ends, and say how it ended if no newer run
+          // has taken over the status line
+          onLate: (ok) => {
+            URL.revokeObjectURL(url);
+            if (seq !== runSeq) return;
+            say(ok ? `${name} finished saving after all.`
+              : `${name} didn't finish — see Chrome's downloads, then press Save again.`, ok ? "ok" : "warn");
+          },
         });
       } catch (err) {
         // a refused download started nothing and watches nothing: the URL is freed here
         URL.revokeObjectURL(url);
-        throw err;
+        say(`Chrome refused to save ${name} (${(err && err.message) || err}) — check Chrome's download settings, then press Save again.`, "warn");
+        return;
       }
       if (saved !== null) URL.revokeObjectURL(url);
       if (saved === false) failed = failed || name;

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Leket: YouTube</title>
 <style>
 :root{--bg:#fff;--fg:#1e1f22;--muted:#4e5058;--line:#e3e5e8;--warn:#7d4600;--ok:#116329;--accent:#3945d1}
@@ -25,7 +26,7 @@ button{font:inherit;margin:4px 12px 4px 0}
 <h2>Save transcript and comments</h2>
 <p class="advice">Reads the transcript panel and every comment — replies included — from the YouTube tab this page was opened from, and saves one Markdown file with its JSON alongside. The save starts on its own and needs both tabs open, with the video in front: the comments load as that page scrolls.</p>
 <button id="run">Save again</button>
-<p id="status" hidden></p>
+<p id="status" role="status" aria-live="polite" hidden></p>
 </section>
 </main>
 <script type="module" src="page.js"></script>
