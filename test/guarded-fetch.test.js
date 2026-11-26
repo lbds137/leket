@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { brotliCompressSync, createGzip, gzipSync } from "node:zlib";
+import { brotliCompressSync, createGzip, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
 
 import { guardedFetch, LEKET_UA, makeLookup } from "../src/lib/guarded-fetch.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
@@ -118,6 +118,16 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     // an encoding named like an Object.prototype property
     else if (req.url === "/proto.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "constructor" }); res.end("??"); }
     else if (req.url === "/br.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "br" }); res.end(brotliCompressSync(Buffer.from([7, 8]))); }
+    else if (req.url === "/deflate.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" }); res.end(deflateSync(Buffer.from([9, 10]))); }
+    else if (req.url === "/deflate-raw.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" }); res.end(deflateRawSync(Buffer.from([11, 12]))); }
+    else if (req.url === "/corrupt-gz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" }); res.end(Buffer.from("not gzipped at all")); }
+    else if (req.url === "/trunc-gz.png") {
+      // a connection cut before the body completes: the response errors, the body never finishes
+      const gz = gzipSync(Buffer.from([13, 14]));
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip", "content-length": String(gz.length + 20) });
+      res.write(gz.subarray(0, gz.length - 2));
+      setTimeout(() => res.destroy(), 25);
+    }
     else if (req.url === "/zz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "zz" }); res.end("??"); }
     else { res.writeHead(200, { "content-type": "image/png" }); res.end(Buffer.from([1])); }
   });
@@ -130,6 +140,11 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     assert.equal(asked["user-agent"], LEKET_UA);
     assert.equal(asked["accept-encoding"], "identity");
     assert.equal(asked.accept, "*/*");
+    // Headers instances and arrays of pairs reach the request
+    await (await guardedFetch(`${base}/a.png`, { lookup: direct, ca: tls.cert, headers: new Headers({ "x-custom": "from-headers" }) })).arrayBuffer();
+    assert.equal(asked["x-custom"], "from-headers");
+    await (await guardedFetch(`${base}/a.png`, { lookup: direct, ca: tls.cert, headers: [["x-pair", "from-pairs"]] })).arrayBuffer();
+    assert.equal(asked["x-pair"], "from-pairs");
     const gz = await guardedFetch(`${base}/gz.png`, { lookup: direct, ca: tls.cert });
     assert.deepEqual(new Uint8Array(await gz.arrayBuffer()), new Uint8Array([4, 5, 6]));
     assert.equal(gz.headers.get("content-encoding"), null, "the headers describe the decoded bytes");
@@ -138,12 +153,23 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
       (e) => e.code === "EENCODING" && /encoded as constructor/.test(e.message));
     const br = await guardedFetch(`${base}/br.png`, { lookup: direct, ca: tls.cert });
     assert.deepEqual(new Uint8Array(await br.arrayBuffer()), new Uint8Array([7, 8]));
+    const def = await guardedFetch(`${base}/deflate.png`, { lookup: direct, ca: tls.cert });
+    assert.deepEqual(new Uint8Array(await def.arrayBuffer()), new Uint8Array([9, 10]));
+    const defRaw = await guardedFetch(`${base}/deflate-raw.png`, { lookup: direct, ca: tls.cert });
+    assert.deepEqual(new Uint8Array(await defRaw.arrayBuffer()), new Uint8Array([11, 12]));
+    const badGz = await guardedFetch(`${base}/corrupt-gz.png`, { lookup: direct, ca: tls.cert });
+    await assert.rejects(badGz.arrayBuffer(), (e) => e.code === "EDECODE" && e.coding === "gzip");
+    // a cut connection is not a corrupt body: the wrapped upstream error carries no EDECODE tag
+    const trunc = await guardedFetch(`${base}/trunc-gz.png`, { lookup: direct, ca: tls.cert });
+    await assert.rejects(trunc.arrayBuffer(), (e) => !e.code && !/corrupt/.test(e.message));
     await assert.rejects(guardedFetch(`${base}/zz.png`, { lookup: direct, ca: tls.cert }),
       (e) => e.code === "EENCODING" && /not fetched: the server sent it encoded as zz/.test(e.message));
     // fetchImageData passes that refusal on as its own reason, not "couldn't reach it"
     const viaImage = (url, opts) => guardedFetch(url, { ...opts, lookup: direct, ca: tls.cert });
     await assert.rejects(fetchImageData({ n: 1, u: `${base}/zz.png`, ext: "" }, { fetch: viaImage }),
       { message: "not fetched: the server sent it encoded as zz" });
+    await assert.rejects(fetchImageData({ n: 1, u: `${base}/corrupt-gz.png`, ext: "" }, { fetch: viaImage }),
+      (e) => /^couldn't read it \(the server sent it encoded as gzip, but the body is corrupt: .+\)$/.test(e.message));
   } finally {
     server.close();
   }
