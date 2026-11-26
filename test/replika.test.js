@@ -404,6 +404,49 @@ test("readDiary: a day reply without an entries array counts as a failed day", a
   assert.equal(days.length, 0);
 });
 
+test("readDiary: the same date twice in one page is listed, requested and recorded once", async () => {
+  const fn = fakeFetch(diaryRoutes(
+    { "": [li("2026-02-02", "First copy"), li("2026-02-02", "Second copy"), li("2026-02-01")], "2026-02-01": [] },
+    { "2026-02-01": dayOf("2026-02-01"), "2026-02-02": dayOf("2026-02-02") },
+  ));
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(partial, null);
+  assert.deepEqual(list.map((i) => i.date), ["2026-02-02", "2026-02-01"]);
+  assert.equal(list[0].title, "First copy"); // the first item for a date wins
+  assert.deepEqual(days.map((d) => d.date), ["2026-02-01", "2026-02-02"]);
+  assert.equal(fn.calls.filter((c) => c.url === DAY_URL("2026-02-02")).length, 1);
+});
+
+test("readDiary: a page of only newer unseen dates keeps its days but never moves `until` forward", async () => {
+  let afterFirst = 0;
+  const fn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply([li("2026-03-05"), li("2026-03-04")]);
+    if (url === LIST_URL("2026-03-04")) return reply(afterFirst++ === 0 ? [li("2026-03-10")] : []);
+    if (url.startsWith(`${DIARY_LIST_URL}/`)) return reply(dayOf(url.slice(url.lastIndexOf("/") + 1)));
+    throw new Error(`unexpected ${url}`);
+  });
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(partial, null);
+  assert.deepEqual(fn.calls.map((c) => c.url).filter((u) => u.includes("?limit=")), [LIST_URL(), LIST_URL("2026-03-04"), LIST_URL("2026-03-04")]);
+  assert.deepEqual(list.map((i) => i.date), ["2026-03-05", "2026-03-04", "2026-03-10"]); // the newer day is real: kept
+  assert.deepEqual(days.map((d) => d.date), ["2026-03-04", "2026-03-05", "2026-03-10"]);
+});
+
+test("readDiary: a day reply for another date counts as a failed day and keeps the days already read", async () => {
+  const fn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply([li("2026-02-02"), li("2026-02-01")]);
+    if (url === LIST_URL("2026-02-01")) return reply([]);
+    if (url === DAY_URL("2026-02-01")) return reply(dayOf("2026-02-01"));
+    if (url === DAY_URL("2026-02-02")) return reply(dayOf("2026-02-09")); // answers a different day
+    throw new Error(`unexpected ${url}`);
+  });
+  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(partial, DIARY_PARTIAL);
+  assert.equal(signedOut, false);
+  assert.equal(list.length, 2);
+  assert.deepEqual(days.map((d) => d.date), ["2026-02-01"]);
+});
+
 test("readDiary: a 401 on the list keeps nothing but names the sign-in reason and marks the step signed out", async () => {
   const fn = fakeFetch(() => reply({}, 401));
   const { days, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
