@@ -16,10 +16,11 @@ import {
   HISTORY_SOCKET, HISTORY_NO_LIST, HISTORY_NO_DATE, HISTORY_STUCK, HISTORY_CLOSED,
   HISTORY_SILENT, DIARY_PARTIAL, DIARY_DAYS_SKIPPED, DIARY_STUCK, DIARY_PAGE_CAP, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
   MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED, MEDIA_HOST_NOT_REPLIKA,
+  MAX_MEDIA_BYTES, MEDIA_TOO_LARGE,
 } from "../src/modules/replika/api.js";
 import {
   buildMessage, buildDiary, buildFact, tallyUnknown, makeMediaNamer, safeId, extFor,
-  collectMedia, runSave, buildZip, saveName, downloadOptions, problems, endLine, render,
+  collectMedia, runSave, buildZip, saveName, downloadOptions, downloadParts, downloadProblem, problems, endLine, render,
   MSG_ALLOWED, DIARY_LIST_ALLOWED, DIARY_DAY_ALLOWED, FACT_ALLOWED, MEDIA_SIGN_FAILED, STEP_FAILED,
 } from "../src/modules/replika/save.js";
 import { md5 } from "../src/lib/md5.js";
@@ -1126,6 +1127,96 @@ test("collectMedia: a picture whose fetch is refused for its redirect is not cap
   assert.equal(files.length, 2);
   assert.deepEqual(fetched.map((f) => f.redirect), ["follow", "error", "error", "error", "error"]); // voice, 3 tries of m1, m2
   assert.equal(fetched[1].url, signed); // the signed link, query and all, is what gets fetched
+});
+
+test("collectMedia: a file over the 50 MB cap is not captured with its own reason, fetched once, and the next still saves", async () => {
+  const big = "https://s3-us-west-1.amazonaws.com/replika-content-images/big.png";
+  const fetched = [];
+  const fn = async (url, init) => {
+    if (url === GET_URL) return reply({ image_url: JSON.parse(init.body).image_url.includes("big") ? big : "https://s3-us-west-1.amazonaws.com/replika-content-images/ok.png" });
+    fetched.push(url);
+    // the oversized one says so in its length; its body is never read
+    if (url === big) return new Response(new Uint8Array([1]), { headers: { "content-type": "image/png", "content-length": String(MAX_MEDIA_BYTES + 1) } });
+    return new Response(new Uint8Array([1]), { headers: { "content-type": "image/png" } });
+  };
+  const plans = [planFor("m1", "images", "https://cdn.example.org/big.png"), planFor("m2", "images", "https://cdn.example.org/ok.png")];
+  const { files } = await collectMedia(plans, { auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(MEDIA_TOO_LARGE, "the file is over 50 MB");
+  assert.equal(MAX_MEDIA_BYTES, 50 * 1048576);
+  assert.equal(plans[0].record.not_captured, MEDIA_TOO_LARGE);
+  assert.ok(!plans[0].record.media);
+  assert.equal(plans[1].record.media, "media/m2.png");
+  assert.equal(files.length, 1);
+  assert.deepEqual(fetched, [big, "https://s3-us-west-1.amazonaws.com/replika-content-images/ok.png"]); // the big one once, no retry
+});
+
+// ---- the download of the parts ----
+
+// a stand-in for trackDownload: answers each part in turn from `answers`
+const downloader = (answers) => {
+  const requests = [];
+  const lates = [];
+  return {
+    requests, lates,
+    download: async (request, opts) => {
+      requests.push(request);
+      lates.push(opts.onLate);
+      const a = answers[requests.length - 1];
+      if (a instanceof Error) throw a;
+      return a;
+    },
+  };
+};
+const urlStore = () => {
+  let n = 0;
+  const live = new Set();
+  return { live, createObjectURL: () => { const u = `blob:part-${++n}`; live.add(u); return u; }, revokeObjectURL: (u) => live.delete(u) };
+};
+const threeParts = ["a-part1-of-3.zip", "a-part2-of-3.zip", "a-part3-of-3.zip"].map((name) => ({ name, blob: new Blob([name]) }));
+
+test("downloadParts: a multi-part save stops at the part that fails, and the line names it and how many landed", async () => {
+  const d = downloader([true, false, true]);
+  const urls = urlStore();
+  const said = [], landedAt = [];
+  const result = await downloadParts(threeParts, { download: d.download, urls,
+    onPart: (part, landed) => said.push(`${part.name} ${landed}`), onLanded: (n) => landedAt.push(n) });
+  assert.deepEqual(result, { ok: false, noWord: false, landed: 1, failedPart: threeParts[1] });
+  assert.deepEqual(d.requests.map((r) => r.filename), ["a-part1-of-3.zip", "a-part2-of-3.zip"]); // part 3 never starts
+  assert.ok(d.requests.every((r) => r.conflictAction === "uniquify"));
+  assert.deepEqual(said, ["a-part1-of-3.zip 0", "a-part2-of-3.zip 1"]);
+  assert.deepEqual(landedAt, [1]);
+  assert.equal(urls.live.size, 0, "both parts' URLs are freed");
+  assert.deepEqual(downloadProblem(result, { total: 3, filename: "a.zip" }), {
+    text: "The download of a-part2-of-3.zip didn't finish — Chrome interrupted or refused it. 1 of 3 parts were saved. See Chrome's downloads, then save again.",
+    cls: "warn",
+  });
+});
+
+test("downloadParts: one file that fails, a part with no word, a refused download, and all landing", async () => {
+  const one = [{ name: "a.zip", blob: new Blob(["x"]) }];
+  const failed = await downloadParts(one, { download: downloader([false]).download, urls: urlStore() });
+  assert.deepEqual(downloadProblem(failed, { total: 1, filename: "a.zip" }), {
+    text: "The download didn't finish — Chrome interrupted or refused it, and a.zip was not saved. See Chrome's downloads, then save again.",
+    cls: "warn",
+  });
+  // no word: stops, and that part's URL stays live until its late end frees it
+  const d = downloader([true, null]);
+  const urls = urlStore();
+  const quiet = await downloadParts(threeParts, { download: d.download, urls });
+  assert.deepEqual(quiet, { ok: true, noWord: true, landed: 1, failedPart: null });
+  assert.deepEqual([...urls.live], ["blob:part-2"]);
+  d.lates[1](true);
+  assert.equal(urls.live.size, 0);
+  assert.equal(downloadProblem(quiet, { total: 3, filename: "a.zip" }).text,
+    "No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends.");
+  // a refused download (a synchronous throw) frees its URL and passes the throw on
+  const urls2 = urlStore();
+  await assert.rejects(downloadParts(threeParts, { download: downloader([new Error("Invalid filename")]).download, urls: urls2 }), /Invalid filename/);
+  assert.equal(urls2.live.size, 0);
+  // every part landed: no problem line, the end line follows
+  const all = await downloadParts(threeParts, { download: downloader([true, true, true]).download, urls: urlStore() });
+  assert.deepEqual(all, { ok: true, noWord: false, landed: 3, failedPart: null });
+  assert.equal(downloadProblem(all, { total: 3, filename: "a.zip" }), null);
 });
 
 test("collectMedia: a voice clip is fetched by its own link with no sign call, and lands as .m4a", async () => {

@@ -24,7 +24,10 @@ export const restBetweenFiles = () => 500 + Math.random() * 500;
 // stretches at a time, so the retries back off: wait, 2×wait, 3×wait…
 // `signal` is the save's stop: it drops the try in flight and cuts a back-off short, and
 // the answer is then { stopped: true } (no error of its own: the stop is the reason).
-export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, idle = 60000, signal } = {}) {
+// `maxBytes` (left out: no cap) refuses a file that says or turns out to be larger, before
+// it is held whole: { error, tooBig: true }, not tried again (a retry gets the same file).
+export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, idle = 60000, signal, maxBytes = Infinity } = {}) {
+  const tooBig = { error: `over ${maxBytes} bytes`, tooBig: true };
   let last;
   for (let i = 0; i < tries; i++) {
     if (signal?.aborted) return { stopped: true };
@@ -45,6 +48,12 @@ export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, 
         if (resp.status === 403 || resp.status === 404) return { error: `link expired or gone (HTTP ${resp.status})` };
         throw new Error(`HTTP ${resp.status}`);
       }
+      // a compressed response's length is the compressed size, not the file's
+      const expected = resp.headers.get("content-encoding") ? 0 : Number(resp.headers.get("content-length") || 0);
+      if (expected > maxBytes) {
+        resp.body?.cancel().catch(() => {});
+        return tooBig;
+      }
       const pieces = [];
       let crc = 0, size = 0;
       const reader = resp.body.getReader();
@@ -52,12 +61,14 @@ export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, 
         quiet();
         const { done, value } = await reader.read();
         if (done) break;
-        crc = crc32(value, crc);
         size += value.length;
+        if (size > maxBytes) {
+          reader.cancel().catch(() => {});
+          return tooBig;
+        }
+        crc = crc32(value, crc);
         pieces.push(value);
       }
-      // a compressed response's length is the compressed size, not the file's
-      const expected = resp.headers.get("content-encoding") ? 0 : Number(resp.headers.get("content-length") || 0);
       if (expected && size !== expected) throw new Error(`got ${size} of ${expected} bytes`);
       return { blob: new Blob(pieces), crc };
     } catch (e) {

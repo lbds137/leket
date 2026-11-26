@@ -30,6 +30,11 @@ export const MEDIA_LINK_UNUSABLE = "the picture's link was not usable";
 export const MEDIA_VOICE_LINK_UNUSABLE = "the voice clip's link was not usable";
 export const MEDIA_FETCH_FAILED = "the file host refused or failed";
 export const MEDIA_HOST_NOT_REPLIKA = "the picture's link points outside Replika's picture storage";
+// the per-file cap on a picture or voice clip, so one oversized file can't exhaust the
+// memory the zip is built in (the same cap as Reddit's images)
+const MAX_MEDIA_MB = 50;
+export const MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1048576;
+export const MEDIA_TOO_LARGE = `the file is over ${MAX_MEDIA_MB} MB`;
 
 // an error whose message is one of this module's fixed, secret-free texts
 // (status: the HTTP status when the call got one, else null)

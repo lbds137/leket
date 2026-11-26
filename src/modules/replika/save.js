@@ -8,7 +8,7 @@
 import { ZipWriter } from "../../lib/zip.js";
 import { esc } from "../../lib/render.js";
 import { fetchFile } from "../../lib/build.js";
-import { readHistory, readDiary, readMemories, signedImageUrl, usableMediaUrl, replikaPictureUrl, SignedOut, ApiError, MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED, MEDIA_HOST_NOT_REPLIKA } from "./api.js";
+import { readHistory, readDiary, readMemories, signedImageUrl, usableMediaUrl, replikaPictureUrl, SignedOut, ApiError, MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED, MEDIA_HOST_NOT_REPLIKA, MAX_MEDIA_BYTES, MEDIA_TOO_LARGE } from "./api.js";
 
 // fixed reasons for an unexpected throw: its own text never reaches an output
 export const MEDIA_SIGN_FAILED = "Replika didn't give a link for this file";
@@ -276,9 +276,9 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
       continue;
     }
     // 3 tries a second apart: a host that refuses fails in ~3 s a file, not ~30 s
-    const got = await fetchFile(target, { fetchFn: noted(picture ? "error" : "follow"), tries: 3, wait: 1000 });
+    const got = await fetchFile(target, { fetchFn: noted(picture ? "error" : "follow"), tries: 3, wait: 1000, maxBytes: MAX_MEDIA_BYTES });
     if (got.error) {
-      plan.record.not_captured = MEDIA_FETCH_FAILED;
+      plan.record.not_captured = got.tooBig ? MEDIA_TOO_LARGE : MEDIA_FETCH_FAILED;
     } else {
       const type = (types.get(target) || "").split(";")[0].trim();
       const fileName = name(plan.record.id, type);
@@ -435,6 +435,50 @@ export function saveName(now) {
 // not replace a complete one
 export function downloadOptions(filename) {
   return { filename, conflictAction: "uniquify" };
+}
+
+// The parts' downloads, one after another, stopping at the first that fails or goes quiet.
+// `download(request, { onLate })` is trackDownload over chrome.downloads (true, false, or
+// null after 15 minutes with no word); `urls` makes and frees each part's blob URL. A part
+// with no word may still be reading its URL, so that one is freed only by onLate.
+// Resolves { ok, noWord, landed, failedPart }; a throw from download frees the URL and
+// passes through.
+export async function downloadParts(parts, { download, urls = URL, onPart = () => {}, onLanded = () => {} }) {
+  let landed = 0;
+  for (const part of parts) {
+    onPart(part, landed);
+    const url = urls.createObjectURL(part.blob);
+    let saved;
+    try {
+      saved = await download({ url, ...downloadOptions(part.name) }, { onLate: () => urls.revokeObjectURL(url) });
+    } catch (err) {
+      // a refused download started nothing and watches nothing: the URL is freed here
+      urls.revokeObjectURL(url);
+      throw err;
+    }
+    if (saved !== null) urls.revokeObjectURL(url);
+    if (saved === false) return { ok: false, noWord: false, landed, failedPart: part };
+    if (saved === null) return { ok: true, noWord: true, landed, failedPart: null };
+    landed++;
+    onLanded(landed);
+  }
+  return { ok: true, noWord: false, landed, failedPart: null };
+}
+
+// The line for a download that didn't all land, or null when every part did (the caller
+// then shows the end line). A multi-part save names the part that failed and how many
+// landed; a single file says it was not saved.
+export function downloadProblem({ ok, noWord, landed, failedPart }, { total, filename }) {
+  if (!ok && total > 1) {
+    return { text: `The download of ${failedPart.name} didn't finish — Chrome interrupted or refused it. ${landed} of ${total} parts were saved. See Chrome's downloads, then save again.`, cls: "warn" };
+  }
+  if (!ok) {
+    return { text: `The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads, then save again.`, cls: "warn" };
+  }
+  if (noWord) {
+    return { text: "No word from Chrome in 15 minutes — the save may still be running; keep this tab open and this line will say how it ends.", cls: "warn" };
+  }
+  return null;
 }
 
 // every record with a not_captured reason: chat messages and diary pictures
