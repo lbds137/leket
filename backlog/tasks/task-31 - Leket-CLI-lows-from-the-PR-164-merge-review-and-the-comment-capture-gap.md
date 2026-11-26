@@ -1,10 +1,10 @@
 ---
 id: TASK-31
 title: 'Leket CLI: lows from the PR #164 merge review, and the comment-capture gap'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-25T19:39:00Z'
-updated_date: '2026-11-26T01:02:00Z'
+updated_date: '2026-11-26T01:06:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -32,4 +32,6 @@ Item 6 DONE (PR #168, merged 11-25): the gap was YouTube's top order, not hidden
 Ruled out (from the #168 review): pinning the order of equal-like comments. Ties keep fetch order (now newest first), which the ytDlpArgs comment states; a fixed tie order would mean recording YouTube's rank per comment for no reader-visible gain.
 
 Items 1-5, 7 DONE (branch task-31-cli-lows): (1) a signal-stopped yt-dlp says "was stopped (SIGTERM)" (extractFromInfo ytDlpSignal; kill test updated); (2) fetchTranscript returns language beside kind, extractFromInfo no longer re-picks the track (json3-rows deepEqual widened by language: an existing-assertion change); (3) regional fallback prefers the region of info.language, case-insensitive, else key order; (4) --out is made before yt-dlp runs, a failure is one line "leket: cannot save into DIR (...)", exit 1; (5) yt-dlp stdout is echoed to stderr, run() keeps only the estimate and too-old lines (lineKeeper; the fake now logs its estimate on stdout like to_screen); (7) uncapped end-to-end run checks comment_sort=new. Red-first: 5 new/changed tests fail on origin/main code; item 7 test reddened by defaulting maxComments to 500.
+
+Council review (openai/gpt-5.5; cross-family lanes closed: agy at its week gate, z.ai never reviews Claude work) of 281ff34, no blockers. Applied: a match early in an over-64 KB unended line is kept before the cut; --out also checked writable (access W_OK, EACCES one-liner) before yt-dlp runs; regional pick filters before sorting. Ruled out: g/y regex in lineKeeper (no caller passes one; comment states it); split CRLF adds an empty line (never kept); unbounded kept lines (yt-dlp prints the estimate once); one keeper for both streams (would merge a partial stdout line with a stderr chunk); transcript_language on a failed fetch (unchanged from before: cap.kind was set on failure too, and transcript_note says it failed); en_US normalisation (unprobed whether yt-dlp ever emits an underscore form). Version: rides the 0.5.0 batch (TASK-33 Step 3 PR) like #164/#168.
 <!-- SECTION:NOTES:END -->
