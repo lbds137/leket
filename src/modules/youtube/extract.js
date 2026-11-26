@@ -62,9 +62,10 @@ export function pickCaptionTrack(info, lang) {
   // the video's own region first (yt-dlp's info.language, when it names one), then by key
   const subs = (info && info.subtitles) || {};
   const own = String((info && info.language) || "").toLowerCase();
-  const regional = Object.keys(subs).sort()
-    .sort((a, b) => (b.toLowerCase() === own) - (a.toLowerCase() === own))
+  const isOwn = (k) => k.toLowerCase() === own;
+  const regional = Object.keys(subs)
     .filter((k) => k.toLowerCase().startsWith(`${lang.toLowerCase()}-`))
+    .sort((a, b) => (isOwn(a) === isOwn(b) ? (a < b ? -1 : a > b ? 1 : 0) : isOwn(a) ? -1 : 1))
     .map((k) => [k, json3(subs[k])]).find(([, f]) => f);
   if (regional) return { url: regional[1].url, kind: "manual", language: regional[0] };
   const auto = (info && info.automatic_captions) || {};

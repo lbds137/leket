@@ -108,6 +108,10 @@ test("lineKeeper keeps only matching lines, across chunk splits and \\r endings"
   long.push("y".repeat(70_000));
   long.push("x\n");
   assert.equal(long.end(), `${"y".repeat(1024)}x\n`);
+  // ...and a match early in such a line is kept before the cut
+  const early = lineKeeper();
+  early.push(`yt-dlp: error: no such option: --js-runtimes${" ".repeat(70_000)}`);
+  assert.equal(early.end(), "no such option: --js-runtimes\n");
 });
 
 test("extractFromInfo assembles v1 with the CLI's metadata and notes", async () => {
@@ -197,6 +201,15 @@ test("leket youtube: an --out that names a file is a one-line error, exit 1, bef
     assert.equal(r.status, 1);
     assert.equal(r.stderr, `leket: can't save into ${file} (a file is in the way); nothing saved.\n`);
     assert.deepEqual(readdirSync(out).sort(), ["a-file"]); // yt-dlp never ran
+    // a folder that exists but can't be written to fails the same way (root writes anyway)
+    if (process.getuid && process.getuid() !== 0) {
+      const ro = join(out, "read-only");
+      mkdirSync(ro, { mode: 0o555 });
+      const w = runBin(["youtube", VIDEO, "--out", ro], { FAKE_YTDLP_ARGS: argsFile });
+      assert.equal(w.status, 1);
+      assert.equal(w.stderr, `leket: can't save into ${ro} (EACCES); nothing saved.\n`);
+      assert.deepEqual(readdirSync(out).sort(), ["a-file", "read-only"]);
+    }
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

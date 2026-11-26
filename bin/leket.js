@@ -13,8 +13,8 @@
 // fetch failed, yt-dlp stopped partway after writing the video info, or only the .json
 // could be written (the notes in the files and on stderr say which).
 import { spawn, spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { mkdtemp, readFile, writeFile, rename, rm, mkdir } from "node:fs/promises";
+import { constants, realpathSync } from "node:fs";
+import { access, mkdtemp, readFile, writeFile, rename, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -95,7 +95,8 @@ export function reportedTotal(log) {
 
 // Collects, from a stream of chunks, only the lines that match `keep`: a long comment
 // fetch logs a line per page, and only the estimate and the too-old error are read back.
-// Lines end at \n or \r; an unended line over 64 KB keeps only its last 1 KB.
+// Lines end at \n or \r; an unended line over 64 KB keeps only its last 1 KB, and
+// its match, when it has one, is kept first. `keep` must not be a g or y regex.
 export function lineKeeper(keep = new RegExp(`${ESTIMATE.source}|${TOO_OLD.source}`)) {
   let partial = "";
   let kept = "";
@@ -103,8 +104,12 @@ export function lineKeeper(keep = new RegExp(`${ESTIMATE.source}|${TOO_OLD.sourc
     push(chunk) {
       const lines = (partial + chunk).split(/\r\n|\r|\n/);
       partial = lines.pop();
-      if (partial.length > 65_536) partial = partial.slice(-1024);
       for (const l of lines) if (keep.test(l)) kept += `${l}\n`;
+      if (partial.length > 65_536) {
+        const m = keep.exec(partial);
+        if (m) kept += `${m[0]}\n`;
+        partial = partial.slice(-1024);
+      }
     },
     end() {
       if (partial && keep.test(partial)) kept += `${partial}\n`;
@@ -231,11 +236,12 @@ export async function writePair(base, json, md) {
 }
 
 export async function youtube(url, { out = ".", lang = "en", maxComments } = {}) {
-  // the output folder is made before yt-dlp runs, so a bad --out fails at once rather
-  // than after a long comment fetch
+  // the output folder is made and checked writable before yt-dlp runs, so a bad --out
+  // fails at once rather than after a long comment fetch
   const dir = resolve(out);
   try {
     await mkdir(dir, { recursive: true });
+    await access(dir, constants.W_OK);
   } catch (e) {
     const why = e && e.code === "EEXIST" ? "a file is in the way" : (e && e.code) || (e && e.message) || String(e);
     process.stderr.write(`leket: can't save into ${dir} (${why}); nothing saved.\n`);
