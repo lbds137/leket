@@ -1012,10 +1012,11 @@ async function scenarios(cdp, downloads) {
       return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,
         fails: [...document.getElementById("replika-problems").children].map((li) => li.textContent) }; })()`),
     "the replika page's end line", 90000).catch(soft((e) => ({ t: e.message, fails: [] })));
-    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 0 pictures and voice clips \(2 picture\(s\) or voice clip\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
+    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 0 pictures and voice clips \(2 item\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
       `replika: the end line names the file and the counts and warns of the two pictures (chat and diary) not saved (it said: ${end.t} [${end.cls}])`);
-    check(JSON.stringify(end.fails) === JSON.stringify(["2 picture(s) or voice clip(s) not saved: the file host refused or failed",
-      "Fields Leket didn't save (diary): diary_entry_id, image_count, read"]),
+    check(JSON.stringify(end.fails) === JSON.stringify(["2 item(s) not saved: the file host refused or failed",
+      "Fields Leket didn't save (diary list): diary_entry_id, image_count, read",
+      "Fields Leket didn't save (diary): entries[].diary_id, entries[].read, entries[].image_count"]),
       `replika: the problems list counts the not-captured pictures by their reason (${JSON.stringify(end.fails)})`);
     const zipName = landed().find((f) => /^replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip$/.test(f));
     if (check(zipName, `replika: a replika-….zip landed (${landed().filter((f) => f.startsWith("replika-")).join(", ") || "none"})`)) {

@@ -14,13 +14,13 @@ import {
   SignedOut, headers, call, readReplikaAuth, readDiary, readMemories,
   createHistoryPager, readHistory, signedImageUrl, usableMediaUrl,
   HISTORY_SOCKET, HISTORY_NO_LIST, HISTORY_NO_DATE, HISTORY_STUCK, HISTORY_CLOSED,
-  HISTORY_SILENT, DIARY_PARTIAL, DIARY_STUCK, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
+  HISTORY_SILENT, DIARY_PARTIAL, DIARY_STUCK, DIARY_PAGE_CAP, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
   MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED,
 } from "../src/modules/replika/api.js";
 import {
   buildMessage, buildDiary, buildFact, tallyUnknown, makeMediaNamer, safeId, extFor,
   collectMedia, runSave, buildZip, saveName, downloadOptions, problems, endLine, render,
-  MSG_ALLOWED, DIARY_ALLOWED, FACT_ALLOWED,
+  MSG_ALLOWED, DIARY_LIST_ALLOWED, DIARY_DAY_ALLOWED, FACT_ALLOWED, MEDIA_SIGN_FAILED, STEP_FAILED,
 } from "../src/modules/replika/save.js";
 import { md5 } from "../src/lib/md5.js";
 import { crc32 } from "../src/lib/zip.js";
@@ -363,7 +363,7 @@ test("readDiary: a list that repeats the same page stops as stuck, with no dupli
   assert.equal(fn.calls.filter((c) => c.url.includes("?limit=")).length, 2); // the first page, then the repeat that proves it
 });
 
-test("readDiary: a list that never ends stops at maxPages as stuck and keeps what was read", async () => {
+test("readDiary: a list that never ends stops at maxPages with its own reason and keeps what was read", async () => {
   // each page holds one day older than the last, forever
   const fn = fakeFetch((url) => {
     if (url.includes("?limit=")) {
@@ -374,7 +374,7 @@ test("readDiary: a list that never ends stops at maxPages as stuck and keeps wha
     return reply(dayOf(url.slice(url.lastIndexOf("/") + 1)));
   });
   const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, maxPages: 3 });
-  assert.equal(partial, DIARY_STUCK);
+  assert.equal(partial, DIARY_PAGE_CAP);
   assert.equal(list.length, 3);
   assert.equal(days.length, 3);
 });
@@ -852,6 +852,23 @@ test("tallyUnknown counts the key paths the builders never read, paths only, arr
   assert.deepEqual(tallyUnknown([{ edited_at: null }], new Set([])), { edited_at: 1 });
 });
 
+test("tallyUnknown walks arrays: an allowed array counts as read whole, any other has its object items walked", () => {
+  // (c) a day whose entry carries diary_id reports it at its real path
+  const day = { date: "2026-02-01", entries: [{ id: "e1", diary_id: "d1", text: "t", images: [{ url: "u", blurred: false, extra_img: 1 }] }] };
+  assert.deepEqual(tallyUnknown([day], DIARY_DAY_ALLOWED), { "entries[].diary_id": 1, "entries[].images[].extra_img": 1 });
+  // the list items only read date and title
+  assert.deepEqual(tallyUnknown([li("2026-02-01", "T")], DIARY_LIST_ALLOWED), { diary_entry_id: 1, image_count: 1, read: 1 });
+  // a message's reactions (allowed arrays) are read whole: neither the array nor what is inside it is reported
+  const msg = { id: "1", reactions: [{ kind: "heart_secret" }], meta: { nature: "Robot", reactions: ["❤"] } };
+  assert.deepEqual(tallyUnknown([msg], MSG_ALLOWED), {});
+  // a non-object item, an empty array and an unallowed array of objects
+  assert.deepEqual(tallyUnknown([{ a: [1, "x"], b: [], c: [{ d: 1 }, { d: 2, e: 3 }] }], new Set([])), { "a[]": 1, "c[].d": 2, "c[].e": 1 });
+  // a day with images: [] reports no entries[].images[]
+  assert.deepEqual(tallyUnknown([dayOf("2026-02-01")], DIARY_DAY_ALLOWED), { "entries[].diary_id": 1, "entries[].read": 1, "entries[].image_count": 1 });
+  // the depth cap still holds inside an array
+  assert.deepEqual(tallyUnknown([{ a: { b: { c: { d: [{ e: 1 }] } } } }], new Set([])), { "a.b.c.d[].*": 1 });
+});
+
 test("tallyUnknown: a key that isn't a short plain name is written as *, so a secret in a key never reaches the tally", () => {
   const counts = tallyUnknown([
     { meta: { attachments: { "https://cdn.example.org/x.png": 1, "fake-token-1234": 2, "ok_key": 3 } }, "uid-424242": true },
@@ -1045,8 +1062,8 @@ test("problems lists each partial reason and counts the not-captured media by re
   };
   assert.deepEqual(problems(data), [
     `Diary: ${DIARY_PARTIAL}`,
-    `2 picture(s) or voice clip(s) not saved: ${MEDIA_FETCH_FAILED}`,
-    `1 picture(s) or voice clip(s) not saved: ${MEDIA_LINK_UNUSABLE}`,
+    `2 item(s) not saved: ${MEDIA_FETCH_FAILED}`,
+    `1 item(s) not saved: ${MEDIA_LINK_UNUSABLE}`,
   ]);
   assert.deepEqual(problems({ status: {}, messages: [] }), []);
 });
@@ -1067,10 +1084,10 @@ test("endLine counts the not-captured media: a warn, inside the partial parenthe
   const ok = { counts: { messages: 4, diary: 0, memories: 0, media: 1 }, status: { chat: "complete", diary: "complete", memories: "complete", media: "complete" } };
   const alone = endLine({ filename: "x.zip", data: { ...ok, messages: [{ id: "a", not_captured: MEDIA_FETCH_FAILED }, { id: "b" }] } });
   assert.equal(alone.warn, true);
-  assert.ok(alone.text.endsWith("1 pictures and voice clips (1 picture(s) or voice clip(s) not saved)"), alone.text);
+  assert.ok(alone.text.endsWith("1 pictures and voice clips (1 item(s) not saved)"), alone.text);
   const both = endLine({ filename: "x.zip", data: { ...ok, status: { ...ok.status, diary: DIARY_PARTIAL }, messages: [{ id: "a", not_captured: "r" }, { id: "b", not_captured: "r" }] } });
   assert.equal(both.warn, true);
-  assert.ok(both.text.endsWith(`(partial: ${DIARY_PARTIAL}; 2 picture(s) or voice clip(s) not saved)`), both.text);
+  assert.ok(both.text.endsWith(`(partial: ${DIARY_PARTIAL}; 2 item(s) not saved)`), both.text);
   assert.equal(endLine({ filename: "x.zip", data: { ...ok, messages: [{ id: "b" }] } }).warn, false);
 });
 
@@ -1284,7 +1301,9 @@ test("a full run saves everything it read, with one picture captured and two nam
   assert.equal(byId.get("m0").not_captured, MEDIA_FETCH_FAILED); // its own link, and the host refused
   assert.deepEqual(byId.get("m1").reactions, ["❤", 2]);
   assert.deepEqual(data.unsaved_fields.message, { "meta.leak": 1, "meta.attachments.*": 3, "meta.nested.deep": 1 });
-  assert.deepEqual(data.unsaved_fields.diary, { "diary_entry_id": 2, "image_count": 2, "read": 2, "secret_note": 1, "error_body": 1, "trace": 1 });
+  assert.deepEqual(data.unsaved_fields.diary_list, { "diary_entry_id": 2, "image_count": 2, "read": 2, "secret_note": 1 });
+  // the day with no pictures carries an empty images[], which counts as nothing
+  assert.deepEqual(data.unsaved_fields.diary, { "error_body": 1, "trace": 1 });
   // the diary picture was saved like a chat picture: its record carries `media`, never the link
   assert.deepEqual(data.diary.map((d) => d.date), ["2026-02-01", "2026-02-02"]);
   assert.deepEqual(data.diary[0].title, "First");
@@ -1469,8 +1488,8 @@ test("(d) a diary picture whose sign call fails gets a fixed not_captured, shown
   assert.equal(data.counts.media, 0);
   assert.ok(!JSON.stringify(data).includes(AUTH.authToken));
   assert.ok(render(data).includes("picture not saved: Replika answered HTTP 404"));
-  assert.ok(problems(data).some((l) => l.startsWith("1 picture(s) or voice clip(s) not saved: Replika answered HTTP 404")), JSON.stringify(problems(data)));
-  assert.ok(endLine({ filename: "x.zip", data }).text.includes("2 picture(s) or voice clip(s) not saved"));
+  assert.ok(problems(data).some((l) => l.startsWith("1 item(s) not saved: Replika answered HTTP 404")), JSON.stringify(problems(data)));
+  assert.ok(endLine({ filename: "x.zip", data }).text.includes("2 item(s) not saved"));
 });
 
 test("a chat that stops early keeps its messages, names the reason, and the rest still saves", async () => {
@@ -1534,4 +1553,56 @@ test("render escapes a speaker name exactly once in the memory headings", () => 
   assert.ok(html.includes("<h3>About Ada &amp; Bo</h3>"));
   assert.ok(html.includes("<h3>About &lt;Echo&gt;</h3>"));
   assert.ok(!html.includes("&amp;amp;") && !html.includes("&amp;lt;"));
+});
+
+// ---------- an unexpected throw never puts its text in an output ----------
+
+const THROWN = "quokka-trace-7731"; // distinctive, and not key-shaped
+
+test("(b) an unexpected throw in readDiary gives the fixed STEP_FAILED reason and its text reaches no output", async () => {
+  const fetchFn = fakeFetch((url) => {
+    // a list answer whose item throws when read: nothing readDiary catches itself
+    if (url === LIST_URL()) return () => ({ ok: true, status: 200, json: async () => [{ get date() { throw new Error(THROWN); } }] });
+    if (url === MEMORY_14) return reply({ facts: [] });
+    if (url === MEMORY_15) return reply({ customer_facts: [], robot_facts: [] });
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  const { data } = await runSave({
+    auth: AUTH, now: new Date(2026, 10, 25, 14, 30, 5), fetchFn, sleep: instant,
+    WebSocketCtor: fakeSocketClass([[]]), timeoutMs: 1000, pause: instant,
+  });
+  assert.equal(data.status.diary, STEP_FAILED);
+  assert.equal(data.status.memories, "complete"); // the next step still ran
+  assert.ok(!JSON.stringify(data).includes(THROWN));
+  assert.ok(!render(data).includes(THROWN));
+  assert.ok(!problems(data).join("\n").includes(THROWN));
+  assert.ok(!endLine({ filename: "x.zip", data }).text.includes(THROWN));
+});
+
+test("(a) a plain Error thrown by the sign call gives MEDIA_SIGN_FAILED and its text reaches no output", async () => {
+  const fetchFn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply([li("2026-02-01")]);
+    if (url === LIST_URL("2026-02-01")) return reply([]);
+    if (url === DAY_URL("2026-02-01")) return reply({ date: "2026-02-01", entries: [{ id: "e1", text: "hi", images: [{ url: "https://cdn.example.org/sign-throw.png" }] }] });
+    if (url === MEMORY_14) return reply({ facts: [] });
+    if (url === MEMORY_15) return reply({ customer_facts: [], robot_facts: [] });
+    // a sign reply whose read throws something that is not an ApiError
+    if (url === GET_URL) return () => ({ get ok() { throw new Error(THROWN); } });
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  const { data } = await runSave({
+    auth: AUTH, now: new Date(2026, 10, 25, 14, 30, 5), fetchFn, sleep: instant,
+    WebSocketCtor: fakeSocketClass([[]]), timeoutMs: 1000, pause: instant,
+  });
+  assert.equal(data.diary[0].entries[0].images[0].not_captured, MEDIA_SIGN_FAILED);
+  assert.ok(!JSON.stringify(data).includes(THROWN));
+  assert.ok(!render(data).includes(THROWN));
+});
+
+test("problems labels the diary list's unsaved fields apart from the days'", () => {
+  const lines = problems({ unsaved_fields: { message: {}, diary_list: { read: 1 }, diary: { "entries[].diary_id": 1 }, fact: {} } });
+  assert.deepEqual(lines, [
+    "Fields Leket didn't save (diary list): read",
+    "Fields Leket didn't save (diary): entries[].diary_id",
+  ]);
 });

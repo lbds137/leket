@@ -45,7 +45,7 @@ const STEP_TEXT = {
   chat: (p) => `Reading the chat history… ${p.count} message(s) so far — keep this tab open.`,
   diary: () => "Reading the diary…",
   memories: () => "Reading the memories…",
-  media: (p) => `Fetching pictures and voice clips… ${p.count} of ${p.total}…`,
+  media: (p) => (p.total ? `Fetching pictures and voice clips… ${p.count} of ${p.total}…` : "Fetching pictures and voice clips…"),
 };
 
 $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
@@ -84,7 +84,7 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
       // the page's own WebSocket, looked up at click time — the smoke swaps this global
       // to script the history socket
       WebSocketCtor: globalThis.WebSocket,
-      onStep: (step) => say(STEP_TEXT[step]({ count: 0, total: 1 })),
+      onStep: (step) => say(STEP_TEXT[step]({ count: 0, total: 0 })),
       onProgress: (p) => {
         if (STEP_TEXT[p.step]) say(STEP_TEXT[p.step](p));
         if (p.total) progress(p.count, p.total);
@@ -92,7 +92,7 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
     });
     say("Saving…");
     progress(0, parts.length);
-    let ok = true, noWord = false, landed = 0;
+    let ok = true, noWord = false, landed = 0, failedPart = null;
     for (const part of parts) {
       say(`Saving ${part.name}… (${landed + 1} of ${parts.length})`);
       const url = URL.createObjectURL(part.blob);
@@ -109,10 +109,14 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
         throw err;
       }
       if (saved !== null) URL.revokeObjectURL(url);
-      if (saved === false) { ok = false; break; }
+      if (saved === false) { ok = false; failedPart = part; break; }
       if (saved === null) { noWord = true; break; }
       landed++;
       progress(landed, parts.length);
+    }
+    if (!ok && parts.length > 1) {
+      say(`The download of ${failedPart.name} didn't finish — Chrome interrupted or refused it. ${landed} of ${parts.length} parts were saved. See Chrome's downloads, then save again.`, "warn");
+      return;
     }
     if (!ok) {
       say(`The download didn't finish — Chrome interrupted or refused it, and ${filename} was not saved. See Chrome's downloads, then save again.`, "warn");
