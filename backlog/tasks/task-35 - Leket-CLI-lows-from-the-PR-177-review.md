@@ -1,9 +1,10 @@
 ---
 id: TASK-35
 title: 'Leket CLI: lows from the PR #177 review'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-26T01:11:00Z'
+updated_date: '2026-11-26T11:03:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -21,3 +22,9 @@ From the PASS claude-review of 6764679 (PR #177, merged 11-26 01:09 UTC):
 5. On Windows access(W_OK) checks only the read-only attribute; writePair still reports a later failure. Note only, unless Windows support matters.
 (Item 6, TASK-31 note wording, fixed with this filing.)
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #194 (0.6.9): items 1-4 fixed with red-first tests (out-folder cleanup via mkdir's return + rmdir walk; ENOTDIR = a file is in the way; lineKeeper per-line hit flag; setEncoding utf8 with a split-character run test); item 5 as a comment at the access() call.
+<!-- SECTION:NOTES:END -->
