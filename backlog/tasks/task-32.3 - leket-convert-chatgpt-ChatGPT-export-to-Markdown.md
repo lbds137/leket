@@ -1,9 +1,10 @@
 ---
 id: TASK-32.3
 title: 'leket convert chatgpt: ChatGPT export to Markdown'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-26T11:27:00Z'
+updated_date: '2026-11-26T14:58:00Z'
 labels:
   - convert
 dependencies: []
@@ -20,7 +21,13 @@ Row B: conversations.json from the ChatGPT data export, one Markdown per convers
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One .md per conversation, current branch only, speaker labels as flags
-- [ ] #2 Unit tests on a synthetic fixture cover the format's edge cases the original handles
-- [ ] #3 The original's owning session is told it can retire its copy once this ships
+- [x] #1 One .md per conversation, current branch only, speaker labels as flags
+- [x] #2 Unit tests on a synthetic fixture cover the format's edge cases the original handles
+- [x] #3 The original's owning session is told it can retire its copy once this ships
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in #201 (0.9.0): 15/15 real-export files byte-identical to the original; three deliberate fixes (collision suffix, voice transcription text, undated prefix). Gemini review lows fixed in-PR (0a1ce52). AC3: Chats session messaged 11-26 with the reproducing invocation and the differences. claude-review's nine lows carried to the next PR in this area (role Next).
+<!-- SECTION:NOTES:END -->
