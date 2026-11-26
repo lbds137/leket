@@ -26,10 +26,15 @@ export function decode(s) {
   });
 }
 
+// decoded text or attribute value, a NUL as U+FFFD (as a browser shows it): the converter
+// marks breaks with NUL, so none may come from the page
+const REPLACEMENT = String.fromCharCode(0xfffd);
+const clean = (s) => decode(s).replace(/\u0000/g, REPLACEMENT);
+
 function attrsOf(s) {
   const out = Object.create(null);
   for (const m of s.matchAll(/([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
-    out[m[1].toLowerCase()] = decode(m[2] ?? m[3] ?? m[4] ?? "");
+    out[m[1].toLowerCase()] = clean(m[2] ?? m[3] ?? m[4] ?? "");
   }
   return out;
 }
@@ -43,8 +48,6 @@ export function parse(html) {
   const closeTo = (i) => { if (i > 0) stack.length = i; };
   const re = /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<![^>]*>?|<\?[^>]*>?|<\/([a-zA-Z][a-zA-Z0-9-]*)[^>]*>?|<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
   let at = 0;
-  // a NUL in text becomes U+FFFD (as a browser shows it): the converter marks breaks with NUL
-  const clean = (s) => decode(s).replace(/\u0000/g, "\uFFFD");
   const text = (s) => { if (s) top().children.push(clean(s)); };
   for (let m; (m = re.exec(html));) {
     text(html.slice(at, m.index));
@@ -134,7 +137,7 @@ function linkDest(href) {
 // Inline content → one string. Hard breaks come out as BR marks for the caller to turn
 // into a backslash line break (a paragraph) or a space (a heading or a table cell).
 // KEEP marks a code line whose trailing spaces htmlToMarkdown keeps. They share NUL, which
-// parse() never lets into text (it becomes U+FFFD there), and never meet: paragraph() and
+// parse() never lets into text or attributes (it becomes U+FFFD there), and never meet: paragraph() and
 // oneLine() consume every BR before htmlToMarkdown looks for KEEP.
 const BR = "\u0000";
 const KEEP = "\u0000";
@@ -168,7 +171,7 @@ function inline(nodes, ctx) {
         const core = label.slice(lead.length, label.length - trail.length);
         if (!LINKABLE.test(href.trim())) {
           // the address as text, unless scripted or already the label
-          const addr = SCRIPTED.test(href.replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === href.trim() ? "" : escapeText(href.trim());
+          const addr = SCRIPTED.test(href.trim().replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === href.trim() ? "" : escapeText(href.trim());
           add(!addr ? label : `${lead}${core ? `${core} (${addr})` : addr}${trail}`);
           break;
         }

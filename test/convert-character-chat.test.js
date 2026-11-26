@@ -143,6 +143,12 @@ test("names, labels, creators and titles show as written; a blank creator or tit
   assert.match(conv, /\n## Star\\\*Gazer \\\[beta\\\] · 2024-03-05 14:04\n/);
   assert.match(f["INDEX.md"], /\| Star\\\*Gazer \\\[beta\\\] \| 2 \|/);
   assert.match(f["CARDS.md"], /\n## Star\\\*Gazer \\\[beta\\\]\n\n`s`\n\n\*\*greeting:\*\*/);
+  // a creator and title that are there are escaped too
+  d.characters.s.creator_username = "a *b*";
+  d.characters.s.title = "c | [d]";
+  const g = byName(plan(collect([exportOf(d)])).files);
+  assert.match(g["#1 _fan_ -3.md"], /\*\* \(character by a \\\*b\\\*\), 2024/);
+  assert.match(g["CARDS.md"], /\n## Star\\\*Gazer \\\[beta\\\] \(by a \\\*b\\\*\)\n\n`s` · c \\\| \\\[d\\\]\n/);
 });
 
 test("a character id '__proto__' is an ordinary key", () => {
@@ -193,6 +199,9 @@ test("a conversation with only some times reads 'undated' for the missing end", 
     messages: [msg("h1", "user", "a", T0), msg("h2", "bot", "b", undefined)] }] };
   const c = collect([exportOf(d)]);
   assert.match(render(c.conversations[0], c.characters).text, /with \*\*Half\*\*, 2024-03-05 14:03 to undated; /);
+  d.conversations[0].messages.reverse(); // the first undated, the last timed
+  const e = collect([exportOf(d)]);
+  assert.match(render(e.conversations[0], e.characters).text, /with \*\*Half\*\*, undated to 2024-03-05 14:03; /);
 });
 
 test("collect refuses what isn't an export", () => {

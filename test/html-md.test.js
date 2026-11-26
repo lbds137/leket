@@ -34,6 +34,16 @@ test("inline marks, code spans and links", () => {
     "call (tel:+1-555) get (ftp://x.org/f_1) it sms:1 tel:2 f .");
 });
 
+test("a leading non-ASCII space doesn't unmask a scripted scheme", () => {
+  assert.equal(md('<p><a href="&nbsp;javascript:alert(1)">x</a> <a href="&#x3000;data:x">y</a></p>'), "x y");
+});
+
+test("a NUL in an href is U+FFFD too, never a line break", () => {
+  const r = String.fromCharCode(0xfffd);
+  assert.equal(md('<p><a href="https://e.com/a\u0000b">x</a> <a href="tel:1\u00002">call</a></p><h2><a href="https://e.com/c\u0000d">h</a></h2>'),
+    `[x](https://e.com/a${r}b) call (tel:1${r}2)\n\n## [h](https://e.com/c${r}d)`);
+});
+
 test("a NUL in the text is U+FFFD, never a line break", () => {
   assert.equal(md("<p>a\u0000b <code>c\u0000d</code></p><h2>x\u0000y</h2><pre>p\u0000q  </pre>"),
     "a\uFFFDb `c\uFFFDd`\n\n## x\uFFFDy\n\n```\np\uFFFDq  \n```");
