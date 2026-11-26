@@ -28,6 +28,14 @@ export async function driveYouTube(opts) {
     const el = root ? root.querySelector(sel) : null;
     return el ? clean(el.textContent) : "";
   };
+  // a comment's own text keeps its line breaks (the CLI's yt-dlp path keeps them too):
+  // each line is cleaned, blank lines at either end dropped
+  const readBlock = (root, sel) => {
+    const el = root ? root.querySelector(sel) : null;
+    if (!el) return "";
+    return String(el.textContent).replace(bidi, "").split("\n")
+      .map((l) => l.replace(/[^\S\n]+/g, " ").trim()).join("\n").replace(/^\n+|\n+$/g, "");
+  };
 
   // the overlay, one line per phase; a re-run replaces its lines. White on #1e1f22
   // reads on YouTube's dark and light themes alike
@@ -134,6 +142,10 @@ export async function driveYouTube(opts) {
   const commentsBox = document.querySelector("ytd-comments");
   if (commentsBox) {
     try { commentsBox.scrollIntoView(); } catch { /* nowhere to scroll */ }
+    // the first batch renders only once the section is near the screen: wait for a
+    // thread or the continuation before deciding there's nothing to load
+    const firstEnd = Date.now() + transcriptWaitMs;
+    while (Date.now() < firstEnd && threadCount() === 0 && !topContinuation()) await sleep(stepMs / 2);
     const line = say("Loading comments: " + threadCount() + " so far…");
     let threads = threadCount();
     let stalls = 0;
@@ -166,8 +178,12 @@ export async function driveYouTube(opts) {
     for (const b of document.querySelectorAll("ytd-comment-replies-renderer #more-replies button")) {
       if (!clicked.has(b)) toClick.push(b);
     }
+    // each continuation button once too: a button that never answers must not keep the
+    // phase alive until maxMs. If YouTube reused one element for every "more replies"
+    // (unprobed), only the first page of a long reply chain would load: the reply-count
+    // check in the smoke can't see that, so TASK-29's notes carry it for the live check
     for (const b of document.querySelectorAll("ytd-comment-replies-renderer ytd-continuation-item-renderer button")) {
-      toClick.push(b);
+      if (!clicked.has(b)) toClick.push(b);
     }
     const before = replyCount();
     for (const b of toClick) {
@@ -192,7 +208,7 @@ export async function driveYouTube(opts) {
     author: readText(el, "#author-text"),
     likes: readText(el, "#vote-count-middle") || "0",
     time: readText(el, "#published-time-text"),
-    text: readText(el, "#content-text"),
+    text: readBlock(el, "#content-text"),
   });
   const comments = [];
   for (const thread of document.querySelectorAll("ytd-comments ytd-comment-thread-renderer")) {
@@ -229,6 +245,11 @@ export async function driveYouTube(opts) {
     });
   }
 
+  if (comments.length === 0 && !metadata.comments_note) {
+    metadata.comments_note = commentsBox
+      ? "YouTube showed no comments for this video."
+      : "This page has no comment section (comments may be turned off).";
+  }
   const replyTotal = comments.reduce((n, c) => n + c.replies.length, 0);
   say("Done: " + comments.length + " comments, " + replyTotal + " replies, " + transcript.length
     + " transcript lines. Leket is saving the files.");
