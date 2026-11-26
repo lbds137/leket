@@ -127,7 +127,7 @@ one converter at a time as TASK-32 moves the one-off scripts in.
 |---|---|
 | `claude-sessions-<run>-partNN.jsonl`, `-done.json` | bin/claude-sessions-weekly → claude-sessions-split |
 | `discord-<name>-<channel id>.zip` (or `-partN.zip`; the messages are in part 1), or the `.json` inside it | `leket convert discord` (Markdown transcript; TASK-32.1) |
-| `reddit-<post id>.json` | a private Reddit CLI's `--from-json` until TASK-32.2 moves it into `leket reddit` |
+| `reddit-<post id>.json` | `leket reddit --from-json` (the same .md, plus the images saved to disk; TASK-32.2) |
 | `reddit-<post id>.md` | opens directly |
 | `claude-chat-outputs-<date>.json` | read directly (no tool wired yet) |
 | `etsy-conversations-<date>.json` | Jackalope's archive tooling (filename kept identical; a same-day save overwrites it; unredacted, so the reader's guard hides any name) |
