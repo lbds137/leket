@@ -19,6 +19,9 @@ export function makeLookup(resolve = (...a) => dns.lookup(...a)) {
   return (hostname, options, callback) => {
     resolve(hostname, { ...options, all: true }, (err, answers) => {
       if (err) return callback(err);
+      if (!answers || !answers.length) {
+        return callback(Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), { code: "ENOTFOUND" }));
+      }
       const bad = answers.find((a) => isPrivateHost(a.family === 6 ? `[${a.address}]` : a.address));
       if (bad) {
         const e = new Error(`not fetched: ${hostname} resolves to a local or private-network address (${bad.address})`);
@@ -38,6 +41,11 @@ const NO_BODY = new Set([204, 205, 304]);
 // and `ca` are for tests: a stand-in DNS answer, and a test server's own certificate.
 export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(), ca } = {}) {
   return new Promise((resolve, reject) => {
+    // net.connect skips the lookup for an IP literal, so a literal is judged here
+    const host = new URL(url).hostname;
+    if (isPrivateHost(host)) {
+      return reject(Object.assign(new Error(`not fetched: ${host} is a local or private-network address`), { code: "EPRIVATEADDR" }));
+    }
     const req = request(url, { method: "GET", headers, signal, lookup, ...(ca ? { ca } : {}) }, (res) => {
       try {
         const h = new Headers();

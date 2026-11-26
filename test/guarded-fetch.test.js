@@ -38,6 +38,15 @@ test("lookup: a private answer (v4, v6, v4-mapped, or one of several) is refused
   assert.deepEqual(await lookupOf(answering(pub6, pub4), false), [null, pub6.address, 6]);
   const nx = Object.assign(new Error("getaddrinfo ENOTFOUND img.example"), { code: "ENOTFOUND" });
   assert.deepEqual(await lookupOf((n, o, cb) => cb(nx), true), [nx]);
+  // an empty answer list is "not found", not a crash
+  const [empty] = await lookupOf(answering(), false);
+  assert.equal(empty.code, "ENOTFOUND");
+});
+
+test("guardedFetch: a private IP literal is refused by itself (net.connect skips the lookup for one)", async () => {
+  for (const url of ["https://127.0.0.1/a.png", "https://[::1]/a.png", "https://10.0.0.5:8443/a.png"]) {
+    await assert.rejects(guardedFetch(url), (e) => e.code === "EPRIVATEADDR" && /is a local or private-network address/.test(e.message), url);
+  }
 });
 
 test("guardedFetch: a private answer fails before any connection", async () => {
