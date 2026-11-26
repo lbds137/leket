@@ -41,6 +41,9 @@ test("attrValue: a surrogate pair's references are its character; a half alone o
   assert.equal(attrValue("a&#55357;&#56835;b"), `a${chr(0x1f603)}b`);
   assert.equal(attrValue("&#55357;x&#56835;"), `${chr(0xfffd)}x${chr(0xfffd)}`);
   assert.equal(attrValue("&#55357;"), chr(0xfffd));
+  assert.equal(attrValue("&#56835;x"), `${chr(0xfffd)}x`);
+  assert.equal(attrValue("&#55357;&#55357;&#56835;"), `${chr(0xfffd)}${chr(0x1f603)}`);
+  assert.equal(attrValue("&#55357;&#65;"), `${chr(0xfffd)}A`);
   assert.equal(attrValue("&#0;&#x1;&#99999999999;"), chr(0xfffd).repeat(3));
 });
 
@@ -76,8 +79,32 @@ test("reader: a cut-off file, a mismatched end tag, text outside the root or a D
   assert.throws(() => read("<smses/><smses/>"), /after the document's end/);
   assert.throws(() => read('<!DOCTYPE x [<!ENTITY e "boom">]><smses/>'), /internal subset/);
   assert.throws(() => read(""), /no element/);
-  // a comment, a PI and CDATA anywhere are passed over
-  assert.doesNotThrow(() => read("<!-- a > b --><?pi x?><smses><![CDATA[ <sms> ]]></smses>"));
+  assert.throws(() => read("</smses>"), /with nothing open/);
+  // a comment, a PI and CDATA inside the element are passed over; an end tag may end in spaces
+  assert.doesNotThrow(() => read("<!-- a > b --><?pi x?><smses><![CDATA[ <sms> ]]></smses \n>"));
+});
+
+test("reader: a malformed tag or declaration throws instead of losing the elements after it", () => {
+  const read = (xml) => { const r = reader(["sms"], () => {}); r.feed(xml); r.end(); };
+  assert.throws(() => read('<smses><other<sms a="1"/></smses>'), /a < inside a tag/);
+  assert.throws(() => read('<smses><sms="1"/></smses>'), /malformed tag/);
+  assert.throws(() => read('<smses><sms"a"/></smses>'), /malformed tag/);
+  assert.throws(() => read('<smses><sms a="1"b="2"/></smses>'), /malformed attribute/);
+  assert.throws(() => read("<![CDATA[x]]><smses/>"), /CDATA outside/);
+  assert.throws(() => read("<smses><!bogus></smses>"), /malformed declaration/);
+  assert.throws(() => read("<smses><!DOCTYPE x></smses>"), /DOCTYPE after/);
+});
+
+test("reader: a BOM, a DOCTYPE and CDATA split anywhere, after an empty first chunk", () => {
+  const xml = `${chr(0xfeff)}<!DOCTYPE smses><smses><![CDATA[ <sms a="no"/> ]]><sms a="1" /></smses>`;
+  for (const size of [1, 2, 5]) {
+    const got = [];
+    const r = reader(["sms"], (el) => got.push(el.attrs.a));
+    r.feed("");
+    for (let i = 0; i < xml.length; i += size) r.feed(xml.slice(i, i + size));
+    r.end();
+    assert.deepEqual(got, ["1"], `chunks of ${size}`);
+  }
 });
 
 test("reader: a wanted element's children come at any depth; elements outside one aren't kept", () => {
@@ -153,6 +180,63 @@ test("names: two conversations of one name are told apart by the number, on a ca
     sms({ address: "5550100006", date: "3000", type: "1", body: "c", contact_name: "Sam" }),
   );
   assert.deepEqual(convert(xml).files.map((f) => f.name), ["sms-Sam.md", `sms-sam (${chr(0x2026)}0005).md`, `sms-Sam (${chr(0x2026)}0006).md`]);
+  // the same name and the same last 4 digits: then a count
+  const same = doc(
+    sms({ address: "2125551234", date: "1000", type: "1", body: "a", contact_name: "Sam" }),
+    sms({ address: "3105551234", date: "2000", type: "1", body: "b", contact_name: "Sam" }),
+    sms({ address: "4155551234", date: "3000", type: "1", body: "c", contact_name: "Sam" }),
+  );
+  assert.deepEqual(convert(same).files.map((f) => f.name), ["sms-Sam.md", `sms-Sam (${chr(0x2026)}1234).md`, "sms-Sam (2).md"]);
+});
+
+test("an address that is an Object property's name, or empty, is an ordinary conversation", () => {
+  const xml = doc(
+    sms({ address: "constructor", date: "1000", type: "1", body: "a" }),
+    sms({ address: "", date: "2000", type: "3", body: "draft" }),
+  );
+  const { files } = convert(xml, { names: Object.assign(Object.create(null), { __proto__: "P" }) });
+  assert.deepEqual(files.map((f) => f.name), ["sms-constructor.md", `sms-${chr(0x2026)}.md`]);
+  assert.match(files[1].text, /only the conversation with no address\./);
+});
+
+test("--number: an MMS kept because an <addr> names the number goes in that conversation's one file", () => {
+  const xml = doc(
+    `<mms date="1709600000000" msg_box="1" address="5550100002"><parts><part ct="text/plain" text="via addr"/></parts><addrs><addr address="5550100001" type="151"/></addrs></mms>`,
+    sms({ address: "5550100001", date: "1709647200000", type: "1", body: "direct", contact_name: "Sam" }),
+  );
+  const { files } = convert(xml, { number: "5550100001", base: "sam", title: "Texts with Sam" });
+  assert.deepEqual(files.map((f) => f.name), ["sam.md"]);
+  assert.match(files[0].text, /via addr[^]*direct/);
+});
+
+test("a group's file and heading use the names its contact_name listed; (Unknown) is no name; a sender not named is …", () => {
+  const xml = doc(
+    `<mms date="1709740800000" msg_box="1" address="5550100001~5550100002" contact_name="Sam, (Unknown)"><parts><part ct="text/plain" text="hi"/></parts><addrs><addr address="5550100002" type="137"/></addrs></mms>`,
+    `<mms date="1709740900000" msg_box="1" address="5550100001~5550100002"><parts><part ct="text/plain" text="who"/></parts></mms>`,
+  );
+  const { files } = convert(xml, { groups: true });
+  assert.deepEqual(files.map((f) => f.name), [`sms-Sam, ${chr(0x2026)}0002.md`]);
+  assert.match(files[0].text, /^# Texts with Sam, …0002\n/);
+  assert.match(files[0].text, /> -# …0002 \(group: Sam, …0002\)/);
+  assert.match(files[0].text, /> -# … \(group: Sam, …0002\) — [^\n]*\n> who/);
+});
+
+test("attachments: a cl of \"null\" falls through to the name; two named alike are numbered", () => {
+  const saved = [];
+  const xml = doc(
+    `<mms date="1709690400" msg_box="1" address="5550100001"><parts><part ct="audio/amr" cl="null" name="voice.amr" data="QUJD"/><part ct="image/png" cl="" name="" data="QUJD"/></parts></mms>`,
+    `<mms date="1709690400" msg_box="1" address="5550100001"><parts><part ct="audio/amr" cl="null" name="voice.amr" data="REVG"/></parts></mms>`,
+    `<mms date="1709690400" msg_box="1" address="5550100002"><parts><part ct="audio/amr" cl="VOICE.amr" data="R0hJ"/></parts></mms>`,
+  );
+  const m = messages({ media: true, onAttachment: (name, b64) => saved.push([name, b64]) });
+  m.feed(xml);
+  m.end();
+  assert.deepEqual(saved, [
+    ["2024-03-06_1709690400000_0_voice.amr", "QUJD"],
+    ["2024-03-06_1709690400000_1_part1.png", "QUJD"],
+    ["2024-03-06_1709690400000_0_voice (2).amr", "REVG"],
+    ["2024-03-06_1709690400000_0_VOICE (3).amr", "R0hJ"],
+  ]);
 });
 
 test("an attachment name from the phone can't leave the media folder; an undated message is left out and counted", () => {
@@ -168,6 +252,11 @@ test("an attachment name from the phone can't leave the media folder; an undated
   assert.deepEqual(saved, [["2024-03-06_1709690400000_0_..-..-evil-x.sh", "QUJD"]]);
   assert.equal(read.undated, 2);
   assert.equal(plan(read, { source: "b.xml" }).stats.undated, 2);
+  const out = tmp(), file = join(out, "b.xml");
+  writeFileSync(file, xml);
+  const r = leket(["convert", "sms", file, "--out", out]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /Messages with no usable date, left out: 2\./);
 });
 
 test("CLI: writes one file per conversation and, with --media, the attachments and their list", () => {
@@ -190,10 +279,12 @@ test("CLI: no match, a cut-off backup or a missing file exits 1 with no transcri
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no messages matched the number ending 9999; no transcript written/);
   const cut = join(out, "cut.xml");
-  writeFileSync(cut, readFileSync(FIXTURE, "utf8").slice(0, 3000));
+  const text = readFileSync(FIXTURE, "utf8");
+  writeFileSync(cut, text.slice(0, text.indexOf("</mms>") + 6)); // cut after an MMS with 3 attachments
   r = leket(["convert", "sms", cut, "--out", out, "--media", join(out, "m")]);
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /isn't a readable SMS backup \(the file ends .*; no transcript written/);
+  assert.match(r.stderr, /isn't a readable SMS backup \(the file ends .*; no transcript written \(3 attachments were already saved in .*m\)\./);
+  assert.equal(readdirSync(join(out, "m")).length, 3);
   r = leket(["convert", "sms", join(out, "nope.xml"), "--out", out]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /ENOENT/);

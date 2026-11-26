@@ -201,6 +201,12 @@ test("plan: oldest first, clashing names told apart by the session id, empty ses
   const j = plan([sess("aaaaaaaa-1", 5, [prompt(5, "Hi")])], { json: true });
   assert.equal(j.files[0].name, "2024-03-05 Hi.json");
   assert.deepEqual(JSON.parse(j.files[0].text), { id: "aaaaaaaa-1", source: "aaaaaaaa-1.jsonl", title: "Hi", turns: [{ at: at(5), role: "user", text: "Hi" }] });
+  // an answer turn keeps its flag in the JSON, so a wrapper can tell it from a typed prompt
+  const a = plan([sess("aaaaaaaa-2", 6, [
+    prompt(6, "Pick"), reply(7, ask("q1", [{ question: "Which?", options: [{ label: "A", description: "a" }] }])),
+    result(8, "q1", "x", { toolUseResult: { answers: { "Which?": "A" } } }),
+  ])], { json: true });
+  assert.equal(JSON.parse(a.files[0].text).turns.filter((t) => t.answer === true).length, 1);
 });
 
 const jsonl = (records) => `${records.map((r) => JSON.stringify(r)).join("\n")}\n`;

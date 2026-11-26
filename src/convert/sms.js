@@ -28,7 +28,11 @@
 //   - a number's name comes from the names given, else the backup's contact_name, else "…"
 //     and its last 4 digits (the original took one name, for the chosen conversation)
 //   - an attachment's file name keeps only characters safe in a file name (the original
-//     used the name the sender's phone gave, which could hold "/" or "..")
+//     used the name the sender's phone gave, which could hold "/" or ".."); a cl of "null"
+//     falls through to the part's name (the original took the "null"); two that come out
+//     alike are numbered, "x (2).jpg" (the original overwrote the first)
+//   - with a number, an MMS kept because one of its <addr> lines names that number goes in
+//     that conversation, as in the original's one file
 //   - a message with no usable date is left out and counted (the original stopped)
 //   - the file ends in a line break; the media list is attachments.tsv inside the media
 //     folder (the original wrote attachments-sms.tsv beside it)
@@ -54,15 +58,17 @@ const last4 = (key) => (isNumber(key) ? `…${key.slice(-4)}` : key || "…");
 // media (true: hand each attachment's bytes to onAttachment(name, base64) as it is read).
 // feed(chunk) each chunk of the file in order, then end() → { conversations: Map(key →
 // { key, group, members, contact, messages: [{ ms, mine, from, group, text, files, note }],
-// skippedGroups }), skippedGroups, undated }. A group message's from is its sender's key
-// (null for the backup's owner, "" when the MMS names none) and its group is { members, listed } (listed: key → the name
+// skippedGroups }), skippedGroups, undated, listed: Map(key → the first name a group MMS gave it) }. A group message's from is its sender's key
+// (null for the backup's owner, "" when the MMS names none) and its group is { members, listed } (listed: a Map, key → the name
 // contact_name gave, when it lines up); names are looked up when rendering.
 export function messages({ number = "", groups = false, timeZone = "UTC", media = false, onAttachment = () => {} } = {}) {
   const want = digits(number);
   const conversations = new Map();
   const local = clock(timeZone);
   let undated = 0, skippedGroups = 0;
-  const conv = (key, group = false, members = [key]) => {
+  const listedNames = new Map(); // key → the first name a group MMS's contact_name gave it
+  const fileNames = new Set(); // attachment names given so far (lower case)
+  const conv =(key, group = false, members = [key]) => {
     if (!conversations.has(key)) conversations.set(key, { key, group, members, contact: "", messages: [], skippedGroups: 0 });
     return conversations.get(key);
   };
@@ -104,9 +110,12 @@ export function messages({ number = "", groups = false, timeZone = "UTC", media 
       c = want ? conv(want) : conv(members.join(","), true, members);
       // contact_name lists only saved contacts, so it lines up with the numbers only when none is unsaved
       const cn = String(a.contact_name ?? "").split(", ");
-      const listed = cn.length === raw.length ? Object.fromEntries(raw.map((n, i) => [keyOf(n), cn[i]])) : {};
+      const listed = new Map(cn.length === raw.length ? raw.map((n, i) => [keyOf(n), cn[i]]).filter(([, v]) => !UNKNOWN.has(v)) : []);
+      for (const [k, v] of listed) if (!listedNames.has(k)) listedNames.set(k, v);
       if (a.msg_box === "1") from = keyOf(children.find((e) => e.name === "addr" && e.attrs.type === "137")?.attrs.address);
       group = { members, listed };
+    } else if (want && numbers[0] !== want) {
+      c = conv(want); // kept because an <addr> names the number: it belongs with that conversation
     } else {
       c = conv(numbers[0] ?? "");
       contact(c, a.contact_name);
@@ -117,9 +126,14 @@ export function messages({ number = "", groups = false, timeZone = "UTC", media 
       const ct = p.attrs.ct || "";
       if (ct === "application/smil") continue;
       if (ct === "text/plain") { text.push(p.attrs.text || ""); continue; }
-      let name = p.attrs.cl || p.attrs.name || `part${n}`;
-      if (name === "null" || name === "") name = `part${n}.${ct.split("/").at(-1)}`;
-      const fn = safeTitle(`${day}_${ms}_${n}_${name}`);
+      // the app writes "null" for a field it has no value for
+      const name = [p.attrs.cl, p.attrs.name].find((v) => v && v !== "null") || `part${n}.${ct.split("/").at(-1)}`;
+      const first = safeTitle(`${day}_${ms}_${n}_${name}`);
+      // two MMS from the same second can name a part alike: number the later ones
+      const dot = first.lastIndexOf(".") > 0 ? first.lastIndexOf(".") : first.length;
+      let fn = first;
+      for (let k = 2; fileNames.has(fn.toLowerCase()); k++) fn = `${first.slice(0, dot)} (${k})${first.slice(dot)}`;
+      fileNames.add(fn.toLowerCase());
       files.push(fn);
       if (media && p.attrs.data) onAttachment(fn, p.attrs.data);
     }
@@ -130,15 +144,17 @@ export function messages({ number = "", groups = false, timeZone = "UTC", media 
   const end = () => {
     xml.end();
     for (const c of conversations.values()) c.messages.sort((x, y) => x.ms - y.ms);
-    return { conversations, skippedGroups, undated };
+    return { conversations, skippedGroups, undated, listed: listedNames };
   };
   return { feed: xml.feed, end };
 }
 
 // A number's label: the names given, else what the message's contact_name listed, else
-// its conversation's contact name, else "…1234"
-const labeler = (conversations, names) => (key, listed = {}) =>
-  names[key] || listed[key] || conversations.get(key)?.contact || last4(key);
+// its conversation's contact name, else the name any group MMS listed for it, else "…1234".
+// names is a plain object (own keys only: an address can be "constructor"); the rest are Maps.
+const labeler = (conversations, names, groupListed = new Map()) => (key, listed = new Map()) =>
+  (Object.hasOwn(names, key) && names[key]) || listed.get(key) || conversations.get(key)?.contact
+  || groupListed.get(key) || last4(key);
 
 // One conversation → Markdown. label: labeler()'s function for this backup.
 export function render(c, { source, title, me = "Me", label, timeZone = "UTC" }) {
@@ -146,7 +162,7 @@ export function render(c, { source, title, me = "Me", label, timeZone = "UTC" })
   const other = c.group ? c.members.map((n) => label(n)).join(", ") : label(c.key);
   const msgs = c.messages;
   const with_ = c.group ? `the group of ${c.members.map(last4).join(", ")}`
-    : isNumber(c.key) ? `the number ending ${c.key.slice(-4)}` : `\`${c.key}\``;
+    : isNumber(c.key) ? `the number ending ${c.key.slice(-4)}` : c.key ? `\`${c.key}\`` : "no address";
   const L = [`# ${title || `Texts with ${other}`}`, "",
     `Source: \`${source}\`, made with the SMS Backup & Restore app; only the conversation with ${with_}.`,
     `${msgs.length} messages (SMS and MMS), ${local(msgs[0].ms).date} to ${local(msgs.at(-1).ms).date}. `
@@ -175,9 +191,9 @@ export function render(c, { source, title, me = "Me", label, timeZone = "UTC" })
 // chosen number's conversation when a base is given, else "sms-Name.md"; two that would
 // share one (on a case-blind disk too) get the number's last 4 digits, then a count, added.
 // Conversations go oldest first. title is the chosen conversation's heading.
-export function plan({ conversations, skippedGroups, undated }, { source, number = "", title, base, me = "Me", names = {}, timeZone = "UTC" } = {}) {
+export function plan({ conversations, skippedGroups, undated, listed = new Map() }, { source, number = "", title, base, me = "Me", names = {}, timeZone = "UTC" } = {}) {
   const want = digits(number);
-  const label = labeler(conversations, names);
+  const label = labeler(conversations, names, listed);
   const list = [...conversations.values()].filter((c) => c.messages.length)
     .sort((a, b) => a.messages[0].ms - b.messages[0].ms || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const files = [], taken = new Set();

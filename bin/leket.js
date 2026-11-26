@@ -891,9 +891,9 @@ async function convertClaudeCodeMain(args) {
 
 // An SMS backup, read a chunk at a time (a backup can outgrow one string), into planSms's
 // input; with media, each attachment is saved into it as it is read, and listed in
-// media/attachments.tsv. → { read, saved: [[file, size, md5]] }
-export async function readSmsBackup(path, { number, groups, tz = "UTC", media } = {}) {
-  const saved = [];
+// media/attachments.tsv. → { read, saved: [[file, size, md5]] }. Give saved to collect into
+// an array of your own: it then holds what was saved before a backup that fails partway.
+export async function readSmsBackup(path, { number, groups, tz = "UTC", media, saved = [] } = {}) {
   if (media) await mkdir(media, { recursive: true });
   const onAttachment = (name, b64) => {
     const raw = Buffer.from(b64, "base64");
@@ -906,11 +906,12 @@ export async function readSmsBackup(path, { number, groups, tz = "UTC", media } 
 }
 
 export async function convertSms(path, { out = ".", me, names = {}, tz = "UTC", number = "", title, base, groups = false, media } = {}) {
-  let planned, saved = [];
+  let planned;
+  const saved = [];
   try {
     let read;
     try {
-      ({ read, saved } = await readSmsBackup(path, { number, groups, tz, media }));
+      ({ read } = await readSmsBackup(path, { number, groups, tz, media, saved }));
     } catch (e) {
       if (e.code) throw e; // a file error says which file
       throw new Error(`${path} isn't a readable SMS backup (${e.message})`);
@@ -967,7 +968,7 @@ async function convertSmsMain(args) {
   if (v.number !== undefined && !smsDigits(v.number)) return fail("--number takes a phone number");
   for (const k of ["title", "base"]) if (v[k] !== undefined && v.number === undefined) return fail(`--${k} goes with --number (it names that one conversation's file)`);
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
-  const names = {};
+  const names = Object.create(null); // no prototype: an address can be any word
   for (const n of v.name || []) {
     const i = n.indexOf("=");
     const key = i < 1 ? "" : smsKey(n.slice(0, i));
