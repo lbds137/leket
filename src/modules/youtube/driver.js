@@ -153,7 +153,10 @@ export async function driveYouTube(opts) {
     // a stop, and not by a stop that came after it ended on its own. One edge: when the
     // wait's own bound was the run's deadline, the clock can cross it between the stop
     // check and the bound check; that wait ended on the time budget, so it is a stop.
-    // A wait's sleeps never run past its own end, so its last check falls inside it
+    // A wait's sleeps never run past its own end, so its last check falls inside it.
+    // stopped() records stopReason's first answer, which ranks superseded and
+    // video-changed ahead of time: a deadline stop that lands as the tab moves is
+    // recorded as the move, which is the right call, since what shows is no longer this video
     const endedOnDeadline = (end) => end === deadline && Date.now() >= deadline && stopped();
     const nap = (end) => sleep(Math.max(0, Math.min(stepMs / 2, end - Date.now())));
     while (!stopped() && !button && Date.now() < buttonEnd) {
