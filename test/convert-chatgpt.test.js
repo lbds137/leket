@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { badFolder, collect, plan, render, safeTitle, stamp } from "../src/convert/chatgpt.js";
+import { collect, plan, render } from "../src/convert/chatgpt.js";
+import { badFolder, safeTitle, stamp } from "../src/convert/common.js";
 import { ZipWriter } from "../src/lib/zip.js";
 import { readFolders } from "../bin/leket.js";
 import { chatgptExports } from "./fixtures/chatgpt-export.js";
@@ -53,7 +54,8 @@ test("a later export's copy of a conversation replaces the earlier one, in the l
 
 test("file names: no title, no start time, a shared name, padding", () => {
   const names = files().map((f) => f.name);
-  assert.deepEqual(names, ["undated untitled.md", "2024-03-06 Same.md", "2024-03-05 Plans - ideas.md", "2024-03-06 Same (c-same2-).md", "2024-03-07 Padded.md"]);
+  // oldest first (no start time counts as 0), then by id
+  assert.deepEqual(names, ["undated untitled.md", "2024-03-05 Plans - ideas.md", "2024-03-06 Same.md", "2024-03-06 Same (c-same2-).md", "2024-03-07 Padded.md"]);
   assert.match(files()[0].text, /^# untitled\n\nConversation: https:\/\/chatgpt\.com\/c\/c-null-0002\nCreated: \nUpdated: 1970-01-01T01:00:00Z\n/);
 });
 
@@ -66,6 +68,33 @@ test("a shared name is also caught case-blind and past a first suffix", () => {
   const named = plan(collect([{ conversations: ids.map((id) => c(id, long)) }])).map((f) => f.name);
   assert.equal(new Set(named).size, 3);
   for (const n of named) assert.ok(new TextEncoder().encode(n).length <= 255, `${n.length}`);
+});
+
+test("which conversation gets the suffix doesn't depend on the export's order", () => {
+  const c = (id, t) => ({ conversation_id: id, title: "Same", create_time: t, mapping: {}, current_node: null });
+  const a = [c("bbbbbbbb-2", 1709651220), c("aaaaaaaa-1", 1709651220), c("cccccccc-0", 1709651100)];
+  const named = (convs) => Object.fromEntries(plan(collect([{ conversations: convs }])).map((f) => [f.id, f.name]));
+  assert.deepEqual(named(a), named([...a].reverse()));
+  assert.deepEqual(named(a), { "cccccccc-0": "2024-03-05 Same.md", "aaaaaaaa-1": "2024-03-05 Same (aaaaaaaa).md", "bbbbbbbb-2": "2024-03-05 Same (bbbbbbbb).md" });
+  // a conversation with no current message is marked, for the summary to count
+  assert.ok(plan(collect([{ conversations: [c("x", 1)] }]))[0].empty);
+});
+
+test("safeTitle drops C1 and bidi controls; stamp gives Z for every name of UTC", () => {
+  const ctl = (...cps) => String.fromCodePoint(...cps);
+  assert.equal(safeTitle(`a${ctl(0x202e)}b${ctl(0x85)}c${ctl(0x2066)}d${ctl(0x2028)}e`), "a-b-c-d-e");
+  assert.ok(badFolder(`topic${ctl(0x202e)}`));
+  assert.ok(badFolder(`topic${ctl(0x9b)}`));
+  for (const z of ["utc", "Etc/UTC", "GMT", "Etc/GMT+0", "Zulu"]) assert.equal(stamp(1709651220, z), "2024-03-05T15:07:00Z", z);
+  assert.equal(stamp(1709651220, "Europe/London"), "2024-03-05T15:07:00+00:00");
+});
+
+test("--folders: a BOM, padded cells, and an id listed twice", async () => {
+  const dir = tmp();
+  writeFileSync(join(dir, "f.tsv"), `${String.fromCodePoint(0xfeff)}id\t folder \n c1 \t topic \nc1\ttopic\n`);
+  assert.deepEqual({ ...await readFolders(join(dir, "f.tsv")) }, { c1: "topic" });
+  writeFileSync(join(dir, "dup.tsv"), "id\tfolder\nc1\ta\n\nc1\tb\n");
+  await assert.rejects(readFolders(join(dir, "dup.tsv")), /rows 2 and 4 give c1 different folders/);
 });
 
 test("export keys named like Object.prototype's stay ordinary data", () => {
@@ -158,6 +187,8 @@ test("CLI: the export's zip, its files inside a folder", async () => {
   w.add("export/conversations.json", new TextEncoder().encode(JSON.stringify(e.conversations)));
   w.add("export/conversation_asset_file_names.json", new TextEncoder().encode(JSON.stringify(e.names)));
   w.add("export/sectioned_conversations.json", new TextEncoder().encode("[]"));
+  // another folder's names file is not this export's: it is passed over, not taken or refused
+  w.add("aaa/conversation_asset_file_names.json", new TextEncoder().encode(JSON.stringify({ "file-NAMED1.dat": "wrong.png" })));
   writeFileSync(join(dir, "export.zip"), Buffer.from(await w.parts()[0].arrayBuffer()));
   const r = leket(["convert", "chatgpt", join(dir, "export.zip"), "--out", out]);
   assert.equal(r.status, 0, r.stderr);
@@ -172,7 +203,7 @@ test("CLI: an unreadable export or a bad --folders row writes nothing", async ()
   writeFileSync(join(dir, "bad.tsv"), "id\tfolder\n\nc-pad-0005\t../escape\n");
   let r = leket(["convert", "chatgpt", one, "--out", out, "--folders", join(dir, "bad.tsv")]);
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /row 3 names the folder "\.\.\/escape", which isn't a relative folder.*nothing written/);
+  assert.match(r.stderr, /row 3 has folder "\.\.\/escape", which isn't a relative folder.*nothing written/);
   writeFileSync(join(dir, "proto.tsv"), "id\tfolder\n__proto__\ttopic\n");
   const proto = await readFolders(join(dir, "proto.tsv"));
   assert.ok(Object.hasOwn(proto, "__proto__"));

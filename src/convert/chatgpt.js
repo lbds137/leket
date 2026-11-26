@@ -18,30 +18,9 @@
 //
 // Pure: no file access. bin/leket.js reads the exports and writes what plan() returns.
 import { shown } from "../lib/shown.js";
-
-// Python's str.isspace() set: the original converter's strip() and its "is this part
-// blank" test use it, and it differs from JavaScript's \s (no U+FEFF; adds \x1c-\x1f, \x85)
-const PYSPACE = "\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
-const pyStrip = (s) => s.replace(new RegExp(`^[${PYSPACE}]+|[${PYSPACE}]+$`, "g"), "");
-const blank = (s) => !pyStrip(s);
+import { blank, pyStrip, safeTitle, stamp } from "./common.js";
 
 const KIND = { image_asset_pointer: "image", audio_asset_pointer: "audio", video_asset_pointer: "video" };
-
-// Seconds since 1970 → "YYYY-MM-DDTHH:MM:SSZ" in UTC, or with the zone's offset
-// ("…-05:00") in another zone; "" for no time (missing, 0, or out of range), as the
-// original shows it. Fractions of a second are dropped, not rounded.
-export function stamp(t, timeZone = "UTC") {
-  if (typeof t !== "number" || !t || !Number.isFinite(t)) return "";
-  const d = new Date(Math.floor(t) * 1000);
-  if (Number.isNaN(d.getTime())) return "";
-  if (timeZone === "UTC") return d.toISOString().replace(/\.\d+Z$/, "Z");
-  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "longOffset",
-  }).formatToParts(d).map((x) => [x.type, x.value]));
-  const off = p.timeZoneName === "GMT" ? "+00:00" : p.timeZoneName.replace(/^GMT/, "");
-  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${off}`;
-}
 
 // a message's text: its string parts, and each attachment as [image: name]
 function textOf(content, names) {
@@ -113,36 +92,18 @@ export function render({ id, c }, { names = {}, user = "User", assistant = "Chat
   return { title, turns: turns.length, text: `${head.join("\n")}\n${turns.join("\n")}`, skipped };
 }
 
-// A title as a file name: path separators, a drive colon and control characters become
-// "-", trailing dots go (Windows drops them), and it is cut to 200 bytes of UTF-8.
-export function safeTitle(title) {
-  let s = title.replace(/[/\\:\x00-\x1f\x7f]/g, "-").replace(/\.+$/, "");
-  const enc = new TextEncoder();
-  if (enc.encode(s).length > 200) {
-    // 200 bytes hold at most 200 code points: cut to those first, so a huge title costs
-    // at most 200 short re-encodes
-    const cps = [...s.slice(0, 400)].slice(0, 200);
-    while (enc.encode(cps.join("")).length > 200) cps.pop();
-    s = cps.join("").replace(/\.+$/, "");
-  }
-  return s || "untitled";
-}
-
-// A folder from --folders or --unlisted: relative, "/"-separated, no empty, . or .. part.
-export function badFolder(f) {
-  if (typeof f !== "string" || !f || /[\\:\x00-\x1f\x7f]/.test(f) || f.startsWith("/")) return true;
-  return f.split("/").some((p) => !p || p === "." || p === "..");
-}
-
-// Every file to write: [{ folder, name, text, id, turns, skipped }]. folders maps a
+// Every file to write: [{ folder, name, text, id, turns, skipped, empty }]. folders maps a
 // conversation id to its folder (relative to the output folder); one it doesn't list goes
 // to `unlisted` ("" = the output folder itself). Two conversations that would share a file
 // name (on a case-blind disk too) are told apart by the first 8 characters of their ids,
-// then a number: the name stays within 255 bytes.
+// then a number: the name stays within 255 bytes. Conversations are taken oldest first
+// (then by id), so which one gets the suffix doesn't depend on the export's order.
 export function plan(convs, { folders = {}, unlisted = "", ...opts } = {}) {
   const files = [];
   const taken = new Set();
-  for (const conv of convs.conversations) {
+  const when = (c) => (typeof c.create_time === "number" && Number.isFinite(c.create_time) ? c.create_time : Infinity);
+  const ordered = [...convs.conversations].sort((a, b) => when(a.c) - when(b.c) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const conv of ordered) {
     const r = render(conv, { ...opts, names: convs.names });
     const folder = Object.hasOwn(folders, conv.id) ? folders[conv.id] : unlisted;
     const day = stamp(conv.c.create_time, opts.timeZone).slice(0, 10) || "undated";
@@ -152,7 +113,7 @@ export function plan(convs, { folders = {}, unlisted = "", ...opts } = {}) {
     if (taken.has(key(name))) name = `${day} ${safeTitle(r.title)} (${tag}).md`;
     for (let k = 2; taken.has(key(name)); k++) name = `${day} ${safeTitle(r.title)} (${tag} ${k}).md`;
     taken.add(key(name));
-    files.push({ folder, name, text: r.text, id: conv.id, turns: r.turns, skipped: r.skipped });
+    files.push({ folder, name, text: r.text, id: conv.id, turns: r.turns, skipped: r.skipped, empty: !conv.c.current_node });
   }
   return files;
 }

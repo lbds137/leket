@@ -139,10 +139,18 @@ A save is Leket's Discord zip (for a save in parts, part 1, which holds the mess
 ### ChatGPT export to Markdown
 
 ```
-node bin/leket.js convert chatgpt <export>... [--out DIR] [--user LABEL] [--assistant LABEL] [--tz ZONE] [--folders FILE]
+node bin/leket.js convert chatgpt <export>... [--out DIR] [--user LABEL] [--assistant LABEL] [--tz ZONE] [--folders FILE] [--unlisted FOLDER]
 ```
 
-An export is the zip ChatGPT's "Export data" emails you a link to (or the folder it unzips to), or the `conversations.json` in it. It writes one `YYYY-MM-DD Title.md` per conversation, following the branch you last had on screen (an edited prompt's older answers stay out), with each message under a `### User · time` heading and attached pictures named as `[image: name]`. System, tool and hidden messages are left out, and so are messages with no text (code the assistant ran, its reasoning): the summary line counts those. With several exports, a later one's copy of a conversation wins. `--user` and `--assistant` set the headings, `--tz` the zone (default UTC), and `--folders` (a tab-separated file with `id` and `folder` columns) sorts conversations into subfolders; `node bin/leket.js convert --help` lists every option.
+An export is the zip ChatGPT's "Export data" emails you a link to (or the folder it unzips to), or the `conversations.json` in it. It writes one `YYYY-MM-DD Title.md` per conversation, following the branch you last had on screen (an edited prompt's older answers stay out), with each message under a `### User · time` heading and attached pictures named as `[image: name]`. System, tool and hidden messages are left out, and so are messages with no text (code the assistant ran, its reasoning): the summary line counts those. With several exports, a later one's copy of a conversation wins. `--user` and `--assistant` set the headings, `--tz` the zone (default UTC), and `--folders` (a tab-separated file with `id` and `folder` columns) sorts conversations into subfolders (`--unlisted` names the folder for the rest); `node bin/leket.js convert --help` lists every option.
+
+### Gemini activity (Google Takeout) to Markdown
+
+```
+node bin/leket.js convert gemini <takeout>... [--out DIR] [--user LABEL] [--assistant LABEL] [--tz ZONE] [--folders FILE] [--unlisted FOLDER] [--titles FILE] [--other FOLDER]
+```
+
+A Takeout is the zip Google Takeout makes of "My Activity" with Gemini Apps chosen, in JSON (or the folder it unzips to), or the activity JSON file in it, whatever its language names it. Takeout keeps one row per prompt, with Gemini's replies as HTML and a link to the chat each belongs to. This rebuilds one `YYYY-MM-DD First words of the first prompt.md` per chat, with each prompt and reply under a `### User · time` heading, the replies turned into Markdown (no pandoc needed), drafts numbered, and the files and Gem each prompt used listed. A reply Takeout removed text from is marked. Rows that belong to no chat (Canvas documents, feedback, phone Assistant actions) go to `other-activity.md`, and each Canvas document's text to `canvases/`, both under `--other` (default: the output folder). Several Takeouts are merged, oldest first: the first one that has a row keeps its copy, so a newer Takeout made after chats were deleted loses nothing. `--titles` (a tab-separated file with `id` and `title` columns) gives chats the titles Takeout doesn't keep; `--folders` and `--unlisted` work as for ChatGPT; `--assistant` defaults to `Gemini`.
 
 ### Reddit posts
 
@@ -196,8 +204,8 @@ Layout:
 - `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
-- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`.
-- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages.
+- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `common.js`: their times, file names and folder checks.
+- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini converter.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.
 - `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).
