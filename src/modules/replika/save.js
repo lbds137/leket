@@ -570,8 +570,9 @@ export function render(data) {
     const who = speaker(m.from);
     let body = `<div class="head"><span class="name">${esc(who)}</span><span class="time">${esc(when)}</span>${m.from === "replika" && typeof m.emotion === "string" ? `<span class="tag">emotion: ${esc(m.emotion)}</span>` : ""}</div>`;
     if (m.text != null) body += `<div class="text">${esc(m.text)}</div>`;
-    // the text before Replika changed it, only beside a text it differs from by more than
-    // whitespace (a picture message has none to compare with); data.json keeps it exact
+    // the text before Replika changed it, only beside a text it differs from once leading
+    // and trailing whitespace are set aside (a picture message has none to compare with);
+    // data.json keeps it exact
     if (typeof m.original_text === "string" && typeof m.text === "string" && m.original_text.trim() !== m.text.trim()) {
       body += `<div class="original"><span class="label">Before Replika changed it:</span> ${esc(m.original_text)}</div>`;
     }
