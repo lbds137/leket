@@ -1122,10 +1122,18 @@ async function scenarios(cdp, downloads) {
   // in front) -> driveYouTube injected into the watch tab opens the transcript panel,
   // scrolls the comments open and the replies out, and the page saves the Markdown
   // with its JSON alongside ----
+  // the driver's corner panel on the video tab, watched from the start of the run: its
+  // lines as soon as the last one is Done (the panel fades 6 s later, possibly before the
+  // page says Saved), or null
+  const overlayDone = (sessionId) => waitFor(() => evalIn(sessionId, `(() => {
+    const p = document.getElementById("leket-youtube-panel");
+    const lines = p ? [...p.children].map((c) => c.textContent) : [];
+    return /^Done: /.test(lines[lines.length - 1] || "") && lines; })()`), "the overlay's Done line", 30000).catch(soft(() => null));
   await scenario("youtube", async () => {
     console.log("smoke: youtube save");
     const video = await open(YOUTUBE_WATCH);
     await clickPopup("Save transcript and comments");
+    const overlay = overlayDone(video.sessionId);
     const yp = (await target((s) => s.type === "page" && /\/src\/modules\/youtube\/page\.html\?tab=\d+$/.test(s.url), "the youtube page (with its tab id)")).sessionId;
     await wired(yp, "run", "youtube");
     // the page starts its run on its own; the driver's own overlay narrates on the video tab
@@ -1133,11 +1141,10 @@ async function scenarios(cdp, downloads) {
       return !p.hidden && (p.textContent.startsWith("Saved ") || p.className === "warn") && p.textContent; })()`),
     "the youtube page's end line", 30000).catch(soft((e) => e.message));
     check(end.startsWith("Saved "), `youtube: the page saves both files (it said: ${end})`);
-    // the driver's corner panel on the video tab: its transcript line ends on the
-    // result, and the panel fades out once the run is done
-    const lines = await evalIn(video.sessionId, `(() => { const p = document.getElementById("leket-youtube-panel");
-      return p ? [...p.children].map((c) => c.textContent) : null; })()`);
-    check(!!lines && lines[0] === "Transcript: 3 lines." && /^Done: /.test(lines[lines.length - 1]),
+    // the overlay's transcript line ends on the result, and the panel fades out once the
+    // run is done
+    const lines = await overlay;
+    check(!!lines && lines[0] === "Transcript: 3 lines.",
       `youtube: the overlay's transcript line reports its result and the run ends on Done (${JSON.stringify(lines)})`);
     const gone = await waitFor(() => evalIn(video.sessionId, `!document.getElementById("leket-youtube-panel")`),
       "the overlay to fade out", 15000).catch(soft(() => false));
@@ -1167,17 +1174,31 @@ async function scenarios(cdp, downloads) {
   });
 
   // ---- youtube, the older A/B: ytd-transcript-segment-renderer segments, and replies
-  // without an lc= link, one re-rendered, deduped on author+text ----
+  // without an lc= link, one re-rendered, deduped on author+text — with the tab asking
+  // for reduced motion, so the overlay goes without a fade ----
   await scenario("youtube-old", async () => {
     console.log("smoke: youtube save, older page");
-    await open(YOUTUBE_WATCH_OLD);
+    const video = await open(YOUTUBE_WATCH_OLD);
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] }, video.sessionId);
+    // any opacity the panel is given is a fade: record it
+    await evalIn(video.sessionId, `(() => { window.smokeFaded = false;
+      new MutationObserver((ms) => { for (const m of ms) if (m.target.id === "leket-youtube-panel" && m.target.style.opacity === "0") window.smokeFaded = true; })
+        .observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["style"] }); })()`);
     await clickPopup("Save transcript and comments");
+    const overlay = overlayDone(video.sessionId);
     const yp = (await target((s) => s.type === "page" && /\/src\/modules\/youtube\/page\.html\?tab=\d+$/.test(s.url), "the youtube page (with its tab id)")).sessionId;
     await wired(yp, "run", "youtube-old");
     const end = await waitFor(() => evalIn(yp, `(() => { const p = document.getElementById("status");
       return !p.hidden && (p.textContent.startsWith("Saved ") || p.className === "warn") && p.textContent; })()`),
     "the youtube page's end line", 30000).catch(soft((e) => e.message));
     check(end.startsWith("Saved "), `youtube-old: the page saves both files (it said: ${end})`);
+    const lines = await overlay;
+    check(!!lines && lines[0] === "Transcript: 3 lines.",
+      `youtube-old: the overlay's transcript line reports its result and the run ends on Done (${JSON.stringify(lines)})`);
+    const gone = await waitFor(() => evalIn(video.sessionId, `!document.getElementById("leket-youtube-panel")`),
+      "the overlay to go", 15000).catch(soft(() => false));
+    const faded = await evalIn(video.sessionId, "window.smokeFaded");
+    check(gone === true && faded === false, `youtube-old: under reduced motion the overlay goes without a fade (gone: ${gone}, faded: ${faded})`);
     const file = join(downloads, `${baseName("Smoke test video", "SmokeVid002")}.json`);
     if (!existsSync(file)) {
       check(false, "youtube-old: the json is on disk (missing)");
