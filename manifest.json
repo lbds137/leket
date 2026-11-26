@@ -29,6 +29,7 @@
     "https://www.youtube.com/*",
     "https://my.replika.com/*",
     "https://my.replika.ai/*",
-    "wss://ws.replika.com/*"
+    "wss://ws.replika.com/*",
+    "https://s3-us-west-1.amazonaws.com/replika-content-images/*"
   ]
 }
