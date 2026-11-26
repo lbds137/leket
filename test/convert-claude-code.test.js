@@ -275,3 +275,10 @@ test("CLI: usage errors exit 2; a missing transcript or an empty folder exits 1 
   assert.equal(empty.status, 1);
   assert.match(empty.stderr, /holds no \.jsonl transcript; nothing written/);
 });
+
+test("a .JSONL transcript in a folder is read, and named by its file without the extension in any case", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "leket-cc-"));
+  writeFileSync(join(dir, "sess-0001.JSONL"), "");
+  const [s] = await readClaudeCodeSessions([dir]);
+  assert.equal(s.id, "sess-0001");
+});

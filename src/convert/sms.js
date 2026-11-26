@@ -185,7 +185,7 @@ export function render(c, { source, title, me = "Me", label, timeZone = "UTC" })
     const who = m.group
       ? `${m.from !== null ? label(m.from, m.group.listed) : me} (group: ${m.group.members.map((n) => label(n, m.group.listed)).join(", ")})`
       : m.mine ? me : other;
-    L.push(`> -# ${who} — ${t.stamp}${m.note}`);
+    L.push(`> -# ${escapeTag(who)} — ${t.stamp}${m.note}`);
     const body = [...(m.text ? m.text.split("\n").map(escapeTag) : []), ...m.files.map((f) => `[attachment: ${f}]`)];
     for (const b of body.length ? body : ["[no text]"]) L.push(`> ${b}`.replace(RSTRIP, ""));
     L.push(">");

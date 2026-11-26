@@ -56,8 +56,10 @@ export function badFolder(f) {
 }
 
 // "<" that a Markdown renderer would read as the start of an HTML tag or an autolink
-// ("<Media omitted>", "<Sam>", "<b>") → "\<", so the text shows instead of vanishing
-export const escapeTag = (s) => s.replace(/<(?=[A-Za-z/!?])/g, "\\<");
+// ("<Media omitted>", "<Sam>", "<b>") → "\<", so the text shows instead of vanishing. One a
+// backslash already escapes is left alone. Inside a code span or code block the escape
+// shows as a backslash; that costs one character, where a tag left raw loses its text.
+export const escapeTag = (s) => s.replace(/(?<!\\)<(?=[A-Za-z/!?])/g, "\\<");
 
 // [ms] → [earliest, latest], without spreading (a long chat would overflow the call stack)
 export function span(times) {
