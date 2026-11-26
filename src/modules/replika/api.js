@@ -15,7 +15,8 @@ const IMAGE_SIGNED = "https://my.replika.ai/api/mobile/1.5/images/signed/actions
 
 // fixed, secret-free reasons the save shows when a step stopped partway
 export const DIARY_PARTIAL = "Replika stopped answering the diary partway; the entries read so far are kept";
-export const DIARY_STUCK = "the diary list stopped moving forwards; the entries read so far are kept";
+export const DIARY_STUCK = "the diary list stopped moving back in time; the entries read so far are kept";
+export const DIARY_PAGE_CAP = "the diary has more pages than one save reads; the entries read so far are kept";
 export const MEMORY_V14_PARTIAL = "Replika's older memory list (v1.4) didn't come back; the other memories are kept";
 export const MEMORY_V15_PARTIAL = "Replika's newer memory list (v1.5) didn't come back; the other memories are kept";
 export const MEMORY_BOTH_PARTIAL = "Replika's memory lists (both versions) didn't come back";
@@ -27,6 +28,9 @@ export const HISTORY_SILENT = "no reply from Replika for 30 s";
 export const MEDIA_LINK_UNUSABLE = "the picture's link was not usable";
 export const MEDIA_VOICE_LINK_UNUSABLE = "the voice clip's link was not usable";
 export const MEDIA_FETCH_FAILED = "the file host refused or failed";
+
+// an error whose message is one of this module's fixed, secret-free texts
+export class ApiError extends Error {}
 
 export class SignedOut extends Error {
   constructor() {
@@ -70,14 +74,14 @@ export async function call(url, { method = "GET", body, auth, fetchFn = fetch, s
     } catch {
       status = null; // a network error: retry, then say exactly that
       if (i + 1 < tries) { await sleep(2000 * 2 ** i); continue; }
-      throw new Error("network error");
+      throw new ApiError("network error");
     }
     if (resp.ok) {
       try {
         return await resp.json();
       } catch {
         if (i + 1 < tries) { await sleep(2000 * 2 ** i); continue; }
-        throw new Error("Replika's answer was not JSON");
+        throw new ApiError("Replika's answer was not JSON");
       }
     }
     if (resp.status === 401 || resp.status === 403) throw new SignedOut();
@@ -87,7 +91,7 @@ export async function call(url, { method = "GET", body, auth, fetchFn = fetch, s
     }
     break;
   }
-  throw new Error(status == null ? "network error" : `Replika answered HTTP ${status}`);
+  throw new ApiError(status == null ? "network error" : `Replika answered HTTP ${status}`);
 }
 
 // Injected into the my.replika.com tab with chrome.scripting.executeScript, so this
@@ -209,7 +213,7 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, l
     const oldest = fresh.map((p) => p.date).reduce((a, b) => (b < a ? b : a));
     until = until != null && until < oldest ? until : oldest;
     if (++pages >= maxPages) {
-      partial = DIARY_STUCK;
+      partial = DIARY_PAGE_CAP;
       break;
     }
   }

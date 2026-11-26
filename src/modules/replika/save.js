@@ -8,16 +8,24 @@
 import { ZipWriter } from "../../lib/zip.js";
 import { esc } from "../../lib/render.js";
 import { fetchFile } from "../../lib/build.js";
-import { readHistory, readDiary, readMemories, signedImageUrl, usableMediaUrl, SignedOut, MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED } from "./api.js";
+import { readHistory, readDiary, readMemories, signedImageUrl, usableMediaUrl, SignedOut, ApiError, MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED } from "./api.js";
+
+// fixed reasons for an unexpected throw: its own text never reaches an output
+export const MEDIA_SIGN_FAILED = "Replika didn't give a link for this file";
+export const STEP_FAILED = "this step failed unexpectedly; what was read before it is kept";
+// a SignedOut's or ApiError's message is fixed text; anything else thrown becomes the fallback
+const reasonOf = (e, fallback = STEP_FAILED) => (e instanceof SignedOut || e instanceof ApiError ? e.message : fallback);
 
 // ---- the input key paths each builder reads (the tally reports everything else) ----
 export const MSG_ALLOWED = new Set([
   "id", "content.type", "content.text", "content.voice_message_url",
   "meta.nature", "meta.timestamp", "reactions[]", "meta.reactions[]",
 ]);
-export const DIARY_ALLOWED = new Set([
-  "date", "title", "entries[]", "entries[].id", "entries[].timestamp", "entries[].text",
-  "entries[].images[]", "entries[].images[].url", "entries[].images[].blurred", "entries[].images[].is_romantic",
+// the diary's two raw shapes: the list items and the day replies
+export const DIARY_LIST_ALLOWED = new Set(["date", "title"]);
+export const DIARY_DAY_ALLOWED = new Set([
+  "date", "entries[].id", "entries[].timestamp", "entries[].text",
+  "entries[].images[].url", "entries[].images[].blurred", "entries[].images[].is_romantic",
 ]);
 export const FACT_ALLOWED = new Set(["id", "creation_timestamp", "text"]);
 
@@ -122,7 +130,9 @@ export function buildFact(raw, about) {
 
 // Counts the key paths the raw objects carry but the builders never read, so a live run
 // can widen the allowlist from what it shows. Dotted paths only, never values; nested
-// plain objects are walked, an array contributes its path with [] and is not entered.
+// plain objects are walked; an array whose path[] is allowed counts as read whole, any
+// other array has its object items walked under path[] (a non-object item counts once
+// as the leaf path[]; an empty array counts as nothing).
 // A key is data too, so it is hardened: a key segment that isn't a short plain
 // identifier is written as *, objects deeper than TALLY_DEPTH segments are not entered
 // (the path at that depth counts as <path>.*), and past TALLY_PATHS distinct paths the
@@ -142,12 +152,24 @@ export function tallyUnknown(objects, allowedPaths) {
       const v = obj[key];
       const k = TALLY_KEY.test(key) ? key : "*";
       const path = prefix ? `${prefix}.${k}` : k;
-      if (v && typeof v === "object" && !Array.isArray(v)) {
+      if (Array.isArray(v)) {
+        const leaf = `${path}[]`;
+        if (allowed.has(leaf)) continue;
+        let leafCounted = false;
+        for (const item of v) {
+          if (item && typeof item === "object" && !Array.isArray(item)) {
+            if (depth >= TALLY_DEPTH) add(`${leaf}.*`);
+            else walk(item, leaf, depth + 1);
+          } else if (!leafCounted) {
+            leafCounted = true; // non-object items count the leaf once per array
+            add(leaf);
+          }
+        }
+      } else if (v && typeof v === "object") {
         if (depth >= TALLY_DEPTH) add(`${path}.*`);
         else walk(v, path, depth + 1);
-      } else {
-        const leaf = Array.isArray(v) ? `${path}[]` : path;
-        if (!allowed.has(leaf)) add(leaf);
+      } else if (!allowed.has(path)) {
+        add(path);
       }
     }
   };
@@ -222,7 +244,7 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
           plan.record.not_captured = stopped;
           continue;
         }
-        plan.record.not_captured = (e && e.message) || String(e);
+        plan.record.not_captured = reasonOf(e, MEDIA_SIGN_FAILED);
         continue;
       }
     }
@@ -269,7 +291,7 @@ export async function runSave({
       onProgress: (n) => onProgress({ step: "chat", count: n }),
     });
   } catch (e) {
-    chat = { messages: [], partial: (e && e.message) || String(e) };
+    chat = { messages: [], partial: reasonOf(e) };
   }
   statuses.chat = chat.partial || "complete";
   const built = chat.messages.map(buildMessage);
@@ -279,14 +301,10 @@ export async function runSave({
 
   onStep("diary");
   let diary = { days: [], list: [], partial: null, signedOut: false };
-  if (stopReason) {
-    diary.partial = stopReason;
-  } else {
-    try {
-      diary = await readDiary({ auth, fetchFn, sleep });
-    } catch (e) {
-      diary = { days: [], list: [], partial: (e && e.message) || String(e), signedOut: false };
-    }
+  try {
+    diary = await readDiary({ auth, fetchFn, sleep });
+  } catch (e) {
+    diary = { days: [], list: [], partial: reasonOf(e), signedOut: false };
   }
   statuses.diary = diary.partial || "complete";
   const titleOf = new Map();
@@ -308,7 +326,7 @@ export async function runSave({
     try {
       memories = await readMemories({ auth, fetchFn, sleep });
     } catch (e) {
-      memories = { facts: [], customerFacts: [], robotFacts: [], partial: (e && e.message) || String(e), signedOut: false };
+      memories = { facts: [], customerFacts: [], robotFacts: [], partial: reasonOf(e), signedOut: false };
     }
   }
   statuses.memories = memories.partial || "complete";
@@ -344,9 +362,10 @@ export async function runSave({
     },
     unsaved_fields: {
       message: tallyUnknown(chat.messages, MSG_ALLOWED),
-      // the diary's raw objects are both answers Replika gave: the list items and the
-      // days, so a field on either shows up in the tally
-      diary: tallyUnknown([...(diary.list || []), ...diary.days], DIARY_ALLOWED),
+      // the diary's raw objects are two answers Replika gave: the list items and the
+      // days, so a field on either shows up in its own tally
+      diary_list: tallyUnknown(diary.list || [], DIARY_LIST_ALLOWED),
+      diary: tallyUnknown(diary.days, DIARY_DAY_ALLOWED),
       fact: tallyUnknown([...memories.facts, ...memories.customerFacts, ...memories.robotFacts], FACT_ALLOWED),
     },
     messages: records,
@@ -412,13 +431,14 @@ export function problems(data) {
   }
   const counts = new Map();
   for (const m of notCaptured(data)) counts.set(m.not_captured, (counts.get(m.not_captured) || 0) + 1);
-  for (const [reason, n] of counts) lines.push(`${n} picture(s) or voice clip(s) not saved: ${reason}`);
+  for (const [reason, n] of counts) lines.push(`${n} item(s) not saved: ${reason}`);
   // the field paths the builders never read, per kind (paths only, never values)
   const unsaved = (data && data.unsaved_fields) || {};
-  for (const kind of ["message", "diary", "fact"]) {
+  const kindLabel = { diary_list: "diary list" };
+  for (const kind of ["message", "diary_list", "diary", "fact"]) {
     const paths = Object.keys(unsaved[kind] || {});
     if (!paths.length) continue;
-    lines.push(`Fields Leket didn't save (${kind}): ${paths.slice(0, 20).join(", ")}${paths.length > 20 ? ` and ${paths.length - 20} more` : ""}`);
+    lines.push(`Fields Leket didn't save (${kindLabel[kind] || kind}): ${paths.slice(0, 20).join(", ")}${paths.length > 20 ? ` and ${paths.length - 20} more` : ""}`);
   }
   return lines;
 }
@@ -434,7 +454,7 @@ export function endLine({ filename, data }) {
   }
   const missed = notCaptured(data).length;
   const line = `Saved ${filename}: ${c.messages ?? 0} messages, ${c.diary ?? 0} diary entries, ${c.memories ?? 0} memories, ${c.media ?? 0} pictures and voice clips`;
-  const unsaved = `${missed} picture(s) or voice clip(s) not saved`;
+  const unsaved = `${missed} item(s) not saved`;
   if (reasons.length) return { text: `${line} (partial: ${reasons.join("; ")}${missed ? `; ${unsaved}` : ""})`, warn: true };
   return missed ? { text: `${line} (${unsaved})`, warn: true } : { text: line, warn: false };
 }
