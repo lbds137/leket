@@ -11,7 +11,8 @@
 // `leket convert claude-code <transcript>…` for Claude Code's session transcripts
 // (src/convert/claude-code.js), and `leket convert sms <backup.xml>` for an SMS Backup &
 // Restore backup (src/convert/sms.js), and `leket convert signal <export.txt>…` for
-// signalbackup-tools' text export (src/convert/signal.js).
+// signalbackup-tools' text export (src/convert/signal.js), and `leket convert whatsapp
+// <chat.txt>…` for WhatsApp's Export chat (src/convert/whatsapp.js).
 // `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
@@ -45,6 +46,7 @@ import { collect as collectCharacterChat, plan as planCharacterChat } from "../s
 import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert/claude-code.js";
 import { digits as smsDigits, keyOf as smsKey, messages as smsMessages, plan as planSms } from "../src/convert/sms.js";
 import { plan as planSignal } from "../src/convert/signal.js";
+import { plan as planWhatsapp } from "../src/convert/whatsapp.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -208,7 +210,30 @@ usage: leket convert signal <export.txt>... [--out DIR] [--name NAME=LABEL]... [
   --title TEXT    with one export: the heading (default "Signal with Name")
   --base NAME     with one export: the file's name (NAME.md)
   Exit: 0 written; 1 an export couldn't be read, held no message or has a date that
-  can't be read (nothing written), or a write failed; 2 usage.`;
+  can't be read (nothing written: a line pasted into a message that looks like a
+  header with a month not in English counts), or a write failed; 2 usage.
+
+usage: leket convert whatsapp <chat.txt>... [--out DIR] [--name NAME=LABEL]... [--tz ZONE]
+         [--title TEXT] [--base NAME]
+
+  Turns a chat WhatsApp exported as text (Export chat; the .txt inside the zip "With
+  media" writes) into one Markdown file per chat, in the shape convert discord writes.
+  An export is its .txt file, or a folder: every .txt directly in it. Only the header
+  shape "d.m.yyyy, H:MM - Name: text" (day first, 24-hour clock) is read. "Name: text"
+  is a message; any other header line is one of WhatsApp's own notices, shown as
+  [WhatsApp, time: notice]. The senders found are listed on stderr: a notice holding
+  ": " reads as a message, and shows there.
+  Writes "whatsapp-Name.md" into DIR (default: the current directory), replacing earlier
+  files of that name; two that would share a name get a count added.
+  --name N=LABEL  show the sender N (as the export writes it) as LABEL (repeatable;
+                  default: the name as written)
+  --tz ZONE       the zone the phone's times are in, named in the transcript. The export
+                  writes them with no zone, so they are shown as written, never converted
+                  (default: not named)
+  --title TEXT    with one export: the heading (default "WhatsApp with Name")
+  --base NAME     with one export: the file's name (NAME.md)
+  Exit: 0 written; 1 an export couldn't be read, held no message or has a date that
+  doesn't exist (nothing written), or a write failed; 2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -848,18 +873,8 @@ async function* jsonlLines(path) {
 // it, not in its subfolders, where subagents' transcripts live) are each one → sessions for
 // planClaudeCode, read a line at a time (a transcript can outgrow one string)
 export async function readClaudeCodeSessions(paths) {
-  const files = [];
-  for (const p of paths) {
-    if ((await stat(p)).isDirectory()) {
-      const names = (await readdir(p, { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => e.name).sort();
-      if (!names.length) throw new Error(`${p} holds no .jsonl transcript`);
-      files.push(...names.map((n) => join(p, n)));
-    } else files.push(p);
-  }
-  // a transcript given twice (itself and in its folder, or by a link) is read once
-  const seen = new Set();
   const sessions = [];
-  for (const f of files.filter((x) => !seen.has(realpathSync(x)) && seen.add(realpathSync(x)))) {
+  for (const f of await inputFiles(paths, ".jsonl", "transcript")) {
     const t = claudeCodeTurns();
     for await (const line of jsonlLines(f)) t.feed(line);
     const s = t.end();
@@ -1001,51 +1016,63 @@ async function convertSmsMain(args) {
   return convertSms(positionals[0], { out: v.out, me: v.me, names, tz: v.tz, number: v.number, title: v.title, base: v.base, groups: !!v.groups, media: v.media });
 }
 
-// The text exports given (each a .txt, or a folder: every .txt directly in it) →
-// [{ file, text }] (file: its name); one given twice (itself and in its folder, or by a
-// link) is read once.
-export async function readSignalExports(paths) {
+// The files given, each a file, or a folder: every file directly in it whose name ends
+// in ext (in any case; not in its subfolders) → their paths, a file given twice (itself
+// and in its folder, or by a link) once. A folder with none throws, naming what it lacks.
+export async function inputFiles(paths, ext, what) {
   const files = [];
   for (const p of paths) {
     if ((await stat(p)).isDirectory()) {
-      const names = (await readdir(p, { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith(".txt")).map((e) => e.name).sort();
-      if (!names.length) throw new Error(`${p} holds no .txt export`);
+      const names = (await readdir(p, { withFileTypes: true }))
+        .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(ext)).map((e) => e.name).sort();
+      if (!names.length) throw new Error(`${p} holds no ${ext} ${what}`);
       files.push(...names.map((n) => join(p, n)));
     } else files.push(p);
   }
   const seen = new Set();
-  const exports = [];
-  for (const f of files) {
+  return files.filter((f) => {
     const real = realpathSync(f);
-    if (seen.has(real)) continue;
-    seen.add(real);
-    exports.push({ file: basename(f), text: await readFile(f, "utf8") });
-  }
-  return exports;
+    return !seen.has(real) && seen.add(real);
+  });
 }
 
-export async function convertSignal(paths, { out = ".", names = {}, tz = "", title, base } = {}) {
+// `convert signal` and `convert whatsapp`: text exports, one conversation each →
+// [{ file, text }] (file: its name) → plan → written
+const TEXT_LOGS = {
+  signal: {
+    plan: planSignal,
+    done: (s, tz) => `${s.conversations} conversations, ${s.messages} messages, ${s.events} Signal events; times as exported${tz ? ` (${tz})` : ""}.`,
+  },
+  whatsapp: {
+    plan: planWhatsapp,
+    done: (s, tz) => `${s.conversations} conversations, ${s.messages} messages, ${s.notices} WhatsApp notices; times as the phone showed them${tz ? ` (${tz})` : ""}.`
+      + `\nleket: senders: ${Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ")}.`,
+  },
+};
+
+export async function convertTextLog(kind, paths, { out = ".", names = {}, tz = "", title, base } = {}) {
+  const { plan, done } = TEXT_LOGS[kind];
   let planned;
   try {
-    const exports = await readSignalExports(paths);
+    const exports = [];
+    for (const f of await inputFiles(paths, ".txt", "export")) exports.push({ file: basename(f), text: await readFile(f, "utf8") });
     // counted once read: one folder can hold many, two paths can be one file
     const one = [["title", title], ["base", base]].find(([, x]) => x !== undefined);
     if (one && exports.length > 1) {
       process.stderr.write(`leket: --${one[0]} goes with one export (it names that one conversation's file); ${exports.length} were given.\n`);
       return 2;
     }
-    planned = planSignal(exports, { title, base, names, timeZone: tz });
+    planned = plan(exports, { title, base, names, timeZone: tz });
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
   }
   if (!(await writeConverted(planned.files, out))) return 1;
-  const s = planned.stats;
-  process.stderr.write(`leket: ${s.conversations} conversations, ${s.messages} messages, ${s.events} Signal events; times as exported${tz ? ` (${tz})` : ""}.\n`);
+  process.stderr.write(`leket: ${done(planned.stats, tz)}\n`);
   return 0;
 }
 
-async function convertSignalMain(args) {
+async function convertTextLogMain(kind, args) {
   let parsed;
   try {
     parsed = parseArgs({
@@ -1074,7 +1101,7 @@ async function convertSignalMain(args) {
     if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${n.slice(0, i)}= takes a one-line label`);
     names[n.slice(0, i)] = label;
   }
-  return convertSignal(positionals, { out: v.out, names, tz: v.tz, title: v.title, base: v.base });
+  return convertTextLog(kind, positionals, { out: v.out, names, tz: v.tz, title: v.title, base: v.base });
 }
 
 // The checks every convert main makes: each label given is one line (and not blank,
@@ -1120,7 +1147,7 @@ async function convertMain(rest) {
   if (kind === "character-chat") return convertCharacterChatMain(args);
   if (kind === "claude-code") return convertClaudeCodeMain(args);
   if (kind === "sms") return convertSmsMain(args);
-  if (kind === "signal") return convertSignalMain(args);
+  if (kind === "signal" || kind === "whatsapp") return convertTextLogMain(kind, args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {

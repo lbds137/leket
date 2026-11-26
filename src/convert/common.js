@@ -54,3 +54,14 @@ export function badFolder(f) {
   if (f.replace(UNSAFE, (c) => (c === "/" ? c : "")) !== f) return true;
   return f.split("/").some((p) => !p || p === "." || p === "..");
 }
+
+// "<" that a Markdown renderer would read as the start of an HTML tag or an autolink
+// ("<Media omitted>", "<Sam>", "<b>") → "\<", so the text shows instead of vanishing
+export const escapeTag = (s) => s.replace(/<(?=[A-Za-z/!?])/g, "\\<");
+
+// [ms] → [earliest, latest], without spreading (a long chat would overflow the call stack)
+export function span(times) {
+  let lo = Infinity, hi = -Infinity;
+  for (const t of times) { if (t < lo) lo = t; if (t > hi) hi = t; }
+  return [lo, hi];
+}

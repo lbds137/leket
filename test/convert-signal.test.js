@@ -159,3 +159,28 @@ test("cli: usage errors exit 2, an unreadable export exits 1 with nothing writte
   assert.match(leket(["convert", "signal", join(src, "empty"), "--out", out]).stderr, /holds no \.txt export/);
   assert.equal(existsSync(join(out, "signal-Pat.md")), false);
 });
+
+test("a < that would start a tag is escaped, in events and messages; a < before a space is not", () => {
+  const md = one("[Jan 02, 2025 10:00:00] *** <Sam> changed their profile name.\n[Jan 02, 2025 10:01:00] <Pat> <b>bold</b> and 1 < 2\n");
+  assert.match(md, /^> \[\\<Sam> changed their profile name\.\]$/m);
+  assert.match(md, /^> \\<b>bold\\<\/b> and 1 < 2$/m);
+});
+
+test("a poll's options lose their indent; other indented lines keep it", () => {
+  const md = one("[Jan 02, 2025 10:00:00] <Pat> Poll: lunch?\n      [2] tacos\n[Jan 02, 2025 10:01:00] <Pat> code:\n      [2] stays\n");
+  assert.match(md, /^> Poll: lunch\?\n> \[2\] tacos$/m);
+  assert.match(md, /^>       \[2\] stays$/m);
+});
+
+test("the source's name stays one code span when it holds a backtick", () => {
+  const [f] = plan([{ file: "a`b (_id1).txt", text: "[Jan 02, 2025 10:00:00] <Pat> hi\n" }]).files;
+  assert.match(f.text, /^Source: ``a`b \(_id1\)\.txt``, a conversation/m);
+});
+
+test("cli: a folder's .TXT exports are read too", () => {
+  const src = tmp(), out = tmp();
+  writeFileSync(join(src, "Pat (_id1).TXT"), "[Jan 02, 2025 10:00:00] <Pat> hi\n");
+  const r = leket(["convert", "signal", src, "--out", out]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readdirSync(out), ["signal-Pat.md"]);
+});
