@@ -32,7 +32,8 @@ const info = {
     { id: "rootB", parent: "root", author: "@gamma", text: "second comment", like_count: 9, _time_text: "3 days ago", is_pinned: true },
   ],
 };
-process.stderr.write("[youtube] Downloading ~5 comments\n");
+// on stdout, as yt-dlp's to_screen writes it
+process.stdout.write("[youtube] Downloading ~5 comments\n");
 const mode = process.env.FAKE_YTDLP_MODE;
 const body = mode === "null" ? "null"
   : mode === "playlist" ? JSON.stringify({ _type: "playlist", id: "PLfake", title: "A Synthetic Playlist", entries: [] })

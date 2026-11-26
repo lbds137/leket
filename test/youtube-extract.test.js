@@ -66,6 +66,12 @@ test("pickCaptionTrack prefers manual, then <lang>-orig, then the plain auto tra
   };
   assert.deepEqual(pickCaptionTrack(regional, "en"), { url: "https://y.test/gb", kind: "manual", language: "en-GB" });
   assert.deepEqual(pickCaptionTrack(regional, "EN"), { url: "https://y.test/gb", kind: "manual", language: "en-GB" });
+  // ...unless the video's own language names a region: that one, in any case
+  assert.equal(pickCaptionTrack({ ...regional, language: "en-US" }, "en").language, "en-US");
+  assert.equal(pickCaptionTrack({ ...regional, language: "EN-us" }, "en").language, "en-US");
+  // a video language without a region, or in another language, leaves the key order
+  assert.equal(pickCaptionTrack({ ...regional, language: "en" }, "en").language, "en-GB");
+  assert.equal(pickCaptionTrack({ ...regional, language: "fr-FR" }, "en").language, "en-GB");
   // a language with only non-json3 formats, or none at all, has no track
   assert.equal(pickCaptionTrack({ automatic_captions: { fr: [{ ext: "vtt", url: "https://y.test/v" }] } }, "fr"), null);
   assert.equal(pickCaptionTrack({}, "en"), null);

@@ -86,30 +86,59 @@ export function ytDlpArgs(url, dir, { maxComments } = {}) {
 
 // yt-dlp overwrites comment_count with the number it extracted, so the total YouTube
 // reports survives only in its log line "Downloading ~97 comments".
+const ESTIMATE = /Downloading ~([\d,]+) comments/;
+const TOO_OLD = /no such option: --js-runtimes/;
 export function reportedTotal(log) {
-  const m = /Downloading ~([\d,]+) comments/.exec(log || "");
+  const m = ESTIMATE.exec(log || "");
   return m ? `~${m[1]}` : "";
 }
 
+// Collects, from a stream of chunks, only the lines that match `keep`: a long comment
+// fetch logs a line per page, and only the estimate and the too-old error are read back.
+// Lines end at \n or \r; an unended line over 64 KB keeps only its last 1 KB.
+export function lineKeeper(keep = new RegExp(`${ESTIMATE.source}|${TOO_OLD.source}`)) {
+  let partial = "";
+  let kept = "";
+  return {
+    push(chunk) {
+      const lines = (partial + chunk).split(/\r\n|\r|\n/);
+      partial = lines.pop();
+      if (partial.length > 65_536) partial = partial.slice(-1024);
+      for (const l of lines) if (keep.test(l)) kept += `${l}\n`;
+    },
+    end() {
+      if (partial && keep.test(partial)) kept += `${partial}\n`;
+      partial = "";
+      return kept;
+    },
+  };
+}
+
+// yt-dlp's progress goes to stderr as it comes, both streams of it: this script's
+// stdout carries only the saved paths.
 function run(cmd, args) {
   return new Promise((res) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let log = "";
-    child.stdout.on("data", (d) => { log += d; });
-    child.stderr.on("data", (d) => { log += d; process.stderr.write(d); });
-    child.on("error", (e) => res({ code: 127, log: `${log}${e.message}\n` }));
+    const out = lineKeeper();
+    const err = lineKeeper();
+    child.stdout.on("data", (d) => { out.push(d); process.stderr.write(d); });
+    child.stderr.on("data", (d) => { err.push(d); process.stderr.write(d); });
+    const log = () => out.end() + err.end();
+    child.on("error", (e) => res({ code: 127, log: `${log()}${e.message}\n` }));
     // a child killed by a signal closes with code null: that is a stop, never a clean run
-    child.on("close", (code, signal) => res({ code: code ?? 1, signal, log }));
+    child.on("close", (code, signal) => res({ code: code ?? 1, signal, log: log() }));
   });
 }
 
-// Step 2: the caption track, fetched here. Returns {transcript, kind, note, failed}.
+// Step 2: the caption track, fetched here. Returns {transcript, kind, language, note,
+// failed}; kind and language (the track's own key, en-US when a regional track stood
+// in for en) only when a track was picked.
 export async function fetchTranscript(info, lang, { fetch: doFetch = fetch } = {}) {
   const track = pickCaptionTrack(info, lang);
   if (!track) {
     return { transcript: [], note: `YouTube lists no captions in "${lang}" for this video.`, failed: false };
   }
-  const fail = (note) => ({ transcript: [], kind: track.kind, note, failed: true });
+  const fail = (note) => ({ transcript: [], kind: track.kind, language: track.language, note, failed: true });
   let r;
   try {
     r = await doFetch(track.url, { signal: AbortSignal.timeout(60_000) });
@@ -138,17 +167,21 @@ export async function fetchTranscript(info, lang, { fetch: doFetch = fetch } = {
     return fail("YouTube answered the caption request with something that isn't a caption file.");
   }
   const transcript = json3ToTranscript(body);
-  return { transcript, kind: track.kind, note: transcript.length ? "" : "The caption track was empty.", failed: false };
+  return { transcript, kind: track.kind, language: track.language, note: transcript.length ? "" : "The caption track was empty.", failed: false };
 }
 
 // Steps 1 and 2 → the v1 object, given an info.json already read.
 // ytDlpExit: yt-dlp's exit code; nonzero with an info.json written means it stopped
 // partway (the comments especially may be cut short), which the notes and exit 3 say.
-export async function extractFromInfo(info, { lang = "en", log = "", ytDlpExit = 0, fetch: doFetch, extractedAt } = {}) {
+// ytDlpSignal: the signal that stopped it, when one did (its exit code is then 1).
+export async function extractFromInfo(info, { lang = "en", log = "", ytDlpExit = 0, ytDlpSignal, fetch: doFetch, extractedAt } = {}) {
   const { threads, droppedReplies } = threadsFromYtDlp(info.comments);
   const cap = await fetchTranscript(info, lang, { fetch: doFetch });
   const notes = [];
-  if (ytDlpExit) notes.push(`yt-dlp exited ${ytDlpExit} after writing the video info, so the comments may be incomplete.`);
+  if (ytDlpExit) {
+    const how = ytDlpSignal ? `was stopped (${ytDlpSignal})` : `exited ${ytDlpExit}`;
+    notes.push(`yt-dlp ${how} after writing the video info, so the comments may be incomplete.`);
+  }
   if (!Array.isArray(info.comments)) notes.push("yt-dlp returned no comment list (comments may be off for this video).");
   if (droppedReplies) notes.push(`${droppedReplies} replies whose thread wasn't fetched were left out.`);
   const extract = buildExtract({
@@ -160,8 +193,7 @@ export async function extractFromInfo(info, { lang = "en", log = "", ytDlpExit =
       total_comments_reported: reportedTotal(log),
       source: "leket-cli/yt-dlp",
       video_id: info.id,
-      // the track's own key: en-US when a regional track stood in for en
-      transcript_language: (cap.kind && pickCaptionTrack(info, lang)?.language) || "",
+      transcript_language: cap.language || "",
       transcript_kind: cap.kind,
       transcript_note: cap.note,
       comments_note: notes.join(" "),
@@ -199,11 +231,21 @@ export async function writePair(base, json, md) {
 }
 
 export async function youtube(url, { out = ".", lang = "en", maxComments } = {}) {
+  // the output folder is made before yt-dlp runs, so a bad --out fails at once rather
+  // than after a long comment fetch
+  const dir = resolve(out);
+  try {
+    await mkdir(dir, { recursive: true });
+  } catch (e) {
+    const why = e && e.code === "EEXIST" ? "a file is in the way" : (e && e.code) || (e && e.message) || String(e);
+    process.stderr.write(`leket: can't save into ${dir} (${why}); nothing saved.\n`);
+    return 1;
+  }
   const yt = ytDlpCommand();
   const work = await mkdtemp(join(tmpdir(), "leket-yt-"));
   try {
     const { code, signal, log } = await run(yt.cmd, [...yt.pre, ...ytDlpArgs(url, work, { maxComments })]);
-    if (code && /no such option: --js-runtimes/.test(log)) {
+    if (code && TOO_OLD.test(log)) {
       process.stderr.write("leket: this yt-dlp is too old to know --js-runtimes; update it (yt-dlp -U, or your package manager), or unset LEKET_YTDLP to use uvx's.\n");
     }
     let info = null;
@@ -216,12 +258,10 @@ export async function youtube(url, { out = ".", lang = "en", maxComments } = {})
       process.stderr.write(`leket: yt-dlp ${how} and wrote ${what}; nothing saved.\n`);
       return 1;
     }
-    const { extract, partial } = await extractFromInfo(info, { lang, log, ytDlpExit: code });
+    const { extract, partial } = await extractFromInfo(info, { lang, log, ytDlpExit: code, ytDlpSignal: signal });
     // both files are rendered before either is written, so a render error saves nothing
     const json = `${JSON.stringify(extract, null, 2)}\n`;
     const md = renderMarkdown(extract);
-    const dir = resolve(out);
-    await mkdir(dir, { recursive: true });
     const base = join(dir, `${baseName(extract.metadata.title, extract.metadata.video_id)}-transcript-comments`);
     const { saved, error } = await writePair(base, json, md);
     if (saved !== "both") {
