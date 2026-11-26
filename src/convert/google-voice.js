@@ -23,16 +23,23 @@
 // messages are those whose sender name is "Me" or "אני" (a Hebrew-locale export) after
 // entity decoding and trimming. Timestamps carry offsets and are shown in --tz (default
 // UTC); a dt or published value with no offset is read as this machine's local time, as
-// the Python original's naive astimezone() read it.
+// the Python original's naive astimezone() read it. Every `Group Conversation - <time>.html`
+// file joins one "Group Conversation" transcript (the original grouped them the same way).
+// A file whose kind is known but which yields no row (undated call, message-less text file)
+// still counts in `stats.files` and the Source line, as in the original.
 //
 // A port of a private converter, made generic: names and the time zone are options. The
 // deliberate differences:
 //   - contacts are discovered from the file names (splitting from the right on " - " before
 //     the timestamp and any known kind word) rather than taking one contact prefix; a file
 //     with an empty contact or no timestamp part is skipped and counted in stats.notExports
-//   - both the Hebrew kind words and the English ones are recognised in file names, falling
-//     back to the file's `http://www.google.com/voice#<tag>` link, else skipping the file
-//     and listing its name in stats.unknownKinds
+//   - both the bare English kind words and the long forms are recognised in file names, plus
+//     the Hebrew words (neither English set is verified against a real English-locale export),
+//     and a file whose middle word is none of these keeps that word in the contact name (the
+//     kind can still come from the tag link)
+//   - the port scans every `http://www.google.com/voice#<tag>` link in the file and prefers a
+//     specific tag over `inbox`, where the original read the first link and mapped `inbox`
+//     directly; a file with no known kind or tag is skipped and listed in stats.unknownKinds
 //   - message and voicemail HTML goes through htmlToMarkdown (entities decoded, <br> as line
 //     breaks, bold and links as Markdown, Markdown's own characters escaped) rather than
 //     only unescaping entities and turning <br> into newlines
@@ -57,6 +64,10 @@ const KIND = {
   "התקבלה": "received",
   "שלא נענתה": "missed",
   "דואר קולי": "voicemail",
+  Text: "text",
+  Placed: "placed",
+  Received: "received",
+  Missed: "missed",
   "Text conversation": "text",
   "Placed call": "placed",
   "Received call": "received",
@@ -82,7 +93,7 @@ const FN = /<abbr class="fn" title="[^"]*">([\s\S]*?)<\/abbr>|<span class="fn">(
 const PUBLISHED = /<abbr class="published" title="([^"]*)"/;
 const DURATION = /<abbr class="duration" title="PT([^"]+)"/;
 const FULL_TEXT = /<span class="full-text">([\s\S]*?)<\/span>/;
-const TAG_LINK = /href="https?:\/\/www\.google\.com\/voice#(\w+)"/;
+const TAG_LINK = /href="https?:\/\/www\.google\.com\/voice#(\w+)"/g;
 
 function splitFileName(fileName) {
   const parts = String(fileName).split(" - ");
@@ -94,6 +105,15 @@ function splitFileName(fileName) {
   return contact.trim() ? { contact, kind: known ? KIND[word] : null } : null;
 }
 
+function kindFromText(text) {
+  let inbox = false;
+  for (const [, tag] of String(text).matchAll(TAG_LINK)) {
+    if (tag === "inbox") inbox = true;
+    else if (Object.hasOwn(TAG, tag)) return TAG[tag];
+  }
+  return inbox ? TAG.inbox : null;
+}
+
 // The contact name in a Google Voice export file's name, or null when it isn't one
 export const contactOf = (fileName) => splitFileName(fileName)?.contact ?? null;
 
@@ -102,9 +122,7 @@ export const contactOf = (fileName) => splitFileName(fileName)?.contact ?? null;
 export function kindOf(fileName, text = "") {
   const s = splitFileName(fileName);
   if (!s) return null;
-  if (s.kind) return s.kind;
-  const m = TAG_LINK.exec(String(text));
-  return m && Object.hasOwn(TAG, m[1]) ? TAG[m[1]] : null;
+  return s.kind || kindFromText(text);
 }
 
 const word = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -134,7 +152,7 @@ function render(c, { title, me = "Me", names = {}, timeZone = "UTC" }) {
     ? `, from ${folders.map((f) => codeSpan(f)).join(", ")}${loose ? `, ${word(loose, "loose file")}` : ""}`
     : "";
   const L = [
-    `# ${title || `Google Voice with ${contactLabel}`}`,
+    `# ${title || `Google Voice with ${escapeTag(contactLabel)}`}`,
     "",
     `Source: ${word(c.files.length, "Google Voice Takeout file")}${from}.`,
     `${word(texts, "text message")} and ${word(calls, "call/voicemail", "calls/voicemails")}, `
@@ -180,20 +198,22 @@ export function plan(inputs, { title, base, me = "Me", names = {}, contact = "",
       stats.notExports++;
       continue;
     }
-    const kind = s.kind || (() => {
-      const m = TAG_LINK.exec(String(text));
-      return m && Object.hasOwn(TAG, m[1]) ? TAG[m[1]] : null;
-    })();
+    const kind = s.kind || kindFromText(text);
     if (!kind) {
       stats.unknownKinds.push(file);
       continue;
     }
+    // A file whose kind is known is counted in stats.files and the contact's file list before
+    // row extraction, so files yielding no row (an undated call, a message-less text file)
+    // still count as in the original's accounting
     stats.files++;
     const c = conv(s.contact);
     c.files.push(file);
     c.folders.push(folder);
     // Dedup pre-label: [ms, isOwner, rawBody] for texts and [ms, kind, duration, rawVm] for
-    // calls produce the same groups on real data as the original's post-label tuple set
+    // calls produce the same groups on real data as the original's post-label tuple set; two
+    // different non-owner senders posting the same text in the same second collapse into one
+    // row (a group-thread edge), matching the original's key
     if (kind === "text") {
       for (const m of String(text).matchAll(MSG)) {
         const [, when, cite, q] = m;
@@ -242,7 +262,8 @@ export function plan(inputs, { title, base, me = "Me", names = {}, contact = "",
     for (const r of c.rows.values()) {
       if (r.type === "text") {
         stats.texts++;
-        stats.senders[r.who] = (stats.senders[r.who] || 0) + 1;
+        const who = r.who || "(unknown)";
+        stats.senders[who] = (stats.senders[who] || 0) + 1;
       } else if (r.kind === "voicemail") stats.voicemails++;
       else stats.calls++;
     }

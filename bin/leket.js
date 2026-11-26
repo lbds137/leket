@@ -1247,7 +1247,7 @@ export async function convertGoogleVoice(paths, { out = ".", me = "Me", names = 
   process.stderr.write([
     `leket: ${count(s.files, "file")}: ${count(s.texts, "text message")}, ${count(s.calls, "call")} and ${count(s.voicemails, "voicemail")}; times in ${zone}.`,
     senders ? `leket: senders: ${senders}.` : "",
-    unk.length ? `leket: ${count(unk.length, "file")} of an unknown kind, skipped: ${unkList}` : "",
+    unk.length ? `leket: ${count(unk.length, "file")} of an unknown kind, skipped: ${unkList}.` : "",
     s.notExports ? `leket: ${s.notExports === 1 ? "1 file in the input is not a Google Voice export file" : `${s.notExports} files in the input are not Google Voice export files`}, skipped.` : "",
     s.undated ? `leket: ${count(s.undated, "row")} had no usable time, skipped.` : "",
   ].filter(Boolean).join("\n") + "\n");
