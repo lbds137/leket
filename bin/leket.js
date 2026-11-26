@@ -4,7 +4,8 @@
 // through yt-dlp, as the same youtube-extract/v1 JSON and Markdown the extension writes
 // (src/modules/youtube/extract.js builds both). `leket convert discord <save>…` turns
 // Discord saves into Markdown transcripts (src/modules/discord/convert.js renders them;
-// CONVERT_USAGE below). `leket reddit <url>` saves a post as the extension's Markdown
+// CONVERT_USAGE below); `leket convert chatgpt <export>…` does the same for ChatGPT's data
+// export (src/convert/chatgpt.js). `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
 //
@@ -29,6 +30,7 @@ import {
   buildExtract, renderMarkdown, baseName, json3ToTranscript, pickCaptionTrack, threadsFromYtDlp,
 } from "../src/modules/youtube/extract.js";
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
+import { badFolder, collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -75,7 +77,27 @@ const CONVERT_USAGE = `usage: leket convert discord <save>... [--out DIR] [--by 
                 (the n-th attachment; "<id>_f<k>_<n>" inside the k-th forward) to
                 {"duration": seconds, "text": "..."}
   Exit: 0 written; 1 a save couldn't be read (nothing written) or a write failed (the
-  message says how many files were written); 2 usage.`;
+  message says how many files were written); 2 usage.
+
+usage: leket convert chatgpt <export>... [--out DIR] [--user LABEL] [--assistant LABEL]
+         [--tz ZONE] [--folders FILE] [--unlisted FOLDER]
+
+  Turns ChatGPT's data export into one Markdown file per conversation, following each
+  conversation's current branch. An export is its folder, its zip (not zip64: over
+  4 GB, unzip it and give the folder) or its conversations.json; the attachments'
+  names come from conversation_asset_file_names.json beside it. With several exports,
+  a later one's copy of a conversation replaces an earlier one's.
+  Writes "YYYY-MM-DD Title.md" (the day it was started) into DIR (default: the current
+  directory), replacing earlier files of that name; two conversations that would share
+  a name get the start of their id added.
+  --user LABEL       the user's messages' heading (default User)
+  --assistant LABEL  the assistant's (default ChatGPT)
+  --tz ZONE          the zone times are shown in, e.g. Europe/Paris (default UTC)
+  --folders FILE     a tab-separated file whose header names an id and a folder column:
+                     each listed conversation goes into DIR/folder
+  --unlisted FOLDER  where conversations --folders doesn't list go (default: DIR)
+  Exit: 0 written; 1 an export couldn't be read (nothing written) or a write failed
+  (the message says how many files were written); 2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -459,9 +481,114 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
   return 0;
 }
 
+// One ChatGPT export: its folder, its zip or its conversations.json, with the attachments'
+// names (conversation_asset_file_names.json) when the export has them.
+export async function readChatgptExport(path) {
+  const CONVS = "conversations.json", NAMES = "conversation_asset_file_names.json";
+  const parse = (text, what) => { try { return JSON.parse(text); } catch (e) { throw new Error(`${what} isn't JSON (${e.message})`); } };
+  if (/\.zip$/i.test(path)) {
+    const entries = await zipEntries(path);
+    const pick = (want) => {
+      const hits = entries.filter((e) => basename(e.name) === want);
+      if (hits.length > 1) throw new Error(`${path} holds ${hits.length} files named ${want}; unzip it and give the folder of the one to convert`);
+      return hits[0];
+    };
+    const c = pick(CONVS), n = pick(NAMES);
+    if (!c) throw new Error(`${path} holds no ${CONVS}: not a ChatGPT export`);
+    for (const e of [c, n]) if (e && e.size > MAX_STRING_LENGTH) throw new Error(`${path}: its ${shown(e.name)} is ${Math.round(e.size / 1048576)} MB, too large to read as one text`);
+    const read = async (e) => (await readZipEntry(path, e)).toString("utf8");
+    return { label: path, conversations: parse(await read(c), `${path}: ${CONVS}`), names: n ? parse(await read(n), `${path}: ${NAMES}`) : {} };
+  }
+  let dir = path, file = join(path, CONVS);
+  try { await readdir(path); } catch (e) { if (e.code !== "ENOTDIR") throw e; dir = dirname(path); file = path; }
+  const conversations = parse(await readFile(file, "utf8"), file);
+  let names = {};
+  try { names = parse(await readFile(join(dir, NAMES), "utf8"), join(dir, NAMES)); } catch (e) { if (e.code !== "ENOENT") throw e; }
+  return { label: file, conversations, names };
+}
+
+// --folders: a tab-separated file with a header row naming an "id" and a "folder" column
+export async function readFolders(path) {
+  const rows = (await readFile(path, "utf8")).split(/\r?\n/).filter((l) => l.trim());
+  const head = (rows.shift() || "").split("\t");
+  const ci = head.indexOf("id"), fi = head.indexOf("folder");
+  if (ci < 0 || fi < 0) throw new Error(`--folders ${path}: its header row has no "id" and "folder" columns (tab-separated)`);
+  const folders = {};
+  for (const [k, line] of rows.entries()) {
+    const cells = line.split("\t");
+    const id = cells[ci], folder = cells[fi];
+    if (!id) continue;
+    if (badFolder(folder)) throw new Error(`--folders ${path}: row ${k + 2} names the folder ${shown(JSON.stringify(folder ?? ""))}, which isn't a relative folder (no \\ : . or .. parts)`);
+    folders[id] = folder;
+  }
+  return folders;
+}
+
+export async function convertChatgpt(paths, { out = ".", user, assistant, tz = "UTC", folders: foldersPath, unlisted = "" } = {}) {
+  let files;
+  try {
+    const exports = [];
+    for (const p of paths) exports.push(await readChatgptExport(p));
+    const folders = foldersPath ? await readFolders(foldersPath) : {};
+    // every file is rendered before any is written, so a render error writes nothing
+    files = planChatgpt(collectChatgpt(exports), { folders, unlisted, user, assistant, timeZone: tz });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  let written = 0;
+  try {
+    for (const f of files) {
+      const dir = f.folder ? join(out, ...f.folder.split("/")) : out;
+      await mkdir(dir, { recursive: true });
+      const p = join(dir, f.name);
+      await writeFile(p, f.text);
+      process.stdout.write(`${p}\n`);
+      written++;
+    }
+  } catch (e) {
+    process.stderr.write(`leket: couldn't write ${shown(files[written].name)} (${e.message}); ${written} of ${files.length} files written.\n`);
+    return 1;
+  }
+  const turns = files.reduce((n, f) => n + f.turns, 0);
+  const skipped = {};
+  for (const f of files) for (const [k, n] of Object.entries(f.skipped)) skipped[k] = (skipped[k] || 0) + n;
+  const notShown = Object.entries(skipped).map(([k, n]) => `${shown(k)} ${n}`).join(", ");
+  process.stderr.write(`leket: ${files.length} conversations, ${turns} messages, from ${paths.length} export(s); times in ${tz}.${notShown ? ` Not shown (no text): ${notShown}.` : ""}\n`);
+  return 0;
+}
+
+async function convertChatgptMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        out: { type: "string" }, user: { type: "string" }, assistant: { type: "string" }, tz: { type: "string" },
+        folders: { type: "string" }, unlisted: { type: "string" }, help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  for (const k of ["user", "assistant"]) if (v[k] !== undefined && /[\r\n]/.test(v[k])) return fail(`--${k} takes a one-line label`);
+  if (v.unlisted !== undefined && badFolder(v.unlisted)) return fail("--unlisted takes a relative folder (no \\ : . or .. parts)");
+  if (v.tz !== undefined) {
+    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
+  }
+  return convertChatgpt(positionals, { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, folders: v.folders, unlisted: v.unlisted });
+}
+
 async function convertMain(rest) {
   const [kind, ...args] = rest;
   if (kind === "-h" || kind === "--help") { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  if (kind === "chatgpt") return convertChatgptMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {
@@ -759,6 +886,8 @@ if (import.meta.url === invokedAs) {
   // code (1, 3) wins over 141: the close may come before or after main settles.
   let piped = false, failed = false;
   process.stdout.on("error", (e) => {
+    // once the pipe has closed, any later stdout error (EPIPE or not) is dropped on
+    // purpose: it is the same closed pipe, and the run's own result still decides the code
     if (e.code !== "EPIPE" && !piped) throw e;
     piped = true;
     if (!failed) process.exitCode = 141;
