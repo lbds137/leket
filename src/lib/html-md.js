@@ -171,7 +171,10 @@ function inline(nodes, ctx) {
         const core = label.slice(lead.length, label.length - trail.length);
         if (!LINKABLE.test(href.trim())) {
           // the address as text, unless scripted or already the label
-          const addr = SCRIPTED.test(href.trim().replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === href.trim() ? "" : escapeText(href.trim());
+          // tabs and line breaks go from the address, as a browser's URL parser drops them: a
+          // line break would end the paragraph, heading or table row
+          const shown = href.trim().replace(/[\t\n\r]/g, "");
+          const addr = SCRIPTED.test(shown.replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === shown ? "" : escapeText(shown);
           add(!addr ? label : `${lead}${core ? `${core} (${addr})` : addr}${trail}`);
           break;
         }
