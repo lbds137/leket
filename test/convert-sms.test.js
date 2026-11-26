@@ -322,3 +322,10 @@ test("CLI: usage errors exit 2", () => {
   }
   assert.equal(leket(["convert", "sms"]).status, 2);
 });
+
+test("a < that would start a tag is escaped in a text; an address with a backtick stays one code span", () => {
+  const xml = doc(sms({ address: "a`b", date: "1000", type: "1", body: "&lt;b&gt;hi&lt;/b&gt; 1 &lt; 2" }));
+  const [f] = convert(xml).files;
+  assert.match(f.text, /^> \\<b>hi\\<\/b> 1 < 2$/m);
+  assert.match(f.text, /only the conversation with ``a`b``\./);
+});

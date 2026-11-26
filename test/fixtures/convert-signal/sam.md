@@ -1,7 +1,7 @@
 # Signal with Sam Rivera
 
 Source: `Sam Rivera (_id3).txt`, a conversation exported as text by signalbackup-tools.
-9 messages, 2024-03-04 to 2024-03-06. Times are as exported (the exporting computer's local time). Reactions appear in parentheses after the message they were added to; files as [sent file …] (the files are not exported). 2 of Signal's own events (calls, safety number changes, members joining or leaving) appear from "Signal".
+9 messages, 2020-01-01 to 2024-03-06. Times are as exported (the exporting computer's local time). Reactions appear in parentheses after the message they were added to; files as [sent file …] (the files are not exported). 2 of Signal's own events (calls, safety number changes, members joining or leaving) appear from "Signal".
 
 ## 2024-03-04 (Mon)
 
@@ -22,8 +22,8 @@ Source: `Sam Rivera (_id3).txt`, a conversation exported as text by signalbackup
 >
 > -# Alex — Mar 4 2024 11:30 PM
 > Poll: lunch?
->                                                    [1] tacos
->                                                    [0] soup
+> [1] tacos
+> [0] soup
 
 ## 2024-03-05 (Tue)
 

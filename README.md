@@ -178,6 +178,12 @@ node bin/leket.js convert signal <export.txt>... [--out DIR] [--name NAME=LABEL]
 
 An export is a conversation that [signalbackup-tools](https://github.com/bepaald/signalbackup-tools) wrote as text (`--exporttxt`, one `Name (_idN).txt` per conversation), or a folder of them. It writes one `signal-Name.md` per conversation in the same day-by-day shape. Files show as `[sent file …]` (the export holds only their names), reactions stay in parentheses after their message, and Signal's own events (calls, safety number changes) appear from "Signal". A person shows by the first word of their name unless `--name` gives a label. The export's times have no zone, so they are shown as written; `--tz` only names the zone in the transcript.
 
+```
+node bin/leket.js convert whatsapp <chat.txt>... [--out DIR] [--name NAME=LABEL]... [--tz ZONE] [--title TEXT] [--base NAME]
+```
+
+An export is the `.txt` file WhatsApp's Export chat writes (alone, or inside its "With media" zip), or a folder of them. For now only the day-first header `d.m.yyyy, H:MM - ` is read (some phone languages write it). It writes one `whatsapp-Name.md` per chat in the same day-by-day shape. Attached files appear under the names the export gave them, and WhatsApp's own notices (encryption, members joining, a subject changed) appear as `[WhatsApp, time: notice]`. A sender shows by their name as written (a phone number for a contact not saved) unless `--name` gives a label; the senders found are listed when it finishes. Times are shown as written; `--tz` only names the zone.
+
 ### Reddit posts
 
 ```
@@ -230,7 +236,7 @@ Layout:
 - `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
-- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `sms.js`: `leket convert sms`; `signal.js`: `leket convert signal`; `common.js`: their times, file names and folder checks.
+- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `sms.js`: `leket convert sms`; `signal.js`: `leket convert signal`; `whatsapp.js`: `leket convert whatsapp`; `common.js`: their times, file names, folder checks and Markdown escapes.
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini converter (its text escapes serve the character-chat one too); `xml.js`: a streaming XML reader, for the SMS converter.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.

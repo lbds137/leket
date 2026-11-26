@@ -35,10 +35,18 @@
 //     exist) stops the run with its line number, as the original did, saying which line
 //   - a file with no message stops with a message (the original failed on it), and the
 //     transcript ends in a line break
+//   - a "<" that would start an HTML tag is escaped, so "<Sam>" shows; a poll's options
+//     lose the indent that would make them a code block; the summary's range runs from the
+//     earliest entry to the latest (the original took the first and the last)
+//
+// A pasted line shaped like a header counts as one: with a month not in English it stops
+// the run. That stays, since a whole export in another language must stop, not fold every
+// later month into one message.
 //
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
-import { PYSPACE, safeTitle } from "./common.js";
+import { codeSpan } from "../lib/html-md.js";
+import { PYSPACE, escapeTag, safeTitle, span } from "./common.js";
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // the date as the export writes it (strftime "%b %d, %Y %H:%M:%S" in the exporter's locale:
@@ -51,6 +59,7 @@ const MESSAGE = new RegExp(String.raw`^${DATE}<(?<who>.*?)>(?: (?<text>.*)|$)`, 
 // one of Signal's own events: any other "*** " line, one starting with "<" too
 const EVENT = new RegExp(String.raw`^${DATE}\*\*\* (?<text>.*)$`, "su");
 const RSTRIP = new RegExp(`[${PYSPACE}]+$`);
+const POLL_OPTION = /^ +(?=\[\d+\] )/; // the indent before a poll option's "[votes] "
 const local = clock("UTC"); // the times have no zone: kept as UTC so they print as written
 
 // "Sam Rivera (_id3).txt" → "Sam Rivera"
@@ -101,9 +110,11 @@ const labelOf = (names) => (who) =>
 export function render({ entries, messages, events }, { source, title, names = {}, timeZone = "" }) {
   const label = labelOf(names);
   const zone = timeZone ? `, in ${timeZone}` : " (the exporting computer's local time)";
+  // the range of them all: a pasted line shaped like a header can be out of order
+  const [first, last] = span(entries.map((e) => e.ms));
   const L = [`# ${title}`, "",
-    `Source: \`${source}\`, a conversation exported as text by signalbackup-tools.`,
-    `${messages} messages, ${local(entries[0].ms).date} to ${local(entries.at(-1).ms).date}. `
+    `Source: ${codeSpan(source) || "(unnamed)"}, a conversation exported as text by signalbackup-tools.`,
+    `${messages} messages, ${local(first).date} to ${local(last).date}. `
     + `Times are as exported${zone}. Reactions appear in parentheses after the message they were added to; `
     + "files as [sent file …] (the files are not exported)."
     + (events ? ` ${events} of Signal's own events (calls, safety number changes, members joining or leaving) appear from "Signal".` : ""), ""];
@@ -116,7 +127,12 @@ export function render({ entries, messages, events }, { source, title, names = {
       L.push(`## ${t.date} (${t.weekday})`, "");
     }
     L.push(`> -# ${e.event ? "Signal" : label(e.who)} — ${t.stamp}`);
-    for (const b of e.lines) L.push(`> ${b}`.replace(RSTRIP, ""));
+    const poll = !e.event && e.lines[0].startsWith("Poll: ");
+    for (const b of e.lines) {
+      // a poll's options come indented to line up under the header; in a quote that
+      // indent would make them a code block
+      L.push(`> ${escapeTag(poll ? b.replace(POLL_OPTION, "") : b)}`.replace(RSTRIP, ""));
+    }
     L.push(">");
   }
   return `${L.join("\n")}\n`;
