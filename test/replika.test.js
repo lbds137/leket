@@ -779,6 +779,7 @@ test("readHistory works over onmessage alone, the way a minimal stand-in speaks"
 
 test("usableMediaUrl takes https hosts only: no http, no localhost, no IP literal", () => {
   assert.equal(usableMediaUrl("https://s3-us-west-1.amazonaws.com/replika-content-images/pic?sig=x"), true);
+  assert.equal(usableMediaUrl("https://signed.example.org/pic?sig=x"), true); // any https host: voice clips rely on it
   assert.equal(usableMediaUrl("http://signed.example.org/pic"), false);
   assert.equal(usableMediaUrl("https://localhost/pic"), false);
   assert.equal(usableMediaUrl("https://sub.localhost/pic"), false);

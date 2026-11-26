@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-26T04:20:00Z'
-updated_date: '2026-11-26T04:37:00Z'
+updated_date: '2026-11-26T04:51:00Z'
 labels:
   - replika
 dependencies: []
@@ -28,4 +28,6 @@ From PR #181's review: the new saved fields (original_text, emotion, diary react
 Lila ruling 11-25 (AskUserQuestion): ADD the in-code check. Before fetching a signed picture link, require https and either host s3-us-west-1.amazonaws.com with a path under /replika-content-images/ or host luka-user-media.s3.us-west-1.amazonaws.com; anything else is not captured. Reason: Chrome ignores the path in host permissions, so the manifest grants the whole s3-us-west-1 host. Ship it with item (1)'s final-host (redirect) check, as its own PR after #182.
 
 Done in the host-check PR (0.6.2): signed picture links must point into replika-content-images on s3-us-west-1 or the luka-user-media host (replikaPictureUrl), else not captured with MEDIA_HOST_NOT_REPLIKA and never fetched; picture fetches use redirect: error so the checked URL is the one read (voice clips still follow redirects: their hosts are unknown). Still open here: the per-file byte cap, the multi-part download test, voice_message's shape, fact category names, rendering the new fields.
+
+#183 review lows: smoke now proves both refusals in Chrome (a link signed into another bucket on the permitted S3 host is never requested; a picture link that 302s is not followed), reddened by each defect; usableMediaUrl test keeps a non-S3 positive; README note reworded. Open, deferred: a picture refused for its redirect is retried 3x (~2 s) and recorded as MEDIA_FETCH_FAILED, because fetch's TypeError can't tell a redirect from a network failure. redirect: manual would let Leket see an opaqueredirect response and label it without retrying (needs a fetchFile change). Promote when a run shows pictures failing that way, i.e. Replika's S3 starts redirecting.
 <!-- SECTION:NOTES:END -->
