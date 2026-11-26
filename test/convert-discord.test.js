@@ -289,3 +289,29 @@ test("CLI: a folder that can't be made, and a file write that fails partway, say
   assert.match(partway.stderr, /couldn't write .*c-participants\.md .*; 2 of 4 files written/);
   assert.equal(partway.stdout.trim().split("\n").length, 2);
 });
+
+test("a save with no usable newer time adds no span, so the gap check can't crash on it", () => {
+  const [a, b] = channelSaves();
+  const timeless = { ...a, reached_start: true, extracted_at: "not a date", messages: [] };
+  assert.deepEqual(mergeSaves([timeless, b]).gaps, []);
+  assert.doesNotThrow(() => render(mergeSaves([timeless, b]), { base: "c", timeZone: "UTC" }));
+  // a hole in the messages list is a bad entry too, not a pass
+  assert.throws(() => mergeSaves([{ ...a, messages: new Array(1) }]), /save 1 has a message whose id \(undefined\) isn't a Discord id/);
+});
+
+test("the index links a --base holding # ? ( ) as one encoded file name, and a title's line break stays in its cell", () => {
+  const [a] = channelSaves();
+  const idx = render(mergeSaves([a]), { base: "a#b?(c)", by: "none", title: "two\nlines", timeZone: "UTC" }).at(-1).text;
+  assert.ok(idx.includes("| [two lines](a%23b%3F%28c%29.md) | 6 |"), idx);
+});
+
+test("CLI: a voice entry with a negative duration is refused", () => {
+  const dir = tmp();
+  const save = join(dir, "s.json");
+  writeFileSync(save, JSON.stringify(dmSaves()[0]));
+  const v = join(dir, "neg.json");
+  writeFileSync(v, JSON.stringify({ "105_0": { duration: -3, text: "x" } }));
+  const r = leket(["convert", "discord", save, "--out", join(dir, "o"), "--voice", v]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /105_0 has no duration in seconds \(a number, 0 or more\)/);
+});

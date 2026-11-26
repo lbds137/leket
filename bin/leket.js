@@ -401,8 +401,8 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
       try { voice = JSON.parse(await readFile(voicePath, "utf8")); } catch (e) { throw new Error(`--voice ${voicePath}: ${e.message}`); }
       const shape = `--voice ${voicePath} isn't a voice map (a JSON object of "<message id>_<n>": {"duration": seconds, "text": "..."})`;
       if (!voice || typeof voice !== "object" || Array.isArray(voice)) throw new Error(shape);
-      const odd = Object.entries(voice).find(([, v]) => !v || typeof v !== "object" || !Number.isFinite(v.duration));
-      if (odd) throw new Error(`${shape}: ${odd[0]} has no duration in seconds`);
+      const odd = Object.entries(voice).find(([, v]) => !v || typeof v !== "object" || !Number.isFinite(v.duration) || v.duration < 0);
+      if (odd) throw new Error(`${shape}: ${odd[0]} has no duration in seconds (a number, 0 or more)`);
     }
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
@@ -484,22 +484,29 @@ async function convertMain(rest) {
 const REDDIT_UA = "leket (personal archiving; https://github.com/lbds137/leket)";
 const REDDIT_HOST = /^((www|old|new|np)\.)?reddit\.com$|^redd\.it$/;
 
-// A reddit address over http(s) as a URL, or null: the only hosts this subcommand asks.
+// A reddit address as an https URL, or null: reddit's own hosts only, on the default
+// port and with no login in it. An http address is asked over https.
 export function redditUrl(s) {
   let u;
   try { u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`); } catch { return null; }
-  return /^https?:$/.test(u.protocol) && REDDIT_HOST.test(u.hostname) ? u : null;
+  if (!/^https?:$/.test(u.protocol) || !REDDIT_HOST.test(u.hostname) || u.port || u.username || u.password) return null;
+  u.protocol = "https:";
+  return u;
 }
 
 // The post id a reddit URL names (/comments/ID/…, redd.it/ID), or null (a share link).
+// The id is a whole path segment (or ID.json), never the start of a longer one.
 export function redditPostId(u) {
-  const m = u.hostname === "redd.it" ? /^\/([a-z0-9]+)\/?$/i.exec(u.pathname) : /\/comments\/([a-z0-9]+)/i.exec(u.pathname);
+  const m = u.hostname === "redd.it" ? /^\/([a-z0-9]+)\/?$/i.exec(u.pathname) : /\/comments\/([a-z0-9]+)(?:\/|\.json$|$)/i.exec(u.pathname);
   return m ? m[1] : null;
 }
 
+const dropBody = (r) => { if (r.body && typeof r.body.cancel === "function") r.body.cancel().catch(() => {}); };
+
 // One GET that follows redirects by hand, only while they stay on reddit: the address
-// comes from the command line, but the next hop comes from the server.
-async function redditGet(start, doFetch) {
+// comes from the command line, but the next hop comes from the server. With stopAtPost
+// (resolving a share link), a hop that names a post ends the walk unfetched.
+async function redditGet(start, doFetch, { stopAtPost = false } = {}) {
   let u = start;
   for (let hop = 0; hop <= 5; hop++) {
     let r;
@@ -509,11 +516,13 @@ async function redditGet(start, doFetch) {
       throw new Error(`couldn't reach reddit (${(e && e.message) || e})`);
     }
     if (r.status < 300 || r.status >= 400) return { r, url: u };
-    if (r.body && typeof r.body.cancel === "function") r.body.cancel().catch(() => {});
+    dropBody(r);
     const loc = r.headers.get("location");
-    const next = loc ? redditUrl(new URL(loc, u).href) : null;
-    if (!next) throw new Error(`${u.href} redirects off reddit${loc ? `, to ${loc}` : ""}`);
-    if (redditPostId(next)) return { url: next };
+    if (!loc) throw new Error(`${u.href} answered ${r.status} without saying where to`);
+    let next = null;
+    try { next = redditUrl(new URL(loc, u).href); } catch { /* not an address: refused below */ }
+    if (!next) throw new Error(`${u.href} redirects off reddit, to ${loc}`);
+    if (stopAtPost && redditPostId(next)) return { url: next };
     u = next;
   }
   throw new Error(`${start.href} redirects more than 5 times`);
@@ -526,18 +535,20 @@ export async function fetchRedditPost(address, { fetch: doFetch = fetch } = {}) 
   if (!u) throw new Error(`not a reddit address: ${address}`);
   let id = redditPostId(u);
   if (!id) {
-    const got = await redditGet(u, doFetch);
+    const got = await redditGet(u, doFetch, { stopAtPost: true });
     id = redditPostId(got.url);
-    if (got.r && got.r.body && typeof got.r.body.cancel === "function") got.r.body.cancel().catch(() => {});
+    if (got.r) dropBody(got.r);
     if (!id) throw new Error(`${u.href} didn't lead to a post${got.r ? ` (reddit answered ${got.r.status})` : ""}`);
   }
   const fromJson = `save the post with the Leket extension (it writes reddit-${id}.json), then run leket reddit --from-json reddit-${id}.json`;
   const { r } = await redditGet(new URL(`https://www.reddit.com/comments/${id}.json?raw_json=1&limit=500`), doFetch);
-  if (!r) throw new Error(`reddit sent the post's JSON address elsewhere; ${fromJson}`);
+  if (!r.ok) dropBody(r);
   if (r.status === 403 || r.status === 429) throw new Error(`reddit refused a logged-out fetch (HTTP ${r.status}); ${fromJson}`);
   if (!r.ok) throw new Error(`reddit answered ${r.status} for post ${id}`);
+  let text;
+  try { text = await r.text(); } catch (e) { throw new Error(`couldn't read reddit's answer for post ${id} (${(e && e.message) || e})`); }
   try {
-    return JSON.parse(await r.text());
+    return JSON.parse(text);
   } catch {
     throw new Error(`reddit answered with a page, not the post's JSON (a login or block page?); ${fromJson}`);
   }

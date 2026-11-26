@@ -37,18 +37,21 @@ export function mergeSaves(saves) {
   for (const [i, d] of saves.entries()) {
     if (!d || typeof d !== "object" || !Array.isArray(d.messages)) throw new Error(`save ${i + 1} has no messages list: not a Discord save`);
     if (d.channel_id !== channel) throw new Error(`save ${i + 1} is of channel ${d.channel_id}, not ${channel}: give saves of one conversation`);
-    const bad = d.messages.find((m) => !m || typeof m.id !== "string" || !/^\d+$/.test(m.id));
-    if (bad !== undefined) throw new Error(`save ${i + 1} has a message whose id (${JSON.stringify(bad && bad.id)}) isn't a Discord id`);
+    // findIndex, not find: a hole in the list is itself a bad entry
+    const bad = d.messages.findIndex((m) => !m || typeof m.id !== "string" || !/^\d+$/.test(m.id));
+    if (bad >= 0) throw new Error(`save ${i + 1} has a message whose id (${JSON.stringify(d.messages[bad] && d.messages[bad].id)}) isn't a Discord id`);
     // what this save covers: back to the start (or the day it was asked to stop at) or to
-    // its oldest message, and forward to when it was saved (or its newest message)
-    let lo = Infinity, hi = Date.parse(d.extracted_at) || -Infinity;
+    // its oldest message, and forward to when it was saved (or its newest message). A save
+    // with no usable time at its newer end covers nothing anyone can name, so it adds no span.
+    const savedAt = Date.parse(d.extracted_at);
+    let lo = Infinity, hi = Number.isFinite(savedAt) ? savedAt : -Infinity;
     for (const m of d.messages) {
       const t = Date.parse(m.datetime);
       if (Number.isFinite(t)) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
     }
     if (d.reached_start) lo = -Infinity;
     else if (d.reached_since && Number.isFinite(Date.parse(d.reached_since))) lo = Math.min(lo, Date.parse(d.reached_since));
-    if (lo <= hi) spans.push([lo, hi]);
+    if (Number.isFinite(hi) && lo <= hi) spans.push([lo, hi]);
     title = title || d.channel || null;
     guild = guild || d.guild_name || null;
     guildId = guildId || d.guild_id || null;
@@ -242,8 +245,11 @@ export function render(conv, { base, by = conv.isDm ? "none" : "month", title = 
     `${msgs.length} messages, ${span(msgs)}, ${files.length - 1 === 1 ? "in one file" : `one file per ${by}`}; `
     + `\`${base}-participants.md\` lists every author. Rebuild with \`leket convert discord\`.`, "",
     `| ${by === "none" ? "file" : by} | messages |`, "|---|---|",
-    // the --by none row's label is the title: free text, so a | or ] in it can't end the cell or the link
-    ...[...groups].map(([k, part]) => `| [${cell(k || title).replace(/[[\]]/g, "\\$&")}](${encodeURI(fileOf(k))}) | ${part.length} |`)];
+    // the --by none row's label is the title: free text, so a |, ] or line break in it can't
+    // end the cell or the link; the file name is one path segment, so a # ? ( or ) in --base
+    // is encoded rather than read as a fragment, a query or the link's end
+    ...[...groups].map(([k, part]) => `| [${cell(k || title).replace(/\s*[\r\n]+\s*/g, " ").replace(/[[\]]/g, "\\$&")}]`
+      + `(${encodeURIComponent(fileOf(k)).replace(/[()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}) | ${part.length} |`)];
   files.push({ name: `${base}-index.md`, text: `${R.join("\n")}\n` });
   return files;
 }
