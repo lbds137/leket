@@ -16,6 +16,7 @@
 // in that language); 1 nothing saved; 2 usage; 3 saved but incomplete: the caption
 // fetch failed, yt-dlp stopped partway after writing the video info, or only the .json
 // could be written (the notes in the files and on stderr say which).
+import { constants as bufferConstants } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import { constants, realpathSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir } from "node:fs/promises";
@@ -29,7 +30,10 @@ import {
 } from "../src/modules/youtube/extract.js";
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
 import { MANIFEST } from "../src/lib/files.js";
+import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
+
+const { MAX_STRING_LENGTH } = bufferConstants;
 import { images as redditImages, postOf, render as renderReddit } from "../src/modules/reddit/md.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
 
@@ -388,7 +392,9 @@ export async function readDiscordSave(path) {
   }
   const saves = (await zipEntries(path)).filter((e) => /^[^/]+\.json$/.test(e.name) && e.name !== MANIFEST);
   if (!saves.length) throw new Error(`${path} holds no Discord save (in a save split into parts, the messages are in part 1)`);
-  if (saves.length > 1) throw new Error(`${path} holds ${saves.length} .json files (${saves.map((e) => e.name).join(", ")}); give the one to convert`);
+  if (saves.length > 1) throw new Error(`${path} holds ${saves.length} .json files (${saves.map((e) => shown(e.name)).join(", ")}); give the one to convert`);
+  // the text has to fit in one JavaScript string; the declared size says so before any read
+  if (saves[0].size > MAX_STRING_LENGTH) throw new Error(`${path}: its save ${shown(saves[0].name)} is ${Math.round(saves[0].size / 1048576)} MB, too large to read as one text`);
   return { save: JSON.parse((await readZipEntry(path, saves[0])).toString("utf8")), name: saves[0].name.replace(/\.json$/, "") };
 }
 
@@ -397,6 +403,11 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
   try {
     read = [];
     for (const p of paths) read.push(await readDiscordSave(p));
+    // the default base is the save's own name, from inside a zip: --base's rule applies to
+    // it too, or a name like ..\..\x would write outside --out on Windows
+    if (!base && /[/\\]/.test(read[0].name)) {
+      throw new Error(`the save in ${paths[0]} is named ${shown(JSON.stringify(read[0].name))}, which isn't a file name; give --base NAME`);
+    }
     if (voicePath) {
       try { voice = JSON.parse(await readFile(voicePath, "utf8")); } catch (e) { throw new Error(`--voice ${voicePath}: ${e.message}`); }
       const shape = `--voice ${voicePath} isn't a voice map (a JSON object of "<message id>_<n>": {"duration": seconds, "text": "..."})`;

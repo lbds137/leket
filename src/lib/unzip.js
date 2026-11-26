@@ -5,6 +5,7 @@
 import { open } from "node:fs/promises";
 import { inflateRawSync } from "node:zlib";
 
+import { shown } from "./shown.js";
 import { crc32 } from "./zip.js";
 
 const EOCD = 0x06054b50, CENTRAL = 0x02014b50, LOCAL = 0x04034b50;
@@ -51,21 +52,35 @@ export async function zipEntries(path) {
 
 // one entry's content as a Buffer; entry is one of zipEntries' results
 export async function readZipEntry(path, entry) {
+  const name = shown(entry.name);
   const fh = await open(path, "r");
   try {
     const head = Buffer.alloc(30);
     const { bytesRead: headRead } = await fh.read(head, 0, 30, entry.offset);
-    if (headRead !== 30 || head.readUInt32LE(0) !== LOCAL) throw new Error(`${path}: ${entry.name}'s local header is missing`);
+    if (headRead !== 30 || head.readUInt32LE(0) !== LOCAL) throw new Error(`${path}: ${name}'s local header is missing`);
     // the local header's own name and extra lengths, which can differ from the central copy's
     const start = entry.offset + 30 + head.readUInt16LE(26) + head.readUInt16LE(28);
+    // the sizes come from the central directory: checked against the file before the
+    // allocation, so a damaged or hostile entry can't ask for 4 GiB
+    const cut = () => new Error(`${path}: ${name} is cut short (the zip is incomplete)`);
+    if (start + entry.compressedSize > (await fh.stat()).size) throw cut();
     const raw = Buffer.alloc(entry.compressedSize);
     const { bytesRead } = await fh.read(raw, 0, entry.compressedSize, start);
-    if (bytesRead !== entry.compressedSize) throw new Error(`${path}: ${entry.name} is cut short (the zip is incomplete)`);
+    if (bytesRead !== entry.compressedSize) throw cut();
     let data;
     if (entry.method === 0) data = raw;
-    else if (entry.method === 8) data = inflateRawSync(raw);
-    else throw new Error(`${path}: ${entry.name} uses compression method ${entry.method}, which this reader doesn't handle`);
-    if (data.length !== entry.size || crc32(data) !== entry.crc) throw new Error(`${path}: ${entry.name} fails its checksum (the zip is damaged)`);
+    else if (entry.method === 8) {
+      // inflate stops one byte past the declared size (zlib takes no cap of 0), so a small
+      // entry can't unpack into gigabytes; the length check below then refuses it
+      try {
+        data = inflateRawSync(raw, { maxOutputLength: entry.size + 1 });
+      } catch (e) {
+        if (e.code === "ERR_BUFFER_TOO_LARGE") throw new Error(`${path}: ${name} holds more than its declared ${entry.size} bytes (the zip is damaged)`);
+        throw new Error(`${path}: ${name} can't be unpacked (the zip is damaged: ${e.message})`);
+      }
+      if (data.length > entry.size) throw new Error(`${path}: ${name} holds more than its declared ${entry.size} bytes (the zip is damaged)`);
+    } else throw new Error(`${path}: ${name} uses compression method ${entry.method}, which this reader doesn't handle`);
+    if (data.length !== entry.size || crc32(data) !== entry.crc) throw new Error(`${path}: ${name} fails its checksum (the zip is damaged)`);
     return data;
   } finally {
     await fh.close();

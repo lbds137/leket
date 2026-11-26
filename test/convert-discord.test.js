@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { mergeSaves, render } from "../src/modules/discord/convert.js";
 import { build } from "../src/lib/build.js";
 import { ZipWriter } from "../src/lib/zip.js";
+import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
 import { readDiscordSave } from "../bin/leket.js";
 import { channelSaves, dmSaves, dmVoice, ids } from "./fixtures/discord-saves.js";
 
@@ -201,6 +202,77 @@ test("CLI: a zip part without the save, and a damaged entry, write nothing and e
     assert.match(r.stderr, /central directory is damaged/, name);
   }
   assert.ok(!readdirSync(dir).includes("o"), "nothing written");
+});
+
+// one stored entry, with its central record's sizes (or name) changed after the fact
+async function zipOf(name, bytes, patch = () => {}) {
+  const w = new ZipWriter();
+  w.add(name, bytes);
+  const buf = Buffer.from(await w.parts()[0].arrayBuffer());
+  patch(buf, buf.readUInt32LE(buf.length - 22 + 16)); // the central record's offset
+  return buf;
+}
+
+test("unzip: an entry claiming more bytes than the file has is refused before any buffer that size is made", async () => {
+  const dir = tmp();
+  const path = join(dir, "claims.zip");
+  // compressed and plain size 0x7ffffff0 (2 GiB) in the central record; the file is ~200 bytes
+  writeFileSync(path, await zipOf("discord-x-1.json", new TextEncoder().encode("{}"), (b, cd) => {
+    b.writeUInt32LE(0x7ffffff0, cd + 20);
+    b.writeUInt32LE(0x7ffffff0, cd + 24);
+  }));
+  const [entry] = await zipEntries(path);
+  const size = readFileSync(path).length;
+  const alloc = Buffer.alloc, asked = [];
+  Buffer.alloc = (n, ...rest) => { asked.push(n); if (n > size) throw new Error(`asked for ${n} bytes`); return alloc(n, ...rest); };
+  try {
+    await assert.rejects(readZipEntry(path, entry), /discord-x-1\.json is cut short \(the zip is incomplete\)/);
+  } finally {
+    Buffer.alloc = alloc;
+  }
+  assert.ok(asked.every((n) => n <= size), `no buffer past the file's ${size} bytes: ${asked}`);
+  // the CLI refuses a save too large for one string on its declared size, before reading
+  await assert.rejects(readDiscordSave(path), /its save discord-x-1\.json is 2048 MB, too large to read as one text/);
+});
+
+test("unzip: a deflated entry inflating past its declared size is refused (inflate is capped there)", async () => {
+  const dir = tmp();
+  const zip = join(dir, "bomb.zip");
+  const json = join(dir, "discord-x-1.json");
+  writeFileSync(json, "0".repeat(100000));
+  const py = spawnSync("python3", ["-I", "-c",
+    "import sys, zipfile; z = zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED); z.write(sys.argv[2], 'discord-x-1.json'); z.close()",
+    zip, json], { encoding: "utf8" });
+  assert.equal(py.status, 0, py.stderr);
+  const buf = readFileSync(zip);
+  const cd = buf.readUInt32LE(buf.length - 22 + 16);
+  for (const declared of [10, 0]) {
+    buf.writeUInt32LE(declared, cd + 24);
+    writeFileSync(zip, buf);
+    const [entry] = await zipEntries(zip);
+    await assert.rejects(readZipEntry(zip, entry), /discord-x-1\.json holds more than its declared \d+ bytes \(the zip is damaged\)/, `declared ${declared}`);
+  }
+  // deflate data that isn't deflate: the damaged-zip wording, not zlib's own
+  const junk = readFileSync(zip);
+  junk.writeUInt32LE(100000, cd + 24);
+  junk.fill(0xff, 30 + "discord-x-1.json".length, 30 + "discord-x-1.json".length + 8);
+  writeFileSync(zip, junk);
+  const [entry] = await zipEntries(zip);
+  await assert.rejects(readZipEntry(zip, entry), /discord-x-1\.json can't be unpacked \(the zip is damaged:/);
+});
+
+test("CLI: a save entry named with a backslash is refused unless --base names the files", async () => {
+  const dir = tmp(), out = join(dir, "o");
+  const path = join(dir, "sneaky.zip");
+  const evil = "..\\..\\x.json";
+  writeFileSync(path, await zipOf(evil, new TextEncoder().encode(JSON.stringify(dmSaves()[0]))));
+  let r = leket(["convert", "discord", path, "--out", out, "--tz", "UTC"]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /the save in .*sneaky\.zip is named "\.\.\\\\\.\.\\\\x", which isn't a file name; give --base NAME; nothing written/);
+  assert.deepEqual(readdirSync(dir), ["sneaky.zip"], "nothing written, in --out or beside it");
+  r = leket(["convert", "discord", path, "--out", out, "--tz", "UTC", "--base", "fox"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readdirSync(out), ["fox.md"]);
 });
 
 test("CLI: usage errors exit 2", () => {
