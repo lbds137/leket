@@ -17,7 +17,12 @@
 // then runs again and must replace that day's file, not add a renamed copy.
 // The Etsy page, prefilled from the tab, pages a synthetic message-list endpoint and
 // saves four times over one file: twice from the prefilled box, then from an emptied
-// box (the tab's conversation), then with a second id that fails. The Replika page
+// box (the tab's conversation), then with a second id that fails. The YouTube page
+// opens from the popup too, inactive so the video tab stays in front (Chrome throttles
+// a background tab's timers, and the comment loading is scroll-driven): the page
+// injects driveYouTube into the watch tab, which opens the transcript panel, scrolls
+// the comments open and the replies out, and the page saves the Markdown with its JSON
+// alongside. The Replika page
 // probes the matched tab's localStorage, pages a scripted history socket (the harness's
 // interception can't cover a WebSocket handshake, so the page's WebSocket is swapped for
 // a fake that answers three batches), walks the diary and memories on both Replika hosts,
@@ -41,6 +46,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { postPage } from "../fixtures/reddit.js";
 import { NO_WORD_MS } from "../../src/lib/download.js";
+import { baseName } from "../../src/modules/youtube/extract.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -139,6 +145,111 @@ const ETSY_CONVO = `https://www.etsy.com/messages/${ETSY_ID}`;
 const ETSY_GONE = "999999";
 const etsyPage = (offset, id = ETSY_ID) => `https://www.etsy.com/api/v3/ajax/member/conversations/detail/${id}/message-list?offset=${offset}&fetch_older=true&load_shop_convos=false`;
 const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
+// youtube: a watch page for the popup to match, with the panel DOM the driver reads.
+// The description's transcript button appends a panel of transcript-segment-view-model
+// segments — an a11y duration beside every stamp, a chapter heading between two of
+// them — and ytd-comments holds a header count, three threads and a top-level
+// continuation that loads two more threads once it scrolls into view. One thread's
+// "2 replies" (bidi-wrapped like count on its top comment) adds one reply plus a nested
+// continuation button that adds the second. Every name is invented.
+const YOUTUBE_WATCH = "https://www.youtube.com/watch?v=SmokeVid001";
+const youtubePage = `<!doctype html><html lang="en"><head><title>Smoke test video - YouTube</title></head><body>
+<ytd-watch-metadata><h1>Smoke test video</h1><ytd-channel-name><a href="/@example">Example Channel</a></ytd-channel-name></ytd-watch-metadata>
+<div id="description-inline-expander"><button id="expand">...more</button>
+<ytd-video-description-transcript-section-renderer><button>Show transcript</button></ytd-video-description-transcript-section-renderer></div>
+<ytd-comments>
+<ytd-comments-header-renderer><span id="count">7 Comments</span></ytd-comments-header-renderer>
+<ytd-comment-thread-renderer><ytd-comment-view-model>
+<a id="author-text" href="/@ada">@Ada Example</a>
+<span id="content-text">the top comment, with its replies folded in</span>
+<span id="published-time-text"><a href="/watch?v=SmokeVid001&amp;lc=ugxT1">2 days ago</a></span>
+<span id="vote-count-middle">&#x202B;1.2K&#x202C;</span>
+</ytd-comment-view-model>
+<ytd-comment-replies-renderer><div id="more-replies"><button>2 replies</button></div></ytd-comment-replies-renderer>
+</ytd-comment-thread-renderer>
+<ytd-comment-thread-renderer><ytd-comment-view-model>
+<a id="author-text" href="/@bo">@Bo Example</a>
+<span id="content-text">a comment without replies</span>
+<span id="published-time-text"><a href="/watch?v=SmokeVid001&amp;lc=ugxT2">1 day ago</a></span>
+<span id="vote-count-middle">7</span>
+</ytd-comment-view-model></ytd-comment-thread-renderer>
+<ytd-comment-thread-renderer><ytd-comment-view-model>
+<a id="author-text" href="/@cyd">@Cyd Example</a>
+<span id="content-text">another comment without replies</span>
+<span id="published-time-text"><a href="/watch?v=SmokeVid001&amp;lc=ugxT3">3 days ago</a></span>
+<span id="vote-count-middle"></span>
+</ytd-comment-view-model></ytd-comment-thread-renderer>
+<ytd-continuation-item-renderer></ytd-continuation-item-renderer>
+</ytd-comments>
+<script>
+(() => {
+  const el = (name, attrs, text) => {
+    const e = document.createElement(name);
+    if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const commentView = (lc, handle, name, text, time, likes) => {
+    const vm = el("ytd-comment-view-model");
+    const t = el("span", { id: "published-time-text" });
+    t.appendChild(el("a", { href: "/watch?v=SmokeVid001&lc=" + lc }, time));
+    vm.appendChild(el("a", { id: "author-text", href: "/" + handle }, name));
+    vm.appendChild(el("span", { id: "content-text" }, text));
+    vm.appendChild(t);
+    vm.appendChild(el("span", { id: "vote-count-middle" }, likes));
+    return vm;
+  };
+  const thread = (lc, handle, name, text, time, likes) => {
+    const tr = el("ytd-comment-thread-renderer");
+    tr.appendChild(commentView(lc, handle, name, text, time, likes));
+    return tr;
+  };
+
+  // the transcript: the button appends the panel, chapter heading and all
+  document.querySelector("ytd-video-description-transcript-section-renderer button").addEventListener("click", () => {
+    const panel = el("div", { id: "leket-smoke-transcript-panel" });
+    const seg = (t, text) => {
+      const s = el("transcript-segment-view-model");
+      s.appendChild(el("div", { "class": "ytwTranscriptSegmentViewModelTimestamp" }, t));
+      s.appendChild(el("div", { "class": "ytwTranscriptSegmentViewModelTimestampA11yLabel" }, "0 seconds"));
+      s.appendChild(el("span", { "class": "ytAttributedStringHost" }, text));
+      return s;
+    };
+    panel.appendChild(seg("0:00", "first synthetic transcript line"));
+    panel.appendChild(el("div", { "class": "chapter-heading" }, "Chapter: Introduction"));
+    panel.appendChild(seg("0:04", "second line after the chapter heading"));
+    panel.appendChild(seg("0:09", "third line"));
+    document.body.appendChild(panel);
+  });
+
+  // comments: the top-level continuation loads two more threads once on screen
+  const cont = document.querySelector("ytd-comments > ytd-continuation-item-renderer");
+  new IntersectionObserver((entries, io) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    io.disconnect();
+    setTimeout(() => {
+      cont.before(thread("ugxT4", "@dee", "@Dee Example", "fourth comment, loaded by the continuation", "5 hours ago", "0"));
+      cont.before(thread("ugxT5", "@eve", "@Eve Example", "fifth comment, loaded by the continuation", "4 hours ago", "2"));
+      cont.remove();
+    }, 300);
+  }).observe(cont);
+
+  // replies: "2 replies" adds one reply and a nested continuation for the second
+  document.querySelector("ytd-comment-replies-renderer #more-replies button").addEventListener("click", () => {
+    const box = document.querySelector("ytd-comment-replies-renderer");
+    box.appendChild(commentView("ugxT1.1", "@bo", "@Bo Example", "the first reply", "1 day ago", "3"));
+    const nested = el("ytd-continuation-item-renderer");
+    const b = el("button", null, "Show more replies");
+    b.addEventListener("click", () => {
+      box.appendChild(commentView("ugxT1.2", "@cyd", "@Cyd Example", "the second reply", "22 hours ago", "0"));
+      nested.remove();
+    });
+    nested.appendChild(b);
+    box.appendChild(nested);
+  });
+})();
+</script>
+</body></html>`;
 // replika: the signed-in page (its inline script plants the localStorage keys the probe
 // reads), the diary and memories endpoints on both hosts, the sign call — and the signed
 // picture itself, served from a host the manifest has no permission for
@@ -261,6 +372,7 @@ const WEB = new Map([
   [etsyPage(0, ETSY_GONE), { type: "application/json", body: "{}", status: 500 }],
   ["https://www.messenger.com/e2ee/t/123", { type: "text/html", body: html("a messenger thread") }],
   [MESSENGER_COLLECTOR_URL, { type: "text/html", body: messengerCollectorPage }],
+  [YOUTUBE_WATCH, { type: "text/html", body: youtubePage }],
   [REPLIKA_HOME, { type: "text/html", body: replikaPage }],
   // the diary: the list (newest first), the empty page after the oldest date, then each
   // day; the older day carries one picture, whose sign call is the fake below
@@ -955,6 +1067,39 @@ async function scenarios(cdp, downloads) {
       const blobs = await evalIn(ep, `Promise.all(window.smokeBlobs.map((u) => fetch(u).then(() => "readable", () => "freed")))`);
       check(JSON.stringify(blobs) === '["freed"]', `etsy save ${round}: the page made one blob and freed its URL (${JSON.stringify(blobs)})`);
     }
+  });
+
+  // ---- youtube: popup -> the module's page (opened inactive, so the video tab stays
+  // in front) -> driveYouTube injected into the watch tab opens the transcript panel,
+  // scrolls the comments open and the replies out, and the page saves the Markdown
+  // with its JSON alongside ----
+  await scenario("youtube", async () => {
+    console.log("smoke: youtube save");
+    await open(YOUTUBE_WATCH);
+    await clickPopup("Save transcript and comments");
+    const yp = (await target((s) => s.type === "page" && /\/src\/modules\/youtube\/page\.html\?tab=\d+$/.test(s.url), "the youtube page (with its tab id)")).sessionId;
+    await wired(yp, "run", "youtube");
+    // the page starts its run on its own; the driver's own overlay narrates on the video tab
+    const end = await waitFor(() => evalIn(yp, `(() => { const p = document.getElementById("status");
+      return !p.hidden && (p.textContent.startsWith("Saved ") || p.className === "warn") && p.textContent; })()`),
+    "the youtube page's end line", 30000).catch(soft((e) => e.message));
+    check(end.startsWith("Saved "), `youtube: the page saves both files (it said: ${end})`);
+    const base = baseName("Smoke test video", "SmokeVid001");
+    const mine = landed().filter((f) => f.startsWith(base));
+    check(JSON.stringify(mine) === JSON.stringify([`${base}.json`, `${base}.md`]),
+      `youtube: ${base}.json and .md on disk, no renamed copy (found: ${mine.join(", ")})`);
+    if (!existsSync(join(downloads, `${base}.json`))) {
+      check(false, "youtube: the json is on disk (missing)");
+      return;
+    }
+    const saved = JSON.parse(readFileSync(join(downloads, `${base}.json`), "utf8"));
+    check(saved.transcript.length === 3
+      && saved.transcript.every((r) => !r.text.includes("0 seconds") && !r.text.includes("Chapter")),
+      `youtube: 3 transcript rows, the chapter heading and the a11y label left out (${saved.transcript.length} rows: ${saved.transcript.map((r) => r.text).join(" / ")})`);
+    check(saved.comments.length === 5, `youtube: 5 comments captured (${saved.comments.length})`);
+    const bidi = saved.comments.find((c) => c.likes_numeric === 1200);
+    check(!!bidi && bidi.replies.length === 2 && bidi.replies[0].text === "the first reply" && bidi.replies[1].text === "the second reply",
+      `youtube: the bidi-likes thread parses 1200 likes and keeps its 2 replies (${bidi ? `${bidi.likes_numeric} likes, ${bidi.replies.length} replies` : "thread not found"})`);
   });
 
   // ---- replika: popup -> the module's page -> the localStorage probe on the matched tab,

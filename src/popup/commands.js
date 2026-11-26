@@ -49,6 +49,19 @@ const openReplikaPage = async (tab, { tabs = chrome.tabs } = {}) => {
   return "Opened the Replika page.";
 };
 
+// Like the chat outputs page, the YouTube page runs against the tab the popup matched
+// (driveYouTube is injected there via chrome.scripting), so the open carries its id as
+// a query — but the tab it opens is INACTIVE: the YouTube tab must stay in front,
+// because Chrome throttles timers in a background tab and the comment loading is
+// scroll-driven. Tabless calls (the tests) open the page bare — it refuses to run
+// without a tab id.
+const openYouTubePage = async (tab, { tabs = chrome.tabs } = {}) => {
+  const page = chrome.runtime.getURL("src/modules/youtube/page.html");
+  const url = tab && tab.id != null ? `${page}?tab=${tab.id}` : page;
+  await tabs.create({ url, active: false });
+  return "Opened the YouTube page.";
+};
+
 export const COMMANDS = {
   discord: discordCommands,
   messenger: messengerCommands,
@@ -66,5 +79,8 @@ export const COMMANDS = {
   },
   etsy: {
     messages: openEtsyPage,
+  },
+  youtube: {
+    save: openYouTubePage,
   },
 };

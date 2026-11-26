@@ -3,7 +3,7 @@
   "name": "Leket",
   "version": "0.4.0",
   "minimum_chrome_version": "109",
-  "description": "Save Discord and Messenger conversations with their attachments, Etsy conversations, Reddit posts, claude.ai sessions and Replika chats as files you keep.",
+  "description": "Save Discord and Messenger conversations with their attachments, Etsy conversations, Reddit posts, claude.ai sessions, Replika chats and YouTube transcripts and comments as files you keep.",
   "action": {
     "default_title": "Leket",
     "default_popup": "src/popup/popup.html",
@@ -26,6 +26,7 @@
     "https://claude.ai/*",
     "https://www.etsy.com/*",
     "https://etsy.com/*",
+    "https://www.youtube.com/*",
     "https://my.replika.com/*",
     "https://my.replika.ai/*",
     "wss://ws.replika.com/*"

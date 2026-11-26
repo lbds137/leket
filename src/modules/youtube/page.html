@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leket: YouTube</title>
+<style>
+:root{--bg:#fff;--fg:#1e1f22;--muted:#4e5058;--line:#e3e5e8;--warn:#7d4600;--ok:#116329;--accent:#3945d1}
+@media (prefers-color-scheme: dark){:root{--bg:#313338;--fg:#dbdee1;--muted:#bec5cd;--line:#3f4147;--warn:#f5bc36;--ok:#6ede75;--accent:#b6beff}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px}
+section{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+h1,h2{font-size:20px;margin:0 0 8px}
+.advice{color:var(--muted)}
+button{font:inherit;margin:4px 12px 4px 0}
+#status{font-size:15px}
+.warn{color:var(--warn)}.ok{color:var(--ok)}
+</style>
+</head>
+<body>
+<main>
+<h1>YouTube save</h1>
+
+<section id="youtube">
+<h2>Save transcript and comments</h2>
+<p class="advice">Reads the transcript panel and every comment — replies included — from the YouTube tab this page was opened from, and saves one Markdown file with its JSON alongside. The save starts on its own and needs both tabs open, with the video in front: the comments load as that page scrolls.</p>
+<button id="run">Save again</button>
+<p id="status" hidden></p>
+</section>
+</main>
+<script type="module" src="page.js"></script>
+</body>
+</html>
