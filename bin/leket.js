@@ -6,7 +6,9 @@
 // Discord saves into Markdown transcripts (src/modules/discord/convert.js renders them;
 // CONVERT_USAGE below); `leket convert chatgpt <export>…` does the same for ChatGPT's data
 // export (src/convert/chatgpt.js), and `leket convert gemini <takeout>…` for Google
-// Takeout's Gemini activity (src/convert/gemini.js). `leket reddit <url>` saves a post as the extension's Markdown
+// Takeout's Gemini activity (src/convert/gemini.js), and `leket convert character-chat
+// <export>…` for a character-chat site's JSON export (src/convert/character-chat.js).
+// `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
 //
@@ -34,6 +36,7 @@ import { mergeSaves, render as renderDiscord } from "../src/modules/discord/conv
 import { collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
 import { badFolder } from "../src/convert/common.js";
 import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
+import { collect as collectCharacterChat, plan as planCharacterChat } from "../src/convert/character-chat.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -117,6 +120,22 @@ usage: leket convert gemini <takeout>... [--out DIR] [--user LABEL] [--assistant
   --titles FILE      a tab-separated file whose header names an id and a title column:
                      the title shown for each listed chat (Takeout has none)
   --other FOLDER     where other-activity.md and canvases/ go (default: DIR)
+  Exit: as for chatgpt.
+
+usage: leket convert character-chat <export.json>... [--out DIR] [--user LABEL]
+         [--site LABEL] [--tz ZONE]
+
+  Turns a character-chat site's JSON export (an object with a "conversations" list, each
+  with its "messages", and a "characters" map of cards) into one Markdown file per
+  conversation, INDEX.md (oldest first) and CARDS.md (each character's card). With
+  several exports, a conversation is taken from the copy with the most messages.
+  Writes "Label.md" (or "Character YYYY-MM-DD.md" for an unlabelled one) into DIR
+  (default: the current directory), replacing earlier files of that name and leaving
+  other files there alone; two that would share a name get " (2)", " (3)"…
+  --user LABEL  the user's messages' heading when the conversation names no persona
+                (default User)
+  --site LABEL  the site's name in the headings (default "Character chat")
+  --tz ZONE     the zone times are shown in, e.g. Europe/Paris (default UTC)
   Exit: as for chatgpt.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
@@ -669,6 +688,60 @@ export async function convertGemini(paths, { out = ".", user, assistant, tz = "U
   return 0;
 }
 
+// One character-chat export: a JSON file
+export async function readCharacterChatExport(path) {
+  let text;
+  try { text = await readFile(path, "utf8"); } catch (e) {
+    if (e.code === "ERR_STRING_TOO_LONG") throw new Error(`${path} is too large to read as one text`);
+    throw e;
+  }
+  try { return { label: path, data: JSON.parse(text) }; } catch (e) { throw new Error(`${path} isn't JSON (${e.message})`); }
+}
+
+export async function convertCharacterChat(paths, { out = ".", user, site, tz = "UTC" } = {}) {
+  let planned;
+  try {
+    const exports = [];
+    for (const p of paths) exports.push(await readCharacterChatExport(p));
+    // every file is rendered before any is written, so a render error writes nothing
+    planned = planCharacterChat(collectCharacterChat(exports), { user, site, timeZone: tz });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  process.stderr.write([
+    `leket: ${s.conversations} conversations, ${s.messages} messages, ${s.cards} cards, from ${paths.length} export(s); times in ${tz}.`,
+    s.empty ? `Conversations with no messages, left out: ${s.empty}.` : "",
+    s.short ? `Conversations with fewer messages than the site counts: ${s.short}.` : "",
+    s.missing ? `Characters with no card in the export (no name; left out of CARDS.md): ${s.missing}.` : "",
+  ].filter(Boolean).join("\n") + "\n");
+  return 0;
+}
+
+async function convertCharacterChatMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args, allowPositionals: true,
+      options: { out: { type: "string" }, user: { type: "string" }, site: { type: "string" }, tz: { type: "string" }, help: { type: "boolean", short: "h" } },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  for (const k of ["user", "site"]) if (v[k] !== undefined && (!v[k].trim() || /[\r\n]/.test(v[k]))) return fail(`--${k} takes a one-line label`);
+  if (v.tz !== undefined) {
+    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
+  }
+  return convertCharacterChat(positionals, { out: v.out, user: v.user, site: v.site, tz: v.tz });
+}
+
 const CONVERT_OPTIONS = {
   out: { type: "string" }, user: { type: "string" }, assistant: { type: "string" }, tz: { type: "string" },
   folders: { type: "string" }, unlisted: { type: "string" }, help: { type: "boolean", short: "h" },
@@ -701,6 +774,7 @@ async function convertMain(rest) {
   const [kind, ...args] = rest;
   if (kind === "-h" || kind === "--help") { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
   if (kind === "chatgpt" || kind === "gemini") return convertExportMain(kind, args);
+  if (kind === "character-chat") return convertCharacterChatMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {
