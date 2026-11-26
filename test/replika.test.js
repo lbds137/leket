@@ -1669,3 +1669,31 @@ test("runSave: counts diary entries, not days, and tallies the v3 memory list's 
   assert.deepEqual(data.unsaved_fields.person, { id: 1, name: 1 });
   assert.equal(JSON.stringify(data).includes("Someone"), false, "a person's fields are tallied by name only");
 });
+
+test("readMemories: the older v1.4 list answering 404 is no older facts, not a partial", async () => {
+  const fn = fakeFetch((url) => (url === MEMORY_14 ? reply({}, 404) : reply({ customer_facts: [{ text: "x" }], robot_facts: [] })));
+  const out = await readMemories({ auth: AUTH, fetchFn: fn, sleep: instant });
+  assert.equal(out.partial, null);
+  assert.equal(out.customerFacts.length, 1);
+  const fn500 = fakeFetch((url) => (url === MEMORY_14 ? reply({}, 500) : reply({ customer_facts: [], robot_facts: [] })));
+  assert.equal((await readMemories({ auth: AUTH, fetchFn: fn500, sleep: instant })).partial, MEMORY_V14_PARTIAL);
+});
+
+test("builders keep the run-1 fields in their plain types only", () => {
+  const { record } = buildMessage({
+    id: "m1", meta: { nature: "Robot", timestamp: "t" }, content: { type: "text", text: "now", originalText: "before" },
+    avatarEmotion: { name: "happy" }, is_romantic: false, blurred: "yes",
+  });
+  assert.equal(record.original_text, "before");
+  assert.equal(record.emotion, "happy");
+  assert.equal(record.is_romantic, false);
+  assert.equal("blurred" in record, false, "a non-boolean flag is dropped");
+  assert.equal(buildMessage({ meta: {}, content: { type: "text" }, avatarEmotion: { name: { x: 1 } } }).record.emotion, undefined);
+  const day = buildDiary({ date: "2026-02-01", entries: [{ id: "e1", text: "a", reaction: "love", images: [] }, { id: "e2", reaction: { o: 1 }, images: [] }] }, null);
+  assert.equal(day.record.entries[0].reaction, "love");
+  assert.equal("reaction" in day.record.entries[1], false);
+  const fact = buildFact({ id: 1, text: "t", category_id: 7, is_user_edited: true }, "you");
+  assert.equal(fact.category_id, 7);
+  assert.equal(fact.edited, true);
+  assert.equal("edited" in buildFact({ text: "t", is_user_edited: "no" }, null), false);
+});

@@ -31,7 +31,13 @@ export const MEDIA_VOICE_LINK_UNUSABLE = "the voice clip's link was not usable";
 export const MEDIA_FETCH_FAILED = "the file host refused or failed";
 
 // an error whose message is one of this module's fixed, secret-free texts
-export class ApiError extends Error {}
+// (status: the HTTP status when the call got one, else null)
+export class ApiError extends Error {
+  constructor(message, status = null) {
+    super(message);
+    this.status = status;
+  }
+}
 
 export class SignedOut extends Error {
   constructor() {
@@ -92,7 +98,7 @@ export async function call(url, { method = "GET", body, auth, fetchFn = fetch, s
     }
     break;
   }
-  throw new ApiError(status == null ? "network error" : `Replika answered HTTP ${status}`);
+  throw new ApiError(status == null ? "network error" : `Replika answered HTTP ${status}`, status);
 }
 
 // Injected into the my.replika.com tab with chrome.scripting.executeScript, so this
@@ -248,6 +254,7 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, p
 
 // The memories, from both endpoints. A reply missing its array is a failure (not an
 // empty list): the part that failed is named in partial and the other part's facts kept.
+// The older v1.4 list answering 404 counts as no older facts, not a failure.
 export async function readMemories({ auth, fetchFn = fetch, sleep = defaultSleep } = {}) {
   // persons: the people the v3 list carries beside the facts; optional (an answer
   // without it is not a failure)
@@ -259,7 +266,8 @@ export async function readMemories({ auth, fetchFn = fetch, sleep = defaultSleep
     out.facts = reply.facts;
   } catch (e) {
     if (e instanceof SignedOut) return { ...out, partial: e.message, signedOut: true };
-    v14 = true;
+    // a 404 is the older list retired (it answers 404 on both hosts), not a failure
+    if (!(e instanceof ApiError && e.status === 404)) v14 = true;
   }
   try {
     const reply = await call(MEMORY_V15, { auth, fetchFn, sleep });
