@@ -12,10 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   SignedOut, headers, call, readReplikaAuth, readDiary, readMemories,
-  createHistoryPager, readHistory, signedImageUrl, usableMediaUrl,
+  createHistoryPager, readHistory, signedImageUrl, usableMediaUrl, replikaPictureUrl,
   HISTORY_SOCKET, HISTORY_NO_LIST, HISTORY_NO_DATE, HISTORY_STUCK, HISTORY_CLOSED,
   HISTORY_SILENT, DIARY_PARTIAL, DIARY_DAYS_SKIPPED, DIARY_STUCK, DIARY_PAGE_CAP, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
-  MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED,
+  MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED, MEDIA_HOST_NOT_REPLIKA,
 } from "../src/modules/replika/api.js";
 import {
   buildMessage, buildDiary, buildFact, tallyUnknown, makeMediaNamer, safeId, extFor,
@@ -778,7 +778,7 @@ test("readHistory works over onmessage alone, the way a minimal stand-in speaks"
 // ---------- the signed media link ----------
 
 test("usableMediaUrl takes https hosts only: no http, no localhost, no IP literal", () => {
-  assert.equal(usableMediaUrl("https://signed.example.org/pic?sig=x"), true);
+  assert.equal(usableMediaUrl("https://s3-us-west-1.amazonaws.com/replika-content-images/pic?sig=x"), true);
   assert.equal(usableMediaUrl("http://signed.example.org/pic"), false);
   assert.equal(usableMediaUrl("https://localhost/pic"), false);
   assert.equal(usableMediaUrl("https://sub.localhost/pic"), false);
@@ -794,9 +794,9 @@ test("signedImageUrl posts the raw link and answers the signed URL; an unusable 
     assert.equal(init.method, "POST");
     assert.equal(init.headers["content-type"], "application/json");
     const raw = JSON.parse(init.body).image_url;
-    return reply({ image_url: raw === "https://cdn.example.org/raw.png" ? "https://signed.example.org/p.png?sig=abc" : "http://nope.example.org/x" });
+    return reply({ image_url: raw === "https://cdn.example.org/raw.png" ? "https://s3-us-west-1.amazonaws.com/replika-content-images/p.png?sig=abc" : "http://nope.example.org/x" });
   });
-  assert.equal(await signedImageUrl("https://cdn.example.org/raw.png", { auth: AUTH, fetchFn: fn, sleep: instant }), "https://signed.example.org/p.png?sig=abc");
+  assert.equal(await signedImageUrl("https://cdn.example.org/raw.png", { auth: AUTH, fetchFn: fn, sleep: instant }), "https://s3-us-west-1.amazonaws.com/replika-content-images/p.png?sig=abc");
   assert.equal(await signedImageUrl("https://cdn.example.org/other.png", { auth: AUTH, fetchFn: fn, sleep: instant }), null);
   const body = fn.calls[0].body;
   assert.deepEqual(body, { image_url: "https://cdn.example.org/raw.png" });
@@ -988,14 +988,14 @@ function mediaRoutes() {
     seen.push({ url, body: init.body ? JSON.parse(init.body) : null });
     if (url === GET_URL) {
       const raw = init.body ? JSON.parse(init.body).image_url : null;
-      if (raw === "https://cdn.example.org/pic.png") return reply({ image_url: "https://signed.example.org/pic.png?sig=abc" });
-      if (raw === "https://cdn.example.org/pic2.png") return reply({ image_url: "https://signed.example.org/pic2.png?sig=abc" });
+      if (raw === "https://cdn.example.org/pic.png") return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/pic.png?sig=abc" });
+      if (raw === "https://cdn.example.org/pic2.png") return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/pic2.png?sig=abc" });
       if (raw === "https://cdn.example.org/pic3.png") return reply({ image_url: "https://127.0.0.1/x.png" });
       if (raw === "https://cdn.example.org/signedout.png") return reply({}, 401);
-      return reply({ image_url: "https://signed.example.org/fail.png?sig=abc" });
+      return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/fail.png?sig=abc" });
     }
-    if (url === "https://signed.example.org/pic.png?sig=abc") return bytes(PNG, "image/png");
-    if (url === "https://signed.example.org/pic2.png?sig=abc") return bytes(PNG, "image/png; charset=binary");
+    if (url === "https://s3-us-west-1.amazonaws.com/replika-content-images/pic.png?sig=abc") return bytes(PNG, "image/png");
+    if (url === "https://s3-us-west-1.amazonaws.com/replika-content-images/pic2.png?sig=abc") return bytes(PNG, "image/png; charset=binary");
     // a voice clip is fetched by its own link, never signed
     if (url === "https://cdn.example.org/voice.m4a") return bytes(new Uint8Array([1, 2, 3, 4]), "audio/mp4");
     return reply({}, 403); // the signed host refuses this one
@@ -1051,7 +1051,7 @@ test("collectMedia: an unusable signed link, a refused fetch and a failing sign 
 test("collectMedia: a host that rejects every call is tried exactly 3 times per file", async () => {
   const urls = [];
   const fn = async (url, init) => {
-    if (url === GET_URL) return reply({ image_url: "https://signed.example.org/a.png?sig=1" });
+    if (url === GET_URL) return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/a.png?sig=1" });
     urls.push(url);
     throw new Error("blocked");
   };
@@ -1059,6 +1059,72 @@ test("collectMedia: a host that rejects every call is tried exactly 3 times per 
   await collectMedia(plans, { auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(urls.length, 3);
   assert.equal(plans[0].record.not_captured, MEDIA_FETCH_FAILED);
+});
+
+test("replikaPictureUrl takes Replika's picture bucket and user-media host only", () => {
+  const bucket = "https://s3-us-west-1.amazonaws.com/replika-content-images/";
+  assert.equal(replikaPictureUrl(`${bucket}a/b.png?X-Amz-Signature=x`), true);
+  assert.equal(replikaPictureUrl("https://luka-user-media.s3.us-west-1.amazonaws.com/u/c.jpg"), true);
+  assert.equal(replikaPictureUrl("https://s3-us-west-1.amazonaws.com/someone-elses-bucket/b.png"), false); // same host, other bucket
+  assert.equal(replikaPictureUrl("https://s3-us-west-1.amazonaws.com/replika-content-images-evil/b.png"), false); // a prefix of the name, not the bucket
+  assert.equal(replikaPictureUrl("https://s3-us-west-1.amazonaws.com/x/../replika-content-images/b.png"), true); // URL() resolves the dots first
+  assert.equal(replikaPictureUrl("https://s3-us-west-2.amazonaws.com/replika-content-images/b.png"), false);
+  assert.equal(replikaPictureUrl("https://evil.luka-user-media.s3.us-west-1.amazonaws.com/c.jpg"), false);
+  assert.equal(replikaPictureUrl(`http://s3-us-west-1.amazonaws.com/replika-content-images/b.png`), false);
+  assert.equal(replikaPictureUrl(`https://s3-us-west-1.amazonaws.com:8443/replika-content-images/b.png`), false);
+  assert.equal(replikaPictureUrl(`https://s3-us-west-1.amazonaws.com:443/replika-content-images/b.png`), true); // the default port: URL() drops it
+  assert.equal(replikaPictureUrl(`https://u:p@s3-us-west-1.amazonaws.com/replika-content-images/b.png`), false);
+  assert.equal(replikaPictureUrl("https://memes.example.org/b.png"), false);
+  assert.equal(replikaPictureUrl("not a url"), false);
+});
+
+test("collectMedia: a signed picture link outside Replika's storage is never fetched; pictures refuse redirects, voice clips follow them", async () => {
+  const fetched = [];
+  const fn = async (url, init) => {
+    if (url === GET_URL) {
+      const raw = JSON.parse(init.body).image_url;
+      return reply({ image_url: raw.includes("stray") ? "https://memes.example.org/stray.png" : "https://s3-us-west-1.amazonaws.com/replika-content-images/ok.png" });
+    }
+    fetched.push({ url, redirect: init && init.redirect });
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
+  };
+  const plans = [
+    planFor("m1", "images", "https://cdn.example.org/stray.png"),
+    planFor("m2", "images", "https://cdn.example.org/ok.png"),
+    planFor("v1", "voice_message", "https://cdn.example.org/voice.m4a"),
+  ];
+  const { files } = await collectMedia(plans, { auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(plans[0].record.not_captured, MEDIA_HOST_NOT_REPLIKA);
+  assert.ok(!plans[0].record.media);
+  assert.equal(plans[1].record.media, "media/m2.png");
+  assert.equal(files.length, 2);
+  assert.deepEqual(fetched, [
+    { url: "https://s3-us-west-1.amazonaws.com/replika-content-images/ok.png", redirect: "error" },
+    { url: "https://cdn.example.org/voice.m4a", redirect: "follow" },
+  ]);
+});
+
+test("collectMedia: a picture whose fetch is refused for its redirect is not captured, and a voice clip before it doesn't loosen its mode", async () => {
+  const signed = "https://s3-us-west-1.amazonaws.com/replika-content-images/moved.png?X-Amz-Signature=keep-me";
+  const fetched = [];
+  const fn = async (url, init) => {
+    if (url === GET_URL) return reply({ image_url: JSON.parse(init.body).image_url.includes("moved") ? signed : "https://s3-us-west-1.amazonaws.com/replika-content-images/ok.png" });
+    fetched.push({ url, redirect: init && init.redirect });
+    if (url === signed && init.redirect === "error") throw new TypeError("Failed to fetch"); // what fetch does on a redirect it may not follow
+    return new Response(new Uint8Array([1]), { headers: { "content-type": "image/png" } });
+  };
+  const plans = [
+    planFor("v1", "voice_message", "https://cdn.example.org/voice.m4a"),
+    planFor("m1", "images", "https://cdn.example.org/moved.png"),
+    planFor("m2", "images", "https://cdn.example.org/ok.png"),
+  ];
+  const { files } = await collectMedia(plans, { auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(plans[1].record.not_captured, MEDIA_FETCH_FAILED);
+  assert.ok(!plans[1].record.media);
+  assert.equal(plans[2].record.media, "media/m2.png"); // the next picture still runs
+  assert.equal(files.length, 2);
+  assert.deepEqual(fetched.map((f) => f.redirect), ["follow", "error", "error", "error", "error"]); // voice, 3 tries of m1, m2
+  assert.equal(fetched[1].url, signed); // the signed link, query and all, is what gets fetched
 });
 
 test("collectMedia: a voice clip is fetched by its own link with no sign call, and lands as .m4a", async () => {
@@ -1271,11 +1337,11 @@ test("buildZip packs data.json, index.html and the media files, and python3 can 
 // them in message fields, unknown extra fields, error bodies and a rejecting fetch.
 const LEAKS = [
   AUTH.authToken, AUTH.userId, AUTH.deviceId, AUTH.chatId,
-  "https://signed.example.org/pic?sig=leak-sig-xyz",
+  "https://s3-us-west-1.amazonaws.com/replika-content-images/pic?sig=leak-sig-xyz",
   "https://cdn.example.org/voice.m4a",
   "https://cdn.example.org/key-url.png", // carried as an object KEY, below
   "https://cdn.example.org/diary-pic.png", // a diary picture's raw link
-  "https://signed.example.org/diary-sig?sig=leak-diary-xyz", // and the signed one
+  "https://s3-us-west-1.amazonaws.com/replika-content-images/diary-sig?sig=leak-diary-xyz", // and the signed one
 ];
 
 function leakRunRoutes() {
@@ -1293,15 +1359,15 @@ function leakRunRoutes() {
     if (url === MEMORY_15) return reply({ detail: `denied for ${AUTH.authToken}` }, 500); // an error body carrying a secret
     if (url === GET_URL) {
       const raw = init.body ? JSON.parse(init.body).image_url : null;
-      if (raw === "https://cdn.example.org/captured.png") return reply({ image_url: "https://signed.example.org/pic?sig=leak-sig-xyz" });
-      if (raw === "https://cdn.example.org/diary-pic.png") return reply({ image_url: "https://signed.example.org/diary-sig?sig=leak-diary-xyz" });
-      return reply({ image_url: "https://signed.example.org/refused.png?sig=x" });
+      if (raw === "https://cdn.example.org/captured.png") return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/pic?sig=leak-sig-xyz" });
+      if (raw === "https://cdn.example.org/diary-pic.png") return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/diary-sig?sig=leak-diary-xyz" });
+      return reply({ image_url: "https://s3-us-west-1.amazonaws.com/replika-content-images/refused.png?sig=x" });
     }
-    if (url === "https://signed.example.org/pic?sig=leak-sig-xyz") return bytes(PNG, "image/png");
-    if (url === "https://signed.example.org/diary-sig?sig=leak-diary-xyz") return bytes(PNG, "image/png");
+    if (url === "https://s3-us-west-1.amazonaws.com/replika-content-images/pic?sig=leak-sig-xyz") return bytes(PNG, "image/png");
+    if (url === "https://s3-us-west-1.amazonaws.com/replika-content-images/diary-sig?sig=leak-diary-xyz") return bytes(PNG, "image/png");
     // a voice clip is fetched by its own link, unsigned; the host refuses it with a secret in the body
     if (url === "https://cdn.example.org/voice.m4a") return reply({ detail: AUTH.deviceId }, 403);
-    if (url === "https://signed.example.org/refused.png?sig=x") return reply({ detail: AUTH.deviceId }, 403);
+    if (url === "https://s3-us-west-1.amazonaws.com/replika-content-images/refused.png?sig=x") return reply({ detail: AUTH.deviceId }, 403);
     throw new Error(`unexpected fetch ${url}`);
   });
 }
@@ -1483,7 +1549,7 @@ test("a SignedOut on the diary stops the remaining steps but still saves the cha
 
 test("(c) a diary picture ends up in media/ in the zip with `media` set, and its raw link appears nowhere in data.json or index.html", async () => {
   const raw = "https://cdn.example.org/diary-only.png";
-  const signed = "https://signed.example.org/diary-only?sig=leak-only-xyz";
+  const signed = "https://s3-us-west-1.amazonaws.com/replika-content-images/diary-only?sig=leak-only-xyz";
   const fetchFn = fakeFetch((url, init) => {
     if (url === LIST_URL()) return reply([li("2026-02-01", "First")]);
     if (url === LIST_URL("2026-02-01")) return reply([]);

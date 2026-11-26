@@ -6,11 +6,11 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-26T04:20:00Z'
-updated_date: '2026-11-26T04:30:00Z'
+updated_date: '2026-11-26T04:37:00Z'
 labels:
   - replika
 dependencies: []
-priority: low
+priority: medium
 ordinal: 37000
 ---
 
@@ -24,4 +24,8 @@ Follow-ups from the TASK-33 live run. (1) A per-file media byte cap and a check 
 
 <!-- SECTION:NOTES:BEGIN -->
 From PR #181's review: the new saved fields (original_text, emotion, diary reaction, fact category and edited) are in data.json but not rendered in index.html. original_text is the one a reader would most expect to see; render it (and the others where they read well) when this task is picked up, or settle that data.json alone is enough.
+
+Lila ruling 11-25 (AskUserQuestion): ADD the in-code check. Before fetching a signed picture link, require https and either host s3-us-west-1.amazonaws.com with a path under /replika-content-images/ or host luka-user-media.s3.us-west-1.amazonaws.com; anything else is not captured. Reason: Chrome ignores the path in host permissions, so the manifest grants the whole s3-us-west-1 host. Ship it with item (1)'s final-host (redirect) check, as its own PR after #182.
+
+Done in the host-check PR (0.6.2): signed picture links must point into replika-content-images on s3-us-west-1 or the luka-user-media host (replikaPictureUrl), else not captured with MEDIA_HOST_NOT_REPLIKA and never fetched; picture fetches use redirect: error so the checked URL is the one read (voice clips still follow redirects: their hosts are unknown). Still open here: the per-file byte cap, the multi-part download test, voice_message's shape, fact category names, rendering the new fields.
 <!-- SECTION:NOTES:END -->
