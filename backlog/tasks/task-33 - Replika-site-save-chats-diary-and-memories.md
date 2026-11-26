@@ -4,7 +4,7 @@ title: 'Replika site: save chats, diary and memories'
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:49:00Z'
-updated_date: '2026-11-26T00:43:00Z'
+updated_date: '2026-11-26T00:51:00Z'
 labels:
   - replika
   - needs-lila
@@ -94,4 +94,8 @@ Step 2 follow-ups for the live run (Step 3):
   - (2) `readDiary` returns at the first failed or mismatched day, which drops every newer day. Skip the bad day, mark the step partial and go on. Decide from how often a day call fails in the live run.
   - (3) The day fetches have no pause between them. Add a short rest like the media step's `pause`.
   - (5) The multi-part message test is already deferred in TASK-34.
+
+- PR #176 review: (4) of the #175 lows was the stale 1.4 diary endpoint line, fixed in #176. TASK-34 (Done) carried two deferrals, now tracked here for the live-run PR:
+  - a per-file media byte cap and a final-host (redirect) check, done with the media host in host_permissions;
+  - a test for the multi-part download failure message (page.js), at the next Replika smoke work.
 <!-- SECTION:NOTES:END -->
