@@ -26,10 +26,11 @@ export function stamp(t, timeZone = "UTC") {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${off}`;
 }
 
-// Characters a file name never keeps: path separators, a drive colon, C0 and C1 controls,
-// and what shown() escapes beyond them (bidi controls, which make a printed name read
-// differently from what is on disk, and the line and paragraph separators)
-const UNSAFE = new RegExp(`[/\\\\:\\x00-\\x1f\\x7f-\\x9f${String.fromCharCode(...WIDE)}]`, "g");
+// Characters a file name never keeps: path separators, a drive colon, * ? " < > | (Windows,
+// and a FAT, exFAT or SMB disk on Linux, refuse them), C0 and C1 controls, and what shown()
+// escapes beyond them (bidi controls, which make a printed name read differently from what
+// is on disk, and the line and paragraph separators)
+const UNSAFE = new RegExp(`[/\\\\:*?"<>|\\x00-\\x1f\\x7f-\\x9f${String.fromCharCode(...WIDE)}]`, "g");
 
 // A title as a file name: unsafe characters (above) become "-", trailing dots go (Windows
 // drops them), and it is cut to 200 bytes of UTF-8.

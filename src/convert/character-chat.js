@@ -19,7 +19,7 @@
 //
 // Pure: no file access. bin/leket.js reads the exports and writes what plan() returns.
 import { shown } from "../lib/shown.js";
-import { codeSpan } from "../lib/html-md.js";
+import { codeSpan, escapeText } from "../lib/html-md.js";
 import { pyStrip, safeTitle } from "./common.js";
 
 const str = (x) => (typeof x === "string" ? x : "");
@@ -64,8 +64,9 @@ export function collect(exports) {
       const id = obj(c) && (typeof c.id === "string" || typeof c.id === "number") ? String(c.id) : "";
       if (!id) throw new Error(`${label}: conversation ${k + 1} has no id`);
       if (!Array.isArray(c.messages)) throw new Error(`${label}: conversation ${shown(id)} has no messages list`);
+      // counted as render() counts them: message objects only
       const had = convs.get(id);
-      if (had && had.c.messages.length > c.messages.length) continue;
+      if (had && had.c.messages.filter(obj).length > c.messages.filter(obj).length) continue;
       convs.delete(id); // the copy taken also takes the later place
       convs.set(id, { id, c, source: e.label || "" });
     }
@@ -86,21 +87,22 @@ export function render({ id, c, source }, characters, { user = "User", site = "C
   const label = pyStrip(str(meta.label));
   const persona = pyStrip(str(obj(meta.userPersona)?.name)) || user;
   const count = typeof meta.num_messages === "number" ? meta.num_messages : null;
-  const creator = str(ch.creator_username);
+  const creator = text(ch.creator_username);
   const first = minute(msgs[0]?.createdAt, timeZone), last = minute(msgs.at(-1)?.createdAt, timeZone);
+  const span = first || last ? `${first || "undated"} to ${last || "undated"}` : "undated";
   const gap = count === null ? `${msgs.length} messages saved (the site gives no count)` :
     count === msgs.length ? `${msgs.length} messages, as many as the site counts` :
       `${msgs.length} messages saved of ${count} the site counts (the gap is probably regenerated or deleted replies; not checked)`;
   const lines = [
-    `# ${label || name}`,
+    `# ${escapeText(label || name)}`,
     "",
-    `${site} conversation with **${name}**${creator ? ` (character by ${creator})` : ""}, ${first} to ${last}; ${gap}. ` +
+    `${site} conversation with **${escapeText(name)}**${creator ? ` (character by ${escapeText(creator)})` : ""}, ${span}; ${gap}. ` +
       `Source: ${codeSpan(source) || "(unnamed)"}, conversation ${codeSpan(id)}.`,
     "",
   ];
   for (const m of msgs) {
     const who = m.role === "user" ? persona : name;
-    lines.push(`## ${who} · ${minute(m.createdAt, timeZone)}`, "", pyStrip(str(m.content)), "");
+    lines.push(`## ${escapeText(who)} · ${minute(m.createdAt, timeZone) || "undated"}`, "", pyStrip(str(m.content)), "");
   }
   return { title: label || name, name, messages: msgs.length, text: lines.join("\n"), short: count !== null && count > msgs.length };
 }
@@ -109,8 +111,8 @@ export function render({ id, c, source }, characters, { user = "User", site = "C
 const cell = (s) => s.replace(/[\r\n]+/g, " ").replace(/\|/g, "\\|");
 
 // Every file to write: { files: [{ name, text }], stats }. Conversations with no messages
-// are left out (counted). File names (safeTitle, and * ? " < > | as "-"): the
-// conversation's label, else "Name YYYY-MM-DD"
+// are left out (counted). File names (through safeTitle): the conversation's label, else
+// "Name YYYY-MM-DD"
 // (its first message's day); two that would share a name (on a case-blind disk too, and
 // INDEX.md and CARDS.md included) get " (2)", " (3)"… in the export's order.
 export function plan(collected, { user, site = "Character chat", timeZone = "UTC" } = {}) {
@@ -124,8 +126,7 @@ export function plan(collected, { user, site = "Character chat", timeZone = "UTC
     const r = render(conv, collected.characters, opts);
     const meta = obj(conv.c.meta) || {};
     const day = minute(msgs[0].createdAt, timeZone).slice(0, 10) || "undated";
-    // also no * ? " < > |, as the converter this ports (Windows forbids them too)
-    const base = safeTitle(pyStrip(str(meta.label)) || `${r.name} ${day}`).replace(/[*?"<>|]/g, "-");
+    const base = safeTitle(pyStrip(str(meta.label)) || `${r.name} ${day}`);
     let name = base;
     for (let n = 2; taken.has(`${name}.md`.toLowerCase()); n++) name = `${base} (${n})`;
     taken.add(`${name}.md`.toLowerCase());
@@ -139,14 +140,14 @@ export function plan(collected, { user, site = "Character chat", timeZone = "UTC
   const from = collected.sources.map((s) => codeSpan(s) || "(unnamed)").join(", ");
   const index = [`# ${site} conversations`, "", `Built by \`leket convert character-chat\` from ${from}. Oldest first.`, "",
     "| File | Character | Messages | From | To |", "|---|---|---|---|---|",
-    ...rows.map((r) => `| ${cell(codeSpan(`${r.name}.md`))} | ${cell(r.character)} | ${r.messages} | ${r.from} | ${r.to} |`)];
+    ...rows.map((r) => `| ${cell(codeSpan(`${r.name}.md`))} | ${cell(escapeText(r.character))} | ${r.messages} | ${r.from} | ${r.to} |`)];
   files.push({ name: "INDEX.md", text: `${index.join("\n")}\n` });
   const cards = [`# Character cards as ${site} served them`, ""];
   const chars = Object.entries(collected.characters).map(([cid, ch]) => [cid, ch, text(ch.name)]).filter(([, , name]) => name);
   chars.sort(([, , a], [, , b]) => (a < b ? -1 : a > b ? 1 : 0));
   for (const [cid, ch, name] of chars) {
-    const creator = str(ch.creator_username);
-    cards.push(`## ${name}${creator ? ` (by ${creator})` : ""}`, "", `${codeSpan(cid)} · ${str(ch.title)}`, "");
+    const creator = text(ch.creator_username), title = text(ch.title);
+    cards.push(`## ${escapeText(name)}${creator ? ` (by ${escapeText(creator)})` : ""}`, "", `${codeSpan(cid)}${title ? ` · ${escapeText(title)}` : ""}`, "");
     for (const field of ["persona", "scenario", "greeting", "dialogue"]) {
       if (text(ch[field])) cards.push(`**${field}:**`, "", text(ch[field]), "");
     }

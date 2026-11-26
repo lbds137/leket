@@ -574,7 +574,7 @@ async function readIdTsv(path, flag, column, check) {
 
 // --folders: a tab-separated file with a header row naming an "id" and a "folder" column
 export const readFolders = (path) => readIdTsv(path, "--folders", "folder",
-  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : . or .. parts, no control characters)" : ""));
+  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : * ? \" < > |, . or .. parts, no control characters)" : ""));
 
 // --titles: a tab-separated file with a header row naming an "id" and a "title" column
 export const readTitles = (path) => readIdTsv(path, "--titles", "title", (t) => (t ? "" : "which is empty"));
@@ -625,8 +625,9 @@ async function writeConverted(files, out) {
 // names it), its zip (not zip64) or the JSON file → [{ label, rows }], one per JSON file
 // that is a list of activity rows. Other JSON files (one attached to a chat) are passed over,
 // and in a folder or zip one too large to read as one text (a whole-account Takeout's
-// location history) is passed over unread: its label goes into `skipped`. limit is for tests.
-export async function readGeminiExport(path, { skipped = [], limit = MAX_STRING_LENGTH } = {}) {
+// location history) is passed over unread: its label goes into `skipped`. limit and read are
+// for tests.
+export async function readGeminiExport(path, { skipped = [], limit = MAX_STRING_LENGTH, read = readFile } = {}) {
   const isActivity = (x) => Array.isArray(x) && x.some((e) => e && typeof e === "object" && typeof e.time === "string" && typeof e.title === "string");
   const found = [];
   const consider = (label, text) => {
@@ -659,7 +660,7 @@ export async function readGeminiExport(path, { skipped = [], limit = MAX_STRING_
           if (size > limit) { tooLarge(p, size); continue; }
           let text;
           // bytes over-count a string's length, so a file just under the limit can still be too long
-          try { text = await readFile(p, "utf8"); } catch (e) { if (e.code !== "ERR_STRING_TOO_LONG") throw e; tooLarge(p, size); continue; }
+          try { text = await read(p, "utf8"); } catch (e) { if (e.code !== "ERR_STRING_TOO_LONG") throw e; tooLarge(p, size); continue; }
           consider(p, text);
         }
       }
@@ -701,10 +702,10 @@ export async function convertGemini(paths, { out = ".", user, assistant, tz = "U
   return 0;
 }
 
-// One character-chat export: a JSON file
-export async function readCharacterChatExport(path) {
+// One character-chat export: a JSON file. read is for tests.
+export async function readCharacterChatExport(path, { read = readFile } = {}) {
   let text;
-  try { text = await readFile(path, "utf8"); } catch (e) {
+  try { text = await read(path, "utf8"); } catch (e) {
     if (e.code === "ERR_STRING_TOO_LONG") throw new Error(`${path} is too large to read as one text`);
     throw e;
   }
@@ -775,7 +776,7 @@ async function convertExportMain(kind, args) {
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   for (const k of ["user", "assistant"]) if (v[k] !== undefined && /[\r\n]/.test(v[k])) return fail(`--${k} takes a one-line label`);
-  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : . or .. parts)`);
+  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : * ? " < > |, . or .. parts, no control characters)`);
   if (v.tz !== undefined) {
     try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
   }

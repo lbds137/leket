@@ -59,6 +59,14 @@ test("file names: no title, no start time, a shared name, padding", () => {
   assert.match(files()[0].text, /^# untitled\n\nConversation: https:\/\/chatgpt\.com\/c\/c-null-0002\nCreated: \nUpdated: 1970-01-01T01:00:00Z\n/);
 });
 
+test("a title's * ? \" < > | become - in its file name", () => {
+  const ex = chatgptExports();
+  ex.flatMap((e) => e.conversations).find((c) => c.id === "c-pad-0005").title = 'Why? <a> "b" *c* |d|';
+  const names = plan(collect(ex)).map((f) => f.name);
+  assert.ok(names.some((n) => n.endsWith(" Why- -a- -b- -c- -d-.md")), names.join(", "));
+  assert.ok(!names.some((n) => /[*?"<>|]/.test(n)), names.join(", "));
+});
+
 test("a shared name is also caught case-blind and past a first suffix", () => {
   const c = (id, title) => ({ conversation_id: id, title, create_time: 1709651220, mapping: {}, current_node: null });
   const out = plan(collect([{ conversations: [c("aaaaaaaa-1", "Same"), c("aaaaaaaa-2", "same"), c("aaaaaaaa-3", "SAME")], names: {} }]));
@@ -133,11 +141,13 @@ test("stamp: whole seconds (dropped, not rounded), Z only in UTC, empty for no t
 
 test("safeTitle and badFolder keep names inside the output folder", () => {
   assert.equal(safeTitle("a/b\\c:d\x07e..."), "a-b-c-d-e");
+  // what Windows (and a FAT, exFAT or SMB disk) refuses in a name
+  assert.equal(safeTitle('a*b?c"d<e>f|g'), "a-b-c-d-e-f-g");
   assert.equal(safeTitle("..."), "untitled");
   const long = safeTitle("é".repeat(300));
   assert.ok(new TextEncoder().encode(long).length <= 200);
   assert.equal(long, "é".repeat(100));
-  for (const f of ["", "/abs", "a/../b", "..", "a//b", "a\\b", "c:x", "a/", "x\n"]) assert.ok(badFolder(f), JSON.stringify(f));
+  for (const f of ["", "/abs", "a/../b", "..", "a//b", "a\\b", "c:x", "a/", "x\n", "why?", "a/<b>"]) assert.ok(badFolder(f), JSON.stringify(f));
   for (const f of ["topic", "a/b", "occult stuff"]) assert.ok(!badFolder(f), f);
 });
 

@@ -43,7 +43,9 @@ export function parse(html) {
   const closeTo = (i) => { if (i > 0) stack.length = i; };
   const re = /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<![^>]*>?|<\?[^>]*>?|<\/([a-zA-Z][a-zA-Z0-9-]*)[^>]*>?|<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
   let at = 0;
-  const text = (s) => { if (s) top().children.push(decode(s)); };
+  // a NUL in text becomes U+FFFD (as a browser shows it): the converter marks breaks with NUL
+  const clean = (s) => decode(s).replace(/\u0000/g, "\uFFFD");
+  const text = (s) => { if (s) top().children.push(clean(s)); };
   for (let m; (m = re.exec(html));) {
     text(html.slice(at, m.index));
     at = re.lastIndex;
@@ -64,7 +66,7 @@ export function parse(html) {
       at = end < 0 ? html.length : at + end + html.slice(at + end).indexOf(">") + 1;
       re.lastIndex = at;
       const p = open("p"); if (p > 0) closeTo(p);
-      node.children.push(decode(body.replace(/<[^>]*>/g, "")));
+      node.children.push(clean(body.replace(/<[^>]*>/g, "")));
       top().children.push(node);
       continue;
     }
@@ -121,6 +123,9 @@ function textOf(n) {
 
 // http, https, mailto, or no scheme at all (a relative path, #fragment or ?query)
 const LINKABLE = /^(?:https?:|mailto:|[^:/?#]*(?:[/?#]|$))/i;
+// schemes that run or embed content: such a link keeps only its label. Browsers drop tabs,
+// newlines and leading controls inside a scheme ("java\nscript:"), so those go before the test.
+const SCRIPTED = /^(?:javascript|vbscript|data|file|blob):/i;
 
 function linkDest(href) {
   return /[\s()<>]/.test(href) ? `<${href.replace(/[<>\n]/g, (c) => encodeURIComponent(c))}>` : href;
@@ -128,7 +133,11 @@ function linkDest(href) {
 
 // Inline content → one string. Hard breaks come out as BR marks for the caller to turn
 // into a backslash line break (a paragraph) or a space (a heading or a table cell).
+// KEEP marks a code line whose trailing spaces htmlToMarkdown keeps. They share NUL, which
+// parse() never lets into text (it becomes U+FFFD there), and never meet: paragraph() and
+// oneLine() consume every BR before htmlToMarkdown looks for KEEP.
 const BR = "\u0000";
+const KEEP = "\u0000";
 function inline(nodes, ctx) {
   let out = "";
   // collapsed whitespace stays one space where two pieces meet (" " + " *em*")
@@ -150,13 +159,20 @@ function inline(nodes, ctx) {
       case "a": {
         const href = n.attrs.href || "";
         const label = inline(n.children, ctx);
-        // a link only to the web, mail or a relative path; any other scheme (javascript:,
-        // data:, vbscript:…) keeps just its label
-        if (!href || !LINKABLE.test(href.trim())) { add(label); break; }
-        if (textOf(n) === href && /^https?:\/\/[^\s<>]+$/.test(href)) { add(`<${href}>`); break; }
+        // a link only to the web, mail or a relative path; a scripted scheme (javascript:,
+        // data:, vbscript:…) keeps just its label, and any other (tel:, ftp:, sms:…) its
+        // label with the address after it as text
+        if (!href) { add(label); break; }
         // spaces and breaks at the label's ends go outside the brackets, as for **…**
         const lead = label.match(/^[ \u0000]*/)[0], trail = label.slice(lead.length).match(/[ \u0000]*$/)[0];
         const core = label.slice(lead.length, label.length - trail.length);
+        if (!LINKABLE.test(href.trim())) {
+          // the address as text, unless scripted or already the label
+          const addr = SCRIPTED.test(href.replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === href.trim() ? "" : escapeText(href.trim());
+          add(!addr ? label : `${lead}${core ? `${core} (${addr})` : addr}${trail}`);
+          break;
+        }
+        if (textOf(n) === href && /^https?:\/\/[^\s<>]+$/.test(href)) { add(`<${href}>`); break; }
         add(`${lead}[${core || escapeText(href)}](${linkDest(href)})${trail}`);
         break;
       }
@@ -227,8 +243,7 @@ function block(n, ctx) {
       return s ? s.split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n") : "";
     }
     case "pre": {
-      // a NUL in the text would read as KEEP below; the HTML parser shows it as U+FFFD too
-      const s = textOf(n).replace(/\u0000/g, "\uFFFD").replace(/^\n/, "").replace(/\n+$/, "");
+      const s = textOf(n).replace(/^\n/, "").replace(/\n+$/, "");
       if (!s.trim()) return ""; // only final newlines go: the last line keeps its trailing spaces too
       const fence = "`".repeat(Math.max(3, ...[...s.matchAll(/^ {0,3}(`{3,})/gm)].map((m) => m[1].length + 1)));
       // code keeps its trailing spaces: KEEP shields them from htmlToMarkdown's strip
@@ -271,7 +286,6 @@ function blocks(nodes, ctx, sep = "\n\n", flat = false) {
 
 // html → { md, unknown: { tag: count } }. Trailing spaces go from every line but a code
 // block's (marked KEEP).
-const KEEP = "\u0000";
 export function htmlToMarkdown(html) {
   const ctx = { unknown: Object.create(null) };
   const md = blocks(parse(html).children, ctx).split("\n")

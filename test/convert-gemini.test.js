@@ -50,6 +50,8 @@ test("names: oldest chat first, a shared name gets the id, non-Latin prompts kee
   ]);
   assert.equal(slug({ title: `Prompted ${"word ".repeat(20)}` }), "word ".repeat(11) + "word");
   assert.equal(slug({ title: "Prompted ???" }), "untitled");
+  // names keep only letters, digits and _ , ' ( ) -: nothing Windows refuses (* ? " < > |)
+  assert.equal(slug({ title: 'Prompted a*b?c"d<e>f|g' }), "a b c d e f g");
 });
 
 test("a chat added from a link, and a reply that was a malformed <pre>", () => {
@@ -204,6 +206,16 @@ test("a JSON file too large to read is passed over and named, in a zip or a fold
   mkdirSync(join(dir, "empty"));
   await assert.rejects(readGeminiExport(join(dir, "empty"), { skipped: shared, limit }), (e) => !/Records|passed over/.test(e.message));
   assert.equal(shared.length, 1);
+  // a read that throws ERR_STRING_TOO_LONG although the file's size passed the limit: that
+  // file is passed over and named too
+  const tooLong = async (p, enc) => {
+    if (p.endsWith("Records.json")) throw Object.assign(new Error("Cannot create a string longer than 0x1fffffe8 characters"), { code: "ERR_STRING_TOO_LONG" });
+    return readFileSync(p, enc);
+  };
+  const skipped = [];
+  assert.equal((await readGeminiExport(join(dir, "t"), { skipped, read: tooLong })).length, 1);
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0], /Records\.json \(0 MB\)$/);
 });
 
 test("CLI: no activity, a bad file, usage errors", () => {
