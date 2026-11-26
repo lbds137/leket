@@ -4,7 +4,7 @@ title: 'YouTube site: captions + comments with replies'
 status: Done
 assignee: []
 created_date: '2026-11-25T19:09:00Z'
-updated_date: '2026-11-26T03:43:00Z'
+updated_date: '2026-11-26T03:48:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -29,4 +29,6 @@ Correction to the 20:32 probe note (its stamp said ~20:35; date printed 20:32): 
 Probes 2, 11-25 20:41 (advisor round). Language: TED arj7oStGLkU has 49 tracks (48 manual + en asr); the panel opened in HEBREW (the agent profile's UI language picks the manual track) and offers NO language picker (controls: close, chapters/transcript chips, 'sync to video time'); this video rendered the panel in an A/B variant (target-id null, not engagement-panel-searchable-transcript): select segments, not the panel id. Segment children are locale-free: div.ytwTranscriptSegmentViewModelTimestamp, div.ytwTranscriptSegmentViewModelTimestampA11yLabel (localized), span.ytAttributedStringHost (text); chapter headings interleave. Panel does NOT follow the player CC track (CC set to en, panel still Hebrew). Player capture: movie_player.setOption('captions','track',{languageCode}) makes the player fetch /api/timedtext fmt=json3 WITH pot (reqs 351 en, 403 fr, 200), but an XHR hook saw 0-byte bodies (headless pot rejected? inferred, unverified). Comments end to end (nwHtAdyEAtQ): 90 threads + 31 reply view-models loaded vs header 97, continuation + 14 unexpanded reply buttons left, loop stalls in headless; header reconcile unreliable -> v1 uses a stall timeout + comments_note. chrome-devtools CLI times out long evaluate_script calls (client.js:120): start long in-page loops, then poll. Open: activeTab vs host permission (engineering, decide at build).
 
 Review (11-25 late): council gpt-6.2 on the driver fixes and Sonnet on the whole branch, all important findings applied (dd48c00, 25968f0). Version bump to 0.5.0 deliberate (driver-side, not the worker). Live-check items for the first real run, none smoke-provable: (1) does YouTube reuse one replies-continuation element per page (3 tries each); (2) comment line breaks as \n or <br> (both read); (3) header count mounted late (re-read at the end); (4) wall time on a large section vs the 15-min budget; (5) the video-changed and superseded stops (no smoke scenario: needs an in-site navigation mid-run); (6) the overlay stays after Done (spec allows; remove on a later pass if it annoys).
+
+Shipped in PR #179 (merged 63f161c) as 0.5.0. Review lows and all live-check items -> TASK-37; chosen transcript language -> TASK-36.
 <!-- SECTION:NOTES:END -->
