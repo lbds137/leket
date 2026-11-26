@@ -23,12 +23,16 @@ export async function zipEntries(path) {
     if (at < 0) throw new Error(`${path} is not a zip (no end record)`);
     const count = tail.readUInt16LE(at + 10), cdSize = tail.readUInt32LE(at + 12), cdOffset = tail.readUInt32LE(at + 16);
     if (count === 0xffff || cdOffset === 0xffffffff) throw new Error(`${path} is a zip64 archive, which this reader doesn't handle`);
+    const damaged = () => new Error(`${path}: its central directory is damaged`);
+    // checked before the allocation: a stray end-record signature in a non-zip can claim 4 GiB
+    if (cdOffset + cdSize > size - tailLen + at) throw damaged();
     const cd = Buffer.alloc(cdSize);
-    await fh.read(cd, 0, cdSize, cdOffset);
+    if ((await fh.read(cd, 0, cdSize, cdOffset)).bytesRead !== cdSize) throw damaged();
     const entries = [];
     for (let p = 0, n = 0; n < count; n++) {
-      if (p + 46 > cd.length || cd.readUInt32LE(p) !== CENTRAL) throw new Error(`${path}: its central directory is damaged`);
+      if (p + 46 > cd.length || cd.readUInt32LE(p) !== CENTRAL) throw damaged();
       const nameLen = cd.readUInt16LE(p + 28), extraLen = cd.readUInt16LE(p + 30), commentLen = cd.readUInt16LE(p + 32);
+      if (p + 46 + nameLen + extraLen + commentLen > cd.length) throw damaged();
       entries.push({
         name: cd.toString("utf8", p + 46, p + 46 + nameLen),
         method: cd.readUInt16LE(p + 10),
@@ -50,8 +54,8 @@ export async function readZipEntry(path, entry) {
   const fh = await open(path, "r");
   try {
     const head = Buffer.alloc(30);
-    await fh.read(head, 0, 30, entry.offset);
-    if (head.readUInt32LE(0) !== LOCAL) throw new Error(`${path}: ${entry.name}'s local header is missing`);
+    const { bytesRead: headRead } = await fh.read(head, 0, 30, entry.offset);
+    if (headRead !== 30 || head.readUInt32LE(0) !== LOCAL) throw new Error(`${path}: ${entry.name}'s local header is missing`);
     // the local header's own name and extra lengths, which can differ from the central copy's
     const start = entry.offset + 30 + head.readUInt16LE(26) + head.readUInt16LE(28);
     const raw = Buffer.alloc(entry.compressedSize);

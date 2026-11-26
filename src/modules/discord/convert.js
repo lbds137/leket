@@ -28,15 +28,15 @@ const squash = (s) => s.split(/\s+/).filter(Boolean).join(" ");
 // that a save with a forward's content replaces one where the forward came out empty.
 export function mergeSaves(saves) {
   if (!saves.length) throw new Error("no saves given");
-  const channel = saves[0].channel_id;
+  const channel = saves[0]?.channel_id;
   const messages = new Map();
   const people = new Map();
   const hidden = new Map();
   let reachedStart = false, guild = null, guildId = null, title = null;
   const since = [], extracted = [];
   for (const [i, d] of saves.entries()) {
+    if (!d || typeof d !== "object" || !Array.isArray(d.messages)) throw new Error(`save ${i + 1} has no messages list: not a Discord save`);
     if (d.channel_id !== channel) throw new Error(`save ${i + 1} is of channel ${d.channel_id}, not ${channel}: give saves of one conversation`);
-    if (!Array.isArray(d.messages)) throw new Error(`save ${i + 1} has no messages list: not a Discord save`);
     title = title || d.channel || null;
     guild = guild || d.guild_name || null;
     guildId = guildId || d.guild_id || null;

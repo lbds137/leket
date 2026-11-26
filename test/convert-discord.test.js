@@ -46,8 +46,10 @@ test("ids past 2^53 sort as BigInts, not Numbers", () => {
   const conv = mergeSaves(dmSaves());
   const last = conv.messages.slice(-2).map((m) => m.id);
   assert.deepEqual(last, [ids.a, ids.b]);
-  // "111" < "1234…" as a string but not as a number: the short id stays before them
-  assert.equal(conv.messages.at(-3).id, "111");
+  // "99" sorts after "1234…" as a string, before it as a number
+  const [d] = dmSaves();
+  const mixed = mergeSaves([{ ...d, messages: [ids.b, "99", ids.a].map((id) => ({ ...d.messages[0], id })) }]);
+  assert.deepEqual(mixed.messages.map((m) => m.id), ["99", ids.a, ids.b]);
 });
 
 test("merge: the first save's copy wins, except a forward's content beats an empty forward", () => {
@@ -108,12 +110,18 @@ test("hidden bars: largest count per kind across saves; unopened bars skipped; a
   assert.deepEqual(Object.fromEntries(conv.hidden), { blocked: { count: 2, uncounted: false }, ignored: { count: 1, uncounted: true } });
   const p = render(conv, { base: "c", timeZone: "UTC" }).find((f) => f.name === "c-participants.md").text;
   assert.match(p, /\(2 blocked, 1\+ ignored\)/);
+  // two opened bars of one kind in one save add up; the max is then taken across saves
+  const two = mergeSaves([{ ...a, hidden_groups: { groups: [{ kind: "blocked", count: 2 }, { kind: "blocked", count: 4 }] } }, b]);
+  assert.deepEqual(two.hidden.get("blocked"), { count: 6, uncounted: false });
 });
 
 test("refusals: saves of two conversations, a save with no messages list, no messages at all", () => {
   const [d] = dmSaves(), [c] = channelSaves();
   assert.throws(() => mergeSaves([d, c]), /save 2 is of channel 700, not 900/);
   assert.throws(() => mergeSaves([{ channel_id: "1" }]), /no messages list/);
+  // a non-save after a save is named as one, not as another channel; a null save doesn't crash
+  assert.throws(() => mergeSaves([d, {}]), /save 2 has no messages list/);
+  assert.throws(() => mergeSaves([null]), /save 1 has no messages list/);
   assert.throws(() => render(mergeSaves([{ ...d, messages: [] }]), { base: "x", timeZone: "UTC" }), /hold no messages/);
 });
 
@@ -178,7 +186,21 @@ test("CLI: a zip part without the save, and a damaged entry, write nothing and e
   r = leket(["convert", "discord", bad, "--out", join(dir, "o")]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /fails its checksum/);
-  assert.deepEqual(readdirSync(dir).sort(), ["bad.zip", "discord-general-700-part2-of-2.zip"]);
+  // a central directory cut inside an entry's name, and one claiming more bytes than the file has
+  const whole = Buffer.from(await (() => { const w = new ZipWriter(); w.add("discord-x-1.json", new TextEncoder().encode("{}")); return w.parts()[0]; })().arrayBuffer());
+  const eocd = whole.length - 22, cdSize = whole.readUInt32LE(eocd + 12), cdOffset = whole.readUInt32LE(eocd + 16);
+  const cut = Buffer.concat([whole.subarray(0, cdOffset + 50), whole.subarray(eocd)]);
+  cut.writeUInt32LE(50, cut.length - 22 + 12);
+  const huge = Buffer.from(whole);
+  huge.writeUInt32LE(0xfffffff0, eocd + 12);
+  assert.ok(cdSize > 50);
+  for (const [name, buf] of [["cut.zip", cut], ["huge.zip", huge]]) {
+    writeFileSync(join(dir, name), buf);
+    r = leket(["convert", "discord", join(dir, name), "--out", join(dir, "o")]);
+    assert.equal(r.status, 1, name);
+    assert.match(r.stderr, /central directory is damaged/, name);
+  }
+  assert.ok(!readdirSync(dir).includes("o"), "nothing written");
 });
 
 test("CLI: usage errors exit 2", () => {
