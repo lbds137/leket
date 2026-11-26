@@ -10,8 +10,10 @@ import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 
-import { guardedFetch, makeLookup } from "../src/lib/guarded-fetch.js";
+import { guardedFetch, LEKET_UA, makeLookup } from "../src/lib/guarded-fetch.js";
+import { fetchImageData } from "../src/modules/reddit/prepare.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -97,6 +99,41 @@ test("guardedFetch: a public answer is fetched as a Response; a redirect and a 2
     const empty = await guardedFetch(`${base}/none`, { lookup: direct, ca: tls.cert });
     assert.equal(empty.status, 204);
     assert.equal(empty.body, null);
+  } finally {
+    server.close();
+  }
+});
+
+test("guardedFetch: it says who it is and asks for the bytes as they are; a compressed answer is decoded, an unknown encoding refused", async () => {
+  const tls = certificate();
+  let asked;
+  const server = createServer(tls, (req, res) => {
+    asked = req.headers;
+    if (req.url === "/gz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" }); res.end(gzipSync(Buffer.from([4, 5, 6]))); }
+    else if (req.url === "/br.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "br" }); res.end(brotliCompressSync(Buffer.from([7, 8]))); }
+    else if (req.url === "/zz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "zz" }); res.end("??"); }
+    else { res.writeHead(200, { "content-type": "image/png" }); res.end(Buffer.from([1])); }
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
+  const base = `https://img.example:${server.address().port}`;
+  try {
+    await (await guardedFetch(`${base}/a.png`, { lookup: direct, ca: tls.cert })).arrayBuffer();
+    // some hosts answer a request with no User-Agent with 403
+    assert.equal(asked["user-agent"], LEKET_UA);
+    assert.equal(asked["accept-encoding"], "identity");
+    assert.equal(asked.accept, "*/*");
+    const gz = await guardedFetch(`${base}/gz.png`, { lookup: direct, ca: tls.cert });
+    assert.deepEqual(new Uint8Array(await gz.arrayBuffer()), new Uint8Array([4, 5, 6]));
+    assert.equal(gz.headers.get("content-encoding"), null, "the headers describe the decoded bytes");
+    const br = await guardedFetch(`${base}/br.png`, { lookup: direct, ca: tls.cert });
+    assert.deepEqual(new Uint8Array(await br.arrayBuffer()), new Uint8Array([7, 8]));
+    await assert.rejects(guardedFetch(`${base}/zz.png`, { lookup: direct, ca: tls.cert }),
+      (e) => e.code === "EENCODING" && /not fetched: the server sent it encoded as zz/.test(e.message));
+    // fetchImageData passes that refusal on as its own reason, not "couldn't reach it"
+    const viaImage = (url, opts) => guardedFetch(url, { ...opts, lookup: direct, ca: tls.cert });
+    await assert.rejects(fetchImageData({ n: 1, u: `${base}/zz.png`, ext: "" }, { fetch: viaImage }),
+      { message: "not fetched: the server sent it encoded as zz" });
   } finally {
     server.close();
   }

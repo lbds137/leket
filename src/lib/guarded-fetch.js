@@ -8,6 +8,7 @@
 import dns from "node:dns";
 import { request } from "node:https";
 import { Readable } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 
 import { isPrivateHost } from "../modules/reddit/prepare.js";
 
@@ -36,6 +37,15 @@ export function makeLookup(resolve = (...a) => dns.lookup(...a)) {
 
 const NO_BODY = new Set([204, 205, 304]);
 
+// who is asking, sent on every request (reddit's JSON fetch too): some image hosts
+// (Wikimedia, for one) answer a request that has no User-Agent with 403
+export const LEKET_UA = "leket (personal archiving; https://github.com/lbds137/leket)";
+
+// https.request decodes nothing, so the request asks for the bytes as they are; a server
+// that compresses anyway is decoded here, as fetch would, and an encoding with no decoder
+// is refused rather than saved as a picture that won't open
+const DECODERS = { gzip: createGunzip, "x-gzip": createGunzip, deflate: createInflate, br: createBrotliDecompress };
+
 // fetch(url, { signal, headers }) for one https GET; credentials and redirect options
 // are accepted and need nothing (no cookies here, no redirect is ever followed). `lookup`
 // and `ca` are for tests: a stand-in DNS answer, and a test server's own certificate.
@@ -46,11 +56,29 @@ export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(),
     if (isPrivateHost(host)) {
       return reject(Object.assign(new Error(`not fetched: ${host} is a local or private-network address`), { code: "EPRIVATEADDR" }));
     }
-    const req = request(url, { method: "GET", headers, signal, lookup, ...(ca ? { ca } : {}) }, (res) => {
+    const sent = { "user-agent": LEKET_UA, accept: "*/*", "accept-encoding": "identity", ...headers };
+    const req = request(url, { method: "GET", headers: sent, signal, lookup, ...(ca ? { ca } : {}) }, (res) => {
       try {
         const h = new Headers();
         for (const [k, v] of Object.entries(res.headers)) for (const x of [].concat(v)) h.append(k, x);
-        const body = NO_BODY.has(res.statusCode) ? (res.resume(), null) : Readable.toWeb(res);
+        let body = null;
+        if (NO_BODY.has(res.statusCode)) res.resume();
+        else {
+          const coding = String(res.headers["content-encoding"] || "identity").trim().toLowerCase();
+          if (coding === "identity") body = Readable.toWeb(res);
+          else if (DECODERS[coding]) {
+            const decoded = res.pipe(DECODERS[coding]());
+            // a reset upstream fails the read, as a damaged stream does
+            res.on("error", (e) => decoded.destroy(e));
+            body = Readable.toWeb(decoded);
+            // the headers now describe the decoded bytes
+            h.delete("content-encoding");
+            h.delete("content-length");
+          } else {
+            res.destroy();
+            return reject(Object.assign(new Error(`not fetched: the server sent it encoded as ${coding}`), { code: "EENCODING" }));
+          }
+        }
         resolve(new Response(body, { status: res.statusCode, headers: h }));
       } catch (e) {
         res.destroy();

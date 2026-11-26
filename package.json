@@ -1,6 +1,6 @@
 {
   "name": "leket",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "private": true,
   "description": "A Chrome extension that saves Discord and Messenger conversations with their attachments, Etsy conversations, Reddit posts, claude.ai sessions, Replika chats and YouTube transcripts and comments as files you keep.",
   "type": "module",

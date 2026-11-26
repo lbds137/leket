@@ -267,7 +267,9 @@ test("unzip: a deflated entry inflating past its declared size is refused (infla
   assert.equal(py.status, 0, py.stderr);
   const buf = readFileSync(zip);
   const cd = buf.readUInt32LE(buf.length - 22 + 16);
-  for (const declared of [10, 0]) {
+  // 99999: one byte short, so inflate (capped at declared + 1) finishes and the length
+  // check itself refuses it, not the checksum
+  for (const declared of [10, 0, 99999]) {
     buf.writeUInt32LE(declared, cd + 24);
     writeFileSync(zip, buf);
     const [entry] = await zipEntries(zip);
@@ -296,12 +298,23 @@ test("CLI: a save entry named with a backslash is refused unless --base names th
   assert.deepEqual(readdirSync(out), ["fox.md"]);
 });
 
+test("CLI: a save entry named with a colon (an NTFS stream or a drive) is refused too", async () => {
+  const dir = tmp(), out = join(dir, "o");
+  const path = join(dir, "colon.zip");
+  writeFileSync(path, await zipOf("a:x.json", new TextEncoder().encode(JSON.stringify(dmSaves()[0]))));
+  const r = leket(["convert", "discord", path, "--out", out, "--tz", "UTC"]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /the save in .*colon\.zip is named "a:x", which isn't a file name; give --base NAME; nothing written/);
+  assert.deepEqual(readdirSync(dir), ["colon.zip"]);
+});
+
 test("CLI: usage errors exit 2", () => {
   for (const [args, msg] of [
     [["convert", "discord", "x.json", "--by", "week"], /--by takes none, year or month/],
     [["convert", "discord", "x.json", "--tz", "Mars/Olympus"], /unknown time zone Mars\/Olympus/],
     [["convert", "discord", "x.json", "--name", "=F"], /--name takes USERNAME=LABEL/],
     [["convert", "discord", "x.json", "--base", "a/b"], /--base takes a file name/],
+    [["convert", "discord", "x.json", "--base", "a:b"], /--base takes a file name, not a path \(no \/ \\ or :\)/],
     [["convert", "discord"], /usage: leket convert discord/],
     [["convert", "slack", "x.json"], /usage: leket convert discord/],
   ]) {
