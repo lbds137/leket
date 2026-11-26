@@ -20,8 +20,10 @@
 
 const NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 const REPLACEMENT = String.fromCharCode(0xfffd);
-const ATTR = /[\t\n\r ]*([^\t\n\r =/>"'<]+)[\t\n\r ]*=[\t\n\r ]*(?:"([^"]*)"|'([^']*)')/y;
-const NAME = /^<([^\t\n\r />]+)/;
+// each attribute follows whitespace, as XML requires (a="1"b="2" is malformed)
+const ATTR = /[\t\n\r ]+([^\t\n\r =/>"'<&]+)[\t\n\r ]*=[\t\n\r ]*(?:"([^"]*)"|'([^']*)')/y;
+// a name ends at whitespace, "/" or ">"; any other character there (<, =, a quote) is malformed
+const NAME = /^<([^\t\n\r />="'<&]+)(?=[\t\n\r />])/;
 
 const allowed = (c) => c === 0x9 || c === 0xa || c === 0xd || (c >= 0x20 && c <= 0xd7ff)
   || (c >= 0xe000 && c <= 0xfffd) || (c >= 0x10000 && c <= 0x10ffff);
@@ -68,7 +70,7 @@ export function attrValue(raw) {
 // A start tag's text ("<name a="1" b='2'>" or ".../>") → { name, attrs, empty }
 export function parseTag(tag) {
   const n = NAME.exec(tag);
-  if (!n) throw new Error(`a tag with no name: ${JSON.stringify(tag.slice(0, 40))}`);
+  if (!n) throw new Error(`a malformed tag: ${JSON.stringify(tag.slice(0, 40))}`);
   const empty = tag.endsWith("/>");
   const stop = tag.length - (empty ? 2 : 1);
   const attrs = Object.create(null);
@@ -132,6 +134,7 @@ export function reader(want, onElement) {
       const c = s[i];
       if (c === '"' || c === "'") quote = c;
       else if (c === ">") return { end: i, quote: "" };
+      else if (c === "<") throw new Error("a < inside a tag (a tag cut off?)");
       i++;
     }
     return { end: -1, quote };
@@ -168,14 +171,18 @@ export function reader(want, onElement) {
         if (end === -1) return;
         buf = buf.slice(end + 3);
       } else if (buf.startsWith("<![CDATA[")) {
+        if (!stack.length) throw new Error("CDATA outside the document's element");
         end = buf.indexOf("]]>", 9);
         if (end === -1) return;
         buf = buf.slice(end + 3);
-      } else if (buf.startsWith("<!")) {
+      } else if (buf.startsWith("<!DOCTYPE")) {
+        if (rootSeen) throw new Error("a DOCTYPE after the document's element began");
         end = buf.indexOf(">");
         if (end === -1) return;
         if (buf.slice(0, end).includes("[")) throw new Error("a DOCTYPE with an internal subset (not a phone backup)");
         buf = buf.slice(end + 1);
+      } else if (buf.startsWith("<!")) {
+        throw new Error(`a malformed declaration: ${JSON.stringify(buf.slice(0, 20))}`);
       } else if (buf.startsWith("</")) {
         end = buf.indexOf(">");
         if (end === -1) return;
