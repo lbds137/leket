@@ -4,7 +4,7 @@ title: 'YouTube module: PR #179 review lows'
 status: To Do
 assignee: []
 created_date: '2026-11-26T03:43:00Z'
-updated_date: '2026-11-26T06:22:00Z'
+updated_date: '2026-11-26T09:01:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -27,4 +27,6 @@ Items 1-3, 5-7 DONE (branch task-37-youtube-lows, 0.6.6): (1) duplicated onLate 
 Council review (openai/gpt-5.5; agy at its week cap, z.ai never reviews Claude work) of fd893ef: no blockers; token races, TDZ and the smoke checks judged sound. Applied: runToken set before say (no TDZ trap for a future early say) with an owned() helper. Ruled out: a Symbol/UUID token (a Math.random collision between two runs on one tab is not a real risk); guarding the detached transcriptLine write (harmless on a detached node).
 
 #189 claude-review (PASS, 3 lows): (2) smoke overlay read raced the 6 s linger: lines now polled from the run's start (overlayDone) [decided, test-only]; (3) youtube-old checks the overlay and runs under emulated prefers-reduced-motion, asserting the panel goes with no opacity fade (red-first: disabling the reduced-motion branch fails it). (1) a stop during the transcript wait leaves the overlay line saying 'YouTube shows no transcript' (only reachable on video-changed in the first ~15 s; time can't fire there, superseded and video-changed save nothing): user-visible wording, asked of Lila 11-26.
+
+#191 merged (claude-review PASS, one low: pending overlay promise could be an unhandled rejection; fixed in overlayDone with a no-op catch). Finding 1, Lila 11-26 picked 'Transcript: not read': when a stop cuts the transcript wait, the overlay says 'Transcript: not read (the save stopped).' and transcript_note 'Not read: the save stopped before the transcript loaded.'; also found in the new run: after a stop the comments/replies phases still printed their opening lines though their loops never ran, now gated on aborted. New smoke youtube-moves (no transcript section, pushState mid-wait) covers the video-changed stop, which closes live-check (d) for video-changed (superseded mid-run still has no scenario). Red-first: main's driver fails youtube-moves's overlay check. 0.6.7.
 <!-- SECTION:NOTES:END -->

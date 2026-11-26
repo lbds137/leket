@@ -155,9 +155,12 @@ const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
 // continuation button that adds the second. Every name is invented. The same page at
 // YOUTUBE_WATCH_OLD serves the older A/B instead: ytd-transcript-segment-renderer
 // segments, and replies with no lc= link whose continuation re-renders the first reply
-// beside the second, so the reply dedup falls back to author+text.
+// beside the second, so the reply dedup falls back to author+text. At YOUTUBE_WATCH_MOVES
+// the page has no transcript section, and the scenario moves the tab to another video
+// while the driver waits for one.
 const YOUTUBE_WATCH = "https://www.youtube.com/watch?v=SmokeVid001";
 const YOUTUBE_WATCH_OLD = "https://www.youtube.com/watch?v=SmokeVid002";
+const YOUTUBE_WATCH_MOVES = "https://www.youtube.com/watch?v=SmokeVid003";
 const youtubePage = `<!doctype html><html lang="en"><head><title>Smoke test video - YouTube</title></head><body>
 <ytd-watch-metadata><h1>Smoke test video</h1><ytd-channel-name><a href="/@example">Example Channel</a></ytd-channel-name></ytd-watch-metadata>
 <div id="description-inline-expander"><button id="expand">...more</button>
@@ -263,6 +266,10 @@ on two lines</span>
     nested.appendChild(b);
     box.appendChild(nested);
   });
+  // YOUTUBE_WATCH_MOVES: a video with no transcript section, so the driver waits for one
+  if (new URLSearchParams(location.search).get("v") === "SmokeVid003") {
+    document.querySelector("ytd-video-description-transcript-section-renderer").remove();
+  }
 })();
 </script>
 </body></html>`;
@@ -400,6 +407,7 @@ const WEB = new Map([
   [MESSENGER_COLLECTOR_URL, { type: "text/html", body: messengerCollectorPage }],
   [YOUTUBE_WATCH, { type: "text/html", body: youtubePage }],
   [YOUTUBE_WATCH_OLD, { type: "text/html", body: youtubePage }],
+  [YOUTUBE_WATCH_MOVES, { type: "text/html", body: youtubePage }],
   [REPLIKA_HOME, { type: "text/html", body: replikaPage }],
   // the diary: the list (newest first), the empty page after the oldest date, then each
   // day; the older day carries one picture, whose sign call is the fake below
@@ -1123,12 +1131,19 @@ async function scenarios(cdp, downloads) {
   // scrolls the comments open and the replies out, and the page saves the Markdown
   // with its JSON alongside ----
   // the driver's corner panel on the video tab, watched from the start of the run: its
-  // lines as soon as the last one is Done (the panel fades 6 s later, possibly before the
-  // page says Saved), or null
-  const overlayDone = (sessionId) => waitFor(() => evalIn(sessionId, `(() => {
-    const p = document.getElementById("leket-youtube-panel");
-    const lines = p ? [...p.children].map((c) => c.textContent) : [];
-    return /^Done: /.test(lines[lines.length - 1] || "") && lines; })()`), "the overlay's Done line", 30000).catch(soft(() => null));
+  // lines as soon as the last one is the run's end (Done, or the stop's line passed as
+  // `last`; the panel fades 6 s later, possibly before the page's end line), or null
+  const overlayDone = (sessionId, last = "^Done: ") => {
+    const lines = waitFor(() => evalIn(sessionId, `(() => {
+      const p = document.getElementById("leket-youtube-panel");
+      const lines = p ? [...p.children].map((c) => c.textContent) : [];
+      return new RegExp(${JSON.stringify(last)}).test(lines[lines.length - 1] || "") && lines; })()`),
+    "the overlay's end line", 30000).catch(soft(() => null));
+    // handled here too: a fatal error while the scenario awaits something else first
+    // would otherwise be an unhandled rejection; the scenario's own await still sees it
+    lines.catch(() => {});
+    return lines;
+  };
   await scenario("youtube", async () => {
     console.log("smoke: youtube save");
     const video = await open(YOUTUBE_WATCH);
@@ -1210,6 +1225,31 @@ async function scenarios(cdp, downloads) {
     const thread = saved.comments.find((c) => c.likes_numeric === 1200);
     check(!!thread && JSON.stringify(thread.replies.map((r) => r.text)) === JSON.stringify(["the first reply", "the second reply"]),
       `youtube-old: a re-rendered reply without an lc= id is kept once (${thread ? JSON.stringify(thread.replies.map((r) => r.text)) : "thread not found"})`);
+  });
+
+  // ---- youtube, the tab moves to another video while the driver waits for a
+  // transcript section: the overlay says the transcript was not read (not that the
+  // video has none), the run stops, and nothing is saved ----
+  await scenario("youtube-moves", async () => {
+    console.log("smoke: youtube save, the tab moves mid-run");
+    const video = await open(YOUTUBE_WATCH_MOVES);
+    await clickPopup("Save transcript and comments");
+    const overlay = overlayDone(video.sessionId, "^Stopped: ");
+    const yp = (await target((s) => s.type === "page" && /\/src\/modules\/youtube\/page\.html\?tab=\d+$/.test(s.url), "the youtube page (with its tab id)")).sessionId;
+    await wired(yp, "run", "youtube-moves");
+    // an in-site navigation, as autoplay or a clicked recommendation makes it
+    await waitFor(() => evalIn(video.sessionId, `(() => { const p = document.getElementById("leket-youtube-panel");
+      return !!p && p.textContent.includes("Opening the transcript"); })()`), "the overlay's transcript line", 15000);
+    await evalIn(video.sessionId, `history.pushState(null, "", "/watch?v=SmokeVid004")`);
+    const end = await waitFor(() => evalIn(yp, `(() => { const p = document.getElementById("status");
+      return !p.hidden && (p.textContent.startsWith("Saved ") || p.className === "warn") && p.textContent; })()`),
+    "the youtube page's end line", 30000).catch(soft((e) => e.message));
+    check(end.startsWith("The YouTube tab moved to another video"), `youtube-moves: the page says the tab moved and saved nothing (it said: ${end})`);
+    const lines = await overlay;
+    check(JSON.stringify(lines) === JSON.stringify(["Transcript: not read (the save stopped).", "Stopped: the tab moved to another video."]),
+      `youtube-moves: the overlay says the transcript was not read, then why the run stopped, and narrates no phase it skipped (${JSON.stringify(lines)})`);
+    const mine = landed().filter((f) => f.startsWith(baseName("Smoke test video", "SmokeVid003")));
+    check(mine.length === 0, `youtube-moves: no file saved (found: ${mine.join(", ")})`);
   });
 
   // ---- replika: popup -> the module's page -> the localStorage probe on the matched tab,
