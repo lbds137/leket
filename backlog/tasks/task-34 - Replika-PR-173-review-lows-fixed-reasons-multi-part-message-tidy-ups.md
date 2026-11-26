@@ -1,10 +1,10 @@
 ---
 id: TASK-34
 title: 'Replika: PR #173 review lows (fixed reasons, multi-part message, tidy-ups)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-25T23:56:00Z'
-updated_date: '2026-11-26T00:34:00Z'
+updated_date: '2026-11-26T00:43:00Z'
 labels:
   - replika
 dependencies: []
@@ -37,4 +37,6 @@ From the step-3 diary migration (08db06d) and its cross-family review (council c
 
 - Deferred (2026-11-25, TASK-34 unit): the multi-part download-failure message in src/modules/replika/page.js has no test. page.js is not reachable from node tests, and a smoke check needs a multi-part zip plus a refused download. Trigger: the next smoke work on the Replika page, or any report of a multi-part save failing.
 - Deferred to the live run: a per-file media byte cap and a redirect/final-host check. Trigger: the live run names the media host.
+
+- Shipped in PR #175 (merged 4ef2a51): items 4, 5, 7, 8, 9, the wording, the tally nesting and the page-cap reason. Deferred, with triggers above: the multi-part message test, and the media byte cap with the final-host check.
 <!-- SECTION:NOTES:END -->

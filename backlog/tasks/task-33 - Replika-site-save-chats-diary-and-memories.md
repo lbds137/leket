@@ -4,7 +4,7 @@ title: 'Replika site: save chats, diary and memories'
 status: To Do
 assignee: []
 created_date: '2026-11-25T19:49:00Z'
-updated_date: '2026-11-25T23:56:00Z'
+updated_date: '2026-11-26T00:43:00Z'
 labels:
   - replika
   - needs-lila
@@ -39,6 +39,7 @@ Step 3, the live run, is hands-off for the account owner: signing in once, in th
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:NOTES:BEGIN -->
 Step 1, prior-art evaluation (2026-11-25). The licenses come from the AMO API (`/api/v5/addons/addon/<slug>/`); behaviour comes from reading each add-on's XPI (downloaded to session scratch, not kept).
 
 | | Firefox "Replika Chat Export" (v1.0.0, 2024-10-15) | Firefox "replika-export" (v12025.1.19, 2025-01-20) | Chrome "Replika Export: Chat, Diary, Memory" |
@@ -52,7 +53,7 @@ The Chrome item, from its store listing only (fetched 2026-11-25): it says "Expo
 How the two readable add-ons work. The endpoints below were read from the free add-on's `api.js`. A grep for URLs over the paid add-on's `bg.js` and `main.js` found the same diary, memory, image and WebSocket endpoints; its auth handling wasn't read in its minified form.
 - Auth: the signed-in web app keeps `auth` (userId, deviceId, authToken), `ws` (chatId) and `profile` (user first name, bot name) in my.replika.com localStorage. REST calls send `x-user-id`, `x-auth-token`, `x-device-id` and `x-timestamp-hash` (an MD5 of a fixed prefix plus the device id).
 - Chat: WebSocket `wss://ws.replika.com/v17`, `event_name: "history"` with `{chat_id, limit, last_message_id}`, paged backwards from the oldest id of each batch until a batch comes back empty.
-- Diary: `GET my.replika.com/api/mobile/1.4/saved_chat_items/previews?t=diary&offset&limit=100` until empty, then one `POST .../saved_chat_items/actions/get_by_ids` with every id.
+- Diary: `GET my.replika.com/api/mobile/1.4/saved_chat_items/previews?t=diary&offset&limit=100` until empty, then one `POST .../saved_chat_items/actions/get_by_ids` with every id. (2024–25 add-on code; this endpoint answers 404 since the live probe of 2026-11-25, and the module now uses `1.5/diaries`, see below)
 - Memories: `GET my.replika.ai/api/mobile/1.4/memory` (`facts`) plus `GET .../1.5/memory/v3/` (`customer_facts`, `robot_facts`).
 - Images: `POST my.replika.ai/api/mobile/1.5/images/signed/actions/get_url`, then a fetch of the signed URL.
 
@@ -88,3 +89,10 @@ Step 2 follow-ups for the live run (Step 3):
   - Shapes (second probe): `diaries?limit=N&until=D` answers the days strictly before D, newest first. `diaries/<date>` answers `{date, entries[{id, diary_id, text, timestamp, read, image_count, images[{url, blurred, is_romantic}]}]}`; image urls are on `s3-us-west-1.amazonaws.com` (signed or not: untested). memory/v3 facts carry `id, text, creation_timestamp, read, is_user_edited` (+ `category_id` on customer facts).
   - Loading the unpacked extension into the agent Chrome needs deck-agent-chrome support (the CLI's Extensions category is off and Chrome lacks `--enable-unsafe-extension-debugging`): asked of Deck.
 - Version: Step 2 (PR #173) leaves manifest/package at 0.4.0; the Step 3 PR that completes the module bumps to 0.5.0 with its release notes (as 0.4.0 did for Messenger, 48cf7ba).<!-- SECTION:NOTES:END -->
+
+- PR #175 (merged 4ef2a51) review lows, for the live-run PR:
+  - (1) `counts.diary` counts days, but the end line says "diary entries". Count the entries across the day records (Chats asked for entry counts), or label it as days.
+  - (2) `readDiary` returns at the first failed or mismatched day, which drops every newer day. Skip the bad day, mark the step partial and go on. Decide from how often a day call fails in the live run.
+  - (3) The day fetches have no pause between them. Add a short rest like the media step's `pause`.
+  - (5) The multi-part message test is already deferred in TASK-34.
+<!-- SECTION:NOTES:END -->
