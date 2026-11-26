@@ -755,14 +755,19 @@ if (import.meta.url === invokedAs) {
   // a reader that stops early (leket reddit --file - | head) closes the pipe: stop
   // quietly with 141, as a program killed by SIGPIPE does, instead of a stack trace. It
   // ends as usual rather than by process.exit, so cleanup in finally blocks (youtube's
-  // temporary folder) still runs; writes after the close are dropped.
-  let piped = false;
+  // temporary folder) still runs; writes after the close are dropped. A failure's own
+  // code (1, 3) wins over 141: the close may come before or after main settles.
+  let piped = false, failed = false;
   process.stdout.on("error", (e) => {
     if (e.code !== "EPIPE" && !piped) throw e;
     piped = true;
-    process.exitCode = 141;
+    if (!failed) process.exitCode = 141;
   });
-  main(process.argv.slice(2)).then((code) => { process.exitCode = piped ? 141 : code; }, (e) => {
+  main(process.argv.slice(2)).then((code) => {
+    failed = code !== 0;
+    process.exitCode = failed ? code : piped ? 141 : 0;
+  }, (e) => {
+    failed = true;
     process.stderr.write(`leket: ${(e && e.stack) || e}\n`);
     process.exitCode = 1;
   });
