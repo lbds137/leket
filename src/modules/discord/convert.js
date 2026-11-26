@@ -102,7 +102,7 @@ export function mergeSaves(saves) {
 }
 
 // a time zone's local parts for an ISO instant
-function clock(timeZone) {
+export function clock(timeZone) {
   const f = new Intl.DateTimeFormat("en-US", {
     timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", weekday: "short",

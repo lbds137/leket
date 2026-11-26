@@ -74,6 +74,27 @@ test("AskUserQuestion: the text before it, the question and options, then the an
     ["user", "*(answering the question)*\n\nThe user declined to answer"],
     ["assistant", "Blue it is."],
   ]);
+  assert.deepEqual(s.turns.map((t) => !!t.answer), [false, false, true, false, true, false, true, false]);
+});
+
+test("two questions answered in one record: its answers go to the first, the second keeps its own text", () => {
+  const s = run([
+    prompt(0, "Ask twice"),
+    reply(1, ask("q1", [{ question: "A?", options: [] }]), ask("q2", [{ question: "B?", options: [] }])),
+    { ...base(2), type: "user", toolUseResult: { answers: { "A?": "yes" } },
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "q1", content: "x" }, { type: "tool_result", tool_use_id: "q2", content: "skipped" }] } },
+  ]);
+  assert.deepEqual(shape(s).filter(([r]) => r === "user").slice(1), [
+    ["user", "*(answering the question)*\n\nA? → **yes**"],
+    ["user", "*(answering the question)*\n\nskipped"],
+  ]);
+});
+
+test("plan: a session whose only turn from the person is an answer is kept, untitled", () => {
+  const s = run([reply(0, ask("q1", [{ question: "Go?", options: [] }])), result(1, "q1", "x", { toolUseResult: { answers: { "Go?": "yes" } } })]);
+  const { files, stats } = plan([{ ...s, id: "sess-0009", source: "s.jsonl" }]);
+  assert.deepEqual(files.map((f) => f.name), ["2024-03-05 Untitled session.md"]);
+  assert.equal(stats.sessions, 1);
 });
 
 test("an answer recorded as blocks is their text; an unrelated tool's output neither shows nor ends the reply", () => {
@@ -130,8 +151,11 @@ test("titleOf: the session's name, else the start of its first prompt, cut at a 
   assert.equal(titleOf({ title: "", turns: [{ role: "user", text: `${long}\n\nmore` }] }), "Please help me rename every file in the photos folder so…");
   assert.equal(titleOf({ title: " ", turns: [{ role: "user", text: "Short\none" }] }), "Short one");
   assert.equal(titleOf({ title: "", turns: [{ role: "assistant", text: "x" }] }), "Untitled session");
-  // an answer isn't a prompt: the first prompt names the session
-  assert.equal(titleOf({ title: "", turns: [{ role: "user", text: "*(answering the question)*\n\nQ → **A**" }, { role: "user", text: "Real start" }] }), "Real start");
+  // an answer isn't a prompt: the first prompt names the session, even one typed to look
+  // like an answer; a session of only answers is untitled
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", answer: true, text: "*(answering the question)*\n\nQ → **A**" }, { role: "user", text: "Real start" }] }), "Real start");
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", text: "*(answering myself)* ok" }] }), "*(answering myself)* ok");
+  assert.equal(titleOf({ title: "", turns: [{ role: "user", answer: true, text: "*(answering the question)*\n\nQ → **A**" }] }), "Untitled session");
   // no space past the 30th character: cut at 60 code points, an emoji kept whole
   const smile = String.fromCodePoint(0x1f600);
   assert.equal(titleOf({ title: "", turns: [{ role: "user", text: `${"a".repeat(59)}${smile}b` }] }), `${"a".repeat(59)}${smile}…`);
@@ -198,6 +222,11 @@ test("CLI: a folder's top-level transcripts become one file each; the summary na
   const j = leket(["convert", "claude-code", join(src, "sess-0001-aaaa.jsonl"), "--out", out, "--json"]);
   assert.equal(j.status, 0, j.stderr);
   assert.equal(JSON.parse(readFileSync(join(out, "2024-03-05 Hello there.json"), "utf8")).turns.length, 2);
+  // a transcript given both itself and in its folder is read once
+  const twice = leket(["convert", "claude-code", join(src, "sess-0001-aaaa.jsonl"), src, "--out", join(d, "twice")]);
+  assert.equal(twice.status, 0, twice.stderr);
+  assert.deepEqual(readdirSync(join(d, "twice")), ["2024-03-05 Hello there.md"]);
+  assert.match(twice.stderr, /1 sessions, 2 messages/);
 });
 
 test("reader: lines end at \\n only, a CRLF's \\r goes, and the file name is the id when no record has one", async () => {

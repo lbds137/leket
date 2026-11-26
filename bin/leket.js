@@ -9,7 +9,8 @@
 // Takeout's Gemini activity (src/convert/gemini.js), and `leket convert character-chat
 // <export>…` for a character-chat site's JSON export (src/convert/character-chat.js), and
 // `leket convert claude-code <transcript>…` for Claude Code's session transcripts
-// (src/convert/claude-code.js).
+// (src/convert/claude-code.js), and `leket convert sms <backup.xml>` for an SMS Backup &
+// Restore backup (src/convert/sms.js).
 // `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
@@ -24,7 +25,8 @@
 // could be written (the notes in the files and on stderr say which).
 import { constants as bufferConstants } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
-import { constants, createReadStream, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { constants, createReadStream, realpathSync, writeFileSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -40,6 +42,7 @@ import { badFolder } from "../src/convert/common.js";
 import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
 import { collect as collectCharacterChat, plan as planCharacterChat } from "../src/convert/character-chat.js";
 import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert/claude-code.js";
+import { digits as smsDigits, keyOf as smsKey, messages as smsMessages, plan as planSms } from "../src/convert/sms.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -157,8 +160,34 @@ usage: leket convert claude-code <transcript>... [--out DIR] [--user LABEL]
   --tz ZONE          the zone times are shown in, e.g. Europe/Paris (default UTC)
   --json             write each session's turns as "YYYY-MM-DD Title.json" instead: id,
                      source, title, turns [{ at (the transcript's UTC time), role (user or
-                     assistant), text (Markdown) }]
-  Exit: as for chatgpt.`;
+                     assistant), answer (true on an answer to a question), text (Markdown) }]
+  Exit: as for chatgpt.
+
+usage: leket convert sms <backup.xml> [--out DIR] [--me LABEL] [--name NUMBER=LABEL]...
+         [--tz ZONE] [--number NUMBER [--title TEXT] [--base NAME]] [--groups] [--media DIR]
+
+  Turns an SMS Backup & Restore backup (the Android app's sms-*.xml) into one Markdown
+  file per conversation, SMS and MMS together, in the shape convert discord writes.
+  A conversation is the other number's last 10 digits. Group MMS (more than one other
+  number) are left out and counted unless --groups is given.
+  Writes "sms-Name.md" into DIR (default: the current directory), replacing earlier
+  files of that name; two that would share a name get the number's last digits added.
+  --me LABEL      the backup owner's name in the transcripts (default Me)
+  --name N=LABEL  show the number N as LABEL (repeatable; default: the backup's contact
+                  name, else "…" and the number's last 4 digits)
+  --tz ZONE       the zone times are shown in, e.g. Europe/Paris (default UTC)
+  --number N      only the conversation with N (its last 10 digits are compared); with
+                  --groups, group messages that include N go into it, marked
+  --title TEXT    with --number: the heading (default "Texts with Name")
+  --base NAME     with --number: the file's name (NAME.md)
+  --groups        keep group MMS, each message marked with its sender and the group;
+                  without --number, each group is its own conversation
+  --media DIR     save MMS pictures, audio and video into DIR as they are read (named as
+                  the transcript's [attachment: ...] lines name them), and list them in
+                  DIR/attachments.tsv (file, size, md5). A backup that turns out unreadable
+                  partway leaves the files saved before then; no transcript is written.
+  Exit: 0 written; 1 the backup couldn't be read or matched no message (no transcript
+  written), or a write failed (the message says how many files were written); 2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -771,10 +800,8 @@ async function convertCharacterChatMain(args) {
   if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
-  for (const k of ["user", "site"]) if (v[k] !== undefined && (!v[k].trim() || /[\r\n]/.test(v[k]))) return fail(`--${k} takes a one-line label`);
-  if (v.tz !== undefined) {
-    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
-  }
+  const bad = convertOptionError(v, ["user", "site"]);
+  if (bad) return fail(bad);
   return convertCharacterChat(positionals, { out: v.out, user: v.user, site: v.site, tz: v.tz });
 }
 
@@ -808,8 +835,10 @@ export async function readClaudeCodeSessions(paths) {
       files.push(...names.map((n) => join(p, n)));
     } else files.push(p);
   }
+  // a transcript given twice (itself and in its folder) is read once
+  const seen = new Set();
   const sessions = [];
-  for (const f of files) {
+  for (const f of files.filter((x) => !seen.has(resolve(x)) && seen.add(resolve(x)))) {
     const t = claudeCodeTurns();
     for await (const line of jsonlLines(f)) t.feed(line);
     const s = t.end();
@@ -855,11 +884,109 @@ async function convertClaudeCodeMain(args) {
   if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
-  for (const k of ["user", "assistant"]) if (v[k] !== undefined && (!v[k].trim() || /[\r\n]/.test(v[k]))) return fail(`--${k} takes a one-line label`);
-  if (v.tz !== undefined) {
-    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
-  }
+  const bad = convertOptionError(v, ["user", "assistant"]);
+  if (bad) return fail(bad);
   return convertClaudeCode(positionals, { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, json: !!v.json });
+}
+
+// An SMS backup, read a chunk at a time (a backup can outgrow one string), into planSms's
+// input; with media, each attachment is saved into it as it is read, and listed in
+// media/attachments.tsv. → { read, saved: [[file, size, md5]] }
+export async function readSmsBackup(path, { number, groups, tz = "UTC", media } = {}) {
+  const saved = [];
+  if (media) await mkdir(media, { recursive: true });
+  const onAttachment = (name, b64) => {
+    const raw = Buffer.from(b64, "base64");
+    writeFileSync(join(media, name), raw);
+    saved.push([name, raw.length, createHash("md5").update(raw).digest("hex")]);
+  };
+  const m = smsMessages({ number, groups, timeZone: tz, media: !!media, onAttachment });
+  for await (const chunk of createReadStream(path, { encoding: "utf8" })) m.feed(chunk);
+  return { read: m.end(), saved };
+}
+
+export async function convertSms(path, { out = ".", me, names = {}, tz = "UTC", number = "", title, base, groups = false, media } = {}) {
+  let planned, saved = [];
+  try {
+    let read;
+    try {
+      ({ read, saved } = await readSmsBackup(path, { number, groups, tz, media }));
+    } catch (e) {
+      if (e.code) throw e; // a file error says which file
+      throw new Error(`${path} isn't a readable SMS backup (${e.message})`);
+    }
+    planned = planSms(read, { source: basename(path), number, title, base, me, names, timeZone: tz });
+    if (!planned.files.length) throw new Error(`no messages matched${number ? ` the number ending ${smsDigits(number).slice(-4)}` : ""}`);
+  } catch (e) {
+    const kept = saved.length ? ` (${saved.length} attachments were already saved in ${shown(media)})` : "";
+    process.stderr.write(`leket: ${e.message}; no transcript written${kept}.\n`);
+    return 1;
+  }
+  if (media) {
+    const tsv = join(media, "attachments.tsv");
+    try {
+      await writeFile(tsv, `file\tsize\tmd5\n${saved.map((r) => `${r.join("\t")}\n`).join("")}`);
+    } catch (e) {
+      process.stderr.write(`leket: couldn't write ${shown(tsv)} (${e.message}); no transcript written.\n`);
+      return 1;
+    }
+  }
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  process.stderr.write([
+    `leket: ${s.conversations} conversations, ${s.messages} messages (${s.mine} sent from the backup's phone); times in ${tz}.`,
+    s.skippedGroups ? `Group messages left out (give --groups to keep them): ${s.skippedGroups}.` : "",
+    s.undated ? `Messages with no usable date, left out: ${s.undated}.` : "",
+    media ? `${saved.length} attachments saved in ${shown(media)}, listed in attachments.tsv there.` : "",
+  ].filter(Boolean).join("\n") + "\n");
+  return 0;
+}
+
+async function convertSmsMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args, allowPositionals: true,
+      options: {
+        out: { type: "string" }, me: { type: "string" }, name: { type: "string", multiple: true }, tz: { type: "string" },
+        number: { type: "string" }, title: { type: "string" }, base: { type: "string" }, groups: { type: "boolean" },
+        media: { type: "string" }, help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  if (positionals.length > 1) return fail("give one backup (each backup is the whole phone, so two would repeat its messages)");
+  const bad = convertOptionError(v, ["me", "title"]);
+  if (bad) return fail(bad);
+  if (v.number !== undefined && !smsDigits(v.number)) return fail("--number takes a phone number");
+  for (const k of ["title", "base"]) if (v[k] !== undefined && v.number === undefined) return fail(`--${k} goes with --number (it names that one conversation's file)`);
+  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  const names = {};
+  for (const n of v.name || []) {
+    const i = n.indexOf("=");
+    const key = i < 1 ? "" : smsKey(n.slice(0, i));
+    if (!key) return fail(`--name takes NUMBER=LABEL, not ${n}`);
+    const label = n.slice(i + 1);
+    if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${n.slice(0, i)}= takes a one-line label`);
+    names[key] = label;
+  }
+  return convertSms(positionals[0], { out: v.out, me: v.me, names, tz: v.tz, number: v.number, title: v.title, base: v.base, groups: !!v.groups, media: v.media });
+}
+
+// The checks every convert main makes: each label given is one line (and not blank,
+// unless blankOk), and --tz is a zone Intl knows. → the first failure's message, or "".
+function convertOptionError(v, labels, { blankOk = false } = {}) {
+  for (const k of labels) if (v[k] !== undefined && ((!blankOk && !v[k].trim()) || /[\r\n]/.test(v[k]))) return `--${k} takes a one-line label`;
+  if (v.tz !== undefined) {
+    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return `--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`; }
+  }
+  return "";
 }
 
 const CONVERT_OPTIONS = {
@@ -881,11 +1008,9 @@ async function convertExportMain(kind, args) {
   if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
-  for (const k of ["user", "assistant"]) if (v[k] !== undefined && /[\r\n]/.test(v[k])) return fail(`--${k} takes a one-line label`);
+  const bad = convertOptionError(v, ["user", "assistant"], { blankOk: true });
+  if (bad) return fail(bad);
   for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : * ? " < > |, . or .. parts, no control characters)`);
-  if (v.tz !== undefined) {
-    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
-  }
   const opts = { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, folders: v.folders, unlisted: v.unlisted };
   return kind === "gemini" ? convertGemini(positionals, { ...opts, titles: v.titles, other: v.other }) : convertChatgpt(positionals, opts);
 }
@@ -896,6 +1021,7 @@ async function convertMain(rest) {
   if (kind === "chatgpt" || kind === "gemini") return convertExportMain(kind, args);
   if (kind === "character-chat") return convertCharacterChatMain(args);
   if (kind === "claude-code") return convertClaudeCodeMain(args);
+  if (kind === "sms") return convertSmsMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {
@@ -918,9 +1044,8 @@ async function convertMain(rest) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   if (v.by !== undefined && !["none", "year", "month"].includes(v.by)) return fail("--by takes none, year or month");
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
-  if (v.tz !== undefined) {
-    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
-  }
+  const bad = convertOptionError(v, []);
+  if (bad) return fail(bad);
   const names = {};
   for (const n of v.name || []) {
     const i = n.indexOf("=");
