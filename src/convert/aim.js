@@ -47,7 +47,7 @@ import { escapeTag, safeTitle, span } from "./common.js";
 const local = clock("UTC"); // the times have no zone: kept as UTC so they print as written
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const HEADING = /<h1>Chatlog between <span class="sender">([^<]*)<\/span> and <span class="receiver">([^<]*)<\/span> on <span[^>]*>[A-Za-z]+, ([A-Za-z]+) +(\d{1,2}), (\d{4}) at (\d{1,2}):(\d{2}):(\d{2})<\/span><\/h1>/;
-const ENTRY = /^(?:<span class=(['"])Im(Send|Receive)\1>\[(\d{1,2}):(\d{2})\] ([^<]*)<\/span>: |\[(\d{1,2}):(\d{2})\] ([^<\n]*?) \([Aa]uto-response from [^<\n)]*\) ?)/gm;
+const ENTRY = /^(?:<span class=(['"])Im(Send|Receive)\1>\[(\d{1,2}):(\d{2})\] ([^<]*)<\/span>: |\[(\d{1,2}):(\d{2})\] ([^<\n]*?) \([Aa]uto-response from (?:\8|[^<\n)]*)\) ?)/gm; // \8: a name holding ")"
 
 // A screen name as AIM compared them: case and spaces don't count
 export const screenKey = (name) => String(name).toLowerCase().replace(/\s+/g, "");
