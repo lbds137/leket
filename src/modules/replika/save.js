@@ -288,7 +288,9 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
 // The whole save: chat history, then diary, then memories, then media. One step's
 // failure is recorded and the next still runs — except a 401/403 (SignedOut), which
 // stops the remaining steps, and still saves everything that was read. Resolves with
-// the data object, the named zip parts and the file's name.
+// the data object, the named zip parts and the file's name. `pause` is a test seam for
+// both rests (between diary day calls and between media fetches); left out, each step
+// keeps its own default.
 export async function runSave({
   auth, leketVersion = null, now = new Date(),
   fetchFn = fetch, sleep = wait, WebSocketCtor, uuid, timeoutMs, pause,

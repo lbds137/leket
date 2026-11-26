@@ -423,6 +423,17 @@ test("readDiary: a failed list page outranks a skipped day in the partial reason
   assert.deepEqual(days.map((d) => d.date), ["2026-02-02"]);
 });
 
+test("readDiary: a list reason set earlier still outranks the five-in-a-row stop", async () => {
+  const dates = ["2026-02-05", "2026-02-04", "2026-02-03", "2026-02-02", "2026-02-01"];
+  const fn = fakeFetch((url) => {
+    if (url === LIST_URL() || url === LIST_URL("2026-02-01")) return reply(dates.map((d) => li(d))); // the same page again
+    return reply({}, 500);
+  });
+  const { days, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(partial, DIARY_STUCK);
+  assert.deepEqual(days, []);
+});
+
 test("readDiary: rests between day calls, not before the first", async () => {
   const log = [];
   const fn = fakeFetch((url) => {

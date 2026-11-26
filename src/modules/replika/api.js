@@ -242,7 +242,10 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, p
     }
     if (!day || day.date !== date || !Array.isArray(day.entries)) {
       // a list failure (DIARY_PARTIAL/STUCK/PAGE_CAP) already set outranks a skipped day
-      if (++failRun >= DAY_FAIL_RUN) return { days, list, partial: DIARY_PARTIAL, signedOut: false };
+      if (++failRun >= DAY_FAIL_RUN) {
+        const why = partial && partial !== DIARY_DAYS_SKIPPED ? partial : DIARY_PARTIAL;
+        return { days, list, partial: why, signedOut: false };
+      }
       if (!partial) partial = DIARY_DAYS_SKIPPED;
       continue;
     }
