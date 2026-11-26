@@ -14,9 +14,9 @@
 // could be written (the notes in the files and on stderr say which).
 import { spawn, spawnSync } from "node:child_process";
 import { constants, realpathSync } from "node:fs";
-import { access, mkdtemp, readFile, writeFile, rename, rm, mkdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 
@@ -96,38 +96,47 @@ export function reportedTotal(log) {
 // Collects, from a stream of chunks, only the lines that match `keep`: a long comment
 // fetch logs a line per page, and only the estimate and the too-old error are read back.
 // Lines end at \n or \r; an unended line over 64 KB keeps only its last 1 KB, and
-// its match, when it has one, is kept first. `keep` must not be a g or y regex.
+// its match, when it has one, is kept first. A cut line records one match at most:
+// its first, which is all the readers above use. A match that began more than 1 KB
+// before a cut is lost; neither pattern comes near that long. `keep` must not be a g
+// or y regex.
 export function lineKeeper(keep = new RegExp(`${ESTIMATE.source}|${TOO_OLD.source}`)) {
   let partial = "";
   let kept = "";
+  let hit = false; // the unended line was cut and its match already recorded
   return {
     push(chunk) {
       const lines = (partial + chunk).split(/\r\n|\r|\n/);
       partial = lines.pop();
-      for (const l of lines) if (keep.test(l)) kept += `${l}\n`;
+      lines.forEach((l, i) => { if (!(i === 0 && hit) && keep.test(l)) kept += `${l}\n`; });
+      if (lines.length) hit = false;
       if (partial.length > 65_536) {
-        const m = keep.exec(partial);
-        if (m) kept += `${m[0]}\n`;
+        const m = hit ? null : keep.exec(partial);
+        if (m) { kept += `${m[0]}\n`; hit = true; }
         partial = partial.slice(-1024);
       }
     },
     end() {
-      if (partial && keep.test(partial)) kept += `${partial}\n`;
+      if (partial && !hit && keep.test(partial)) kept += `${partial}\n`;
       partial = "";
+      hit = false;
       return kept;
     },
   };
 }
 
-// yt-dlp's progress goes to stderr as it comes, both streams of it: this script's
-// stdout carries only the saved paths.
-function run(cmd, args) {
+// yt-dlp's progress goes to `tee` (stderr) as it comes, both streams of it: this
+// script's stdout carries only the saved paths.
+export function run(cmd, args, tee = process.stderr) {
   return new Promise((res) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    // decoded per stream, so a character split across two chunks arrives whole
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     const out = lineKeeper();
     const err = lineKeeper();
-    child.stdout.on("data", (d) => { out.push(d); process.stderr.write(d); });
-    child.stderr.on("data", (d) => { err.push(d); process.stderr.write(d); });
+    child.stdout.on("data", (d) => { out.push(d); tee.write(d); });
+    child.stderr.on("data", (d) => { err.push(d); tee.write(d); });
     const log = () => out.end() + err.end();
     child.on("error", (e) => res({ code: 127, log: `${log()}${e.message}\n` }));
     // a child killed by a signal closes with code null: that is a stop, never a clean run
@@ -239,14 +248,43 @@ export async function youtube(url, { out = ".", lang = "en", maxComments } = {})
   // the output folder is made and checked writable before yt-dlp runs, so a bad --out
   // fails at once rather than after a long comment fetch
   const dir = resolve(out);
+  // the first folder this run made on the way to dir (mkdir returns it), if any: a run
+  // that ends with nothing saved removes those folders again, deepest first
+  let made;
+  const unmake = async () => {
+    if (!made) return;
+    // rmdir refuses a folder with anything in it, so a folder holding files stays; the
+    // walk ends at the first folder this run made, and is bounded by the levels between
+    const levels = relative(made, dir).split(sep).filter(Boolean).length;
+    let p = dir;
+    for (let i = 0; i <= levels; i++) {
+      try { await rmdir(p); } catch { return; }
+      if (p === made || dirname(p) === p) return;
+      p = dirname(p);
+    }
+  };
+  let code = 1;
   try {
-    await mkdir(dir, { recursive: true });
-    await access(dir, constants.W_OK);
-  } catch (e) {
-    const why = e && e.code === "EEXIST" ? "a file is in the way" : (e && e.code) || (e && e.message) || String(e);
-    process.stderr.write(`leket: can't save into ${dir} (${why}); nothing saved.\n`);
-    return 1;
+    try {
+      made = await mkdir(dir, { recursive: true });
+      // on Windows, W_OK reads only the read-only attribute; a write refused later is
+      // still reported, by writePair
+      await access(dir, constants.W_OK);
+    } catch (e) {
+      const blocked = e && (e.code === "EEXIST" || e.code === "ENOTDIR");
+      const why = blocked ? "a file is in the way" : (e && e.code) || (e && e.message) || String(e);
+      process.stderr.write(`leket: can't save into ${dir} (${why}); nothing saved.\n`);
+      return code;
+    }
+    code = await saveInto(dir, url, { lang, maxComments });
+    return code;
+  } finally {
+    if (code === 1) await unmake();
   }
+}
+
+// yt-dlp, then the files, into a folder that exists: an exit code as youtube() returns.
+async function saveInto(dir, url, { lang, maxComments }) {
   const yt = ytDlpCommand();
   const work = await mkdtemp(join(tmpdir(), "leket-yt-"));
   try {

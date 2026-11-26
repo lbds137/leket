@@ -149,21 +149,25 @@ export async function driveYouTube(opts) {
     if (expand) expand.click();
     const buttonEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
     let button = document.querySelector("ytd-video-description-transcript-section-renderer button");
-    // stopped() is tested first in both waits, so `aborted` is set exactly when a wait
-    // ended on a stop, and not by a stop that came after it ended on its own
+    // stopped() is tested first in both waits, so `aborted` is set when a wait ended on
+    // a stop, and not by a stop that came after it ended on its own. One edge: when the
+    // wait's own bound was the run's deadline, the clock can cross it between the stop
+    // check and the bound check; that wait ended on the time budget, so it is a stop
+    const endedOnDeadline = (end) => end === deadline && Date.now() >= deadline && stopped();
     while (!stopped() && !button && Date.now() < buttonEnd) {
       await sleep(stepMs / 2);
       button = document.querySelector("ytd-video-description-transcript-section-renderer button");
     }
-    if (aborted) {
-      // the note and the overlay line below say it was not read
-    } else if (!button) {
+    if (!button) endedOnDeadline(buttonEnd);
+    // after a stop, the note and the overlay line below say the transcript was not read
+    if (!aborted && !button) {
       // the description offers no transcript section: some videos have none at all
       metadata.transcript_note = "YouTube shows no transcript for this video.";
-    } else {
+    } else if (!aborted) {
       button.click();
       const segEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
       while (!stopped() && Date.now() < segEnd && readTranscript().length === 0) await sleep(stepMs / 2);
+      if (readTranscript().length === 0) endedOnDeadline(segEnd);
       transcript = readTranscript();
       if (transcript.length === 0) {
         metadata.transcript_note = "The transcript panel never showed its segments within "

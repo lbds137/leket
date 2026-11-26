@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ytDlpArgs, ytDlpCommand, reportedTotal, lineKeeper, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair } from "../bin/leket.js";
+import { ytDlpArgs, ytDlpCommand, reportedTotal, lineKeeper, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair, run } from "../bin/leket.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -112,6 +112,24 @@ test("lineKeeper keeps only matching lines, across chunk splits and \\r endings"
   const early = lineKeeper();
   early.push(`yt-dlp: error: no such option: --js-runtimes${" ".repeat(70_000)}`);
   assert.equal(early.end(), "no such option: --js-runtimes\n");
+  // a match inside the kept tail of a cut line is recorded once, not again when the
+  // line ends; the next line is tested afresh
+  const tail = lineKeeper();
+  tail.push(`${" ".repeat(70_000)}[youtube] Downloading ~5 comments`);
+  tail.push("\n[youtube] Downloading ~6 comments\n");
+  assert.equal(tail.end(), "Downloading ~5 comments\n[youtube] Downloading ~6 comments\n");
+});
+
+test("run keeps a character whose bytes arrive split across two chunks", async () => {
+  // the first write ends mid-character (é is C3 A9), and the child waits before the
+  // rest, so the bytes arrive as two chunks; the tee shows they did
+  const script = `process.stdout.write(Buffer.from([...Buffer.from("[youtube] Downloading ~5 comments caf"), 0xc3]));
+    setTimeout(() => process.stdout.write(Buffer.from([0xa9, 0x0a])), 300);`;
+  const chunks = [];
+  const r = await run(process.execPath, ["-e", script], { write: (d) => chunks.push(d) });
+  assert.equal(r.code, 0);
+  assert.ok(chunks.length >= 2, `the bytes came as ${chunks.length} chunk(s); the split was never tested`);
+  assert.equal(r.log, "[youtube] Downloading ~5 comments café\n");
 });
 
 test("extractFromInfo assembles v1 with the CLI's metadata and notes", async () => {
@@ -201,6 +219,12 @@ test("leket youtube: an --out that names a file is a one-line error, exit 1, bef
     assert.equal(r.status, 1);
     assert.equal(r.stderr, `leket: can't save into ${file} (a file is in the way); nothing saved.\n`);
     assert.deepEqual(readdirSync(out).sort(), ["a-file"]); // yt-dlp never ran
+    // a file further up the path is in the way too
+    const below = join(file, "sub");
+    const d = runBin(["youtube", VIDEO, "--out", below], { FAKE_YTDLP_ARGS: argsFile });
+    assert.equal(d.status, 1);
+    assert.equal(d.stderr, `leket: can't save into ${below} (a file is in the way); nothing saved.\n`);
+    assert.deepEqual(readdirSync(out).sort(), ["a-file"]);
     // a folder that exists but can't be written to fails the same way (root writes anyway)
     if (process.getuid && process.getuid() !== 0) {
       const ro = join(out, "read-only");
@@ -225,7 +249,30 @@ test("leket youtube exits 1 and writes nothing when yt-dlp fails", () => {
     const n = runBin(["youtube", VIDEO, "--out", out], { FAKE_YTDLP_MODE: "null" });
     assert.equal(n.status, 1);
     assert.match(n.stderr, /finished and wrote no readable video info/);
+    // the --out folder was there before the run, so it stays
     assert.deepEqual(readdirSync(out), []);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube: a run that saves nothing removes the folders it made for --out, and only those", () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    // an empty folder that was already there stays; the one made under it goes
+    mkdirSync(join(out, "existing-empty"));
+    const one = runBin(["youtube", VIDEO, "--out", join(out, "existing-empty", "new")], { FAKE_YTDLP_MODE: "fail" });
+    assert.equal(one.status, 1);
+    assert.deepEqual(readdirSync(out), ["existing-empty"]);
+    assert.deepEqual(readdirSync(join(out, "existing-empty")), []);
+    // two levels made: both go
+    const two = runBin(["youtube", VIDEO, "--out", join(out, "new1", "new2")], { FAKE_YTDLP_MODE: "playlist" });
+    assert.equal(two.status, 1);
+    assert.deepEqual(readdirSync(out), ["existing-empty"]);
+    // a run that saves keeps the folder it made
+    const saved = runBin(["youtube", VIDEO, "--out", join(out, "made")]);
+    assert.equal(saved.status, 0, saved.stderr);
+    assert.deepEqual(readdirSync(join(out, "made")).sort(), [`${STEM}.json`, `${STEM}.md`]);
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
