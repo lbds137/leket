@@ -68,8 +68,10 @@ export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(),
           if (coding === "identity") body = Readable.toWeb(res);
           else if (DECODERS[coding]) {
             const decoded = res.pipe(DECODERS[coding]());
-            // a reset upstream fails the read, as a damaged stream does
+            // a reset upstream fails the read, as a damaged stream does; a reader that
+            // stops early (cancel) closes the connection too, not only the decoder
             res.on("error", (e) => decoded.destroy(e));
+            decoded.on("close", () => { if (!res.complete) res.destroy(); });
             body = Readable.toWeb(decoded);
             // the headers now describe the decoded bytes
             h.delete("content-encoding");

@@ -10,7 +10,8 @@ import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { brotliCompressSync, gzipSync } from "node:zlib";
+import { randomBytes } from "node:crypto";
+import { brotliCompressSync, createGzip, gzipSync } from "node:zlib";
 
 import { guardedFetch, LEKET_UA, makeLookup } from "../src/lib/guarded-fetch.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
@@ -135,6 +136,34 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     await assert.rejects(fetchImageData({ n: 1, u: `${base}/zz.png`, ext: "" }, { fetch: viaImage }),
       { message: "not fetched: the server sent it encoded as zz" });
   } finally {
+    server.close();
+  }
+});
+
+test("guardedFetch: cancelling a compressed answer mid-read closes the connection, as cancelling a plain one does", async () => {
+  const tls = certificate();
+  let socketClosed;
+  const closed = new Promise((r) => { socketClosed = r; });
+  const server = createServer(tls, (req, res) => {
+    req.socket.on("close", socketClosed);
+    res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" });
+    const gz = createGzip();
+    gz.pipe(res);
+    // an answer that never ends on its own: only the client closing it stops it
+    const tick = setInterval(() => gz.write(randomBytes(65536)), 10);
+    res.on("close", () => clearInterval(tick));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
+  try {
+    const r = await guardedFetch(`https://img.example:${server.address().port}/gz.png`, { lookup: direct, ca: tls.cert });
+    const reader = r.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    const late = new Promise((res) => setTimeout(() => res("still open"), 5000).unref());
+    assert.equal(await Promise.race([closed.then(() => "closed"), late]), "closed");
+  } finally {
+    server.closeAllConnections();
     server.close();
   }
 });
