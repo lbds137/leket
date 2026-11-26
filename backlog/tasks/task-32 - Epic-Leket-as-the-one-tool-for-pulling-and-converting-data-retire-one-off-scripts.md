@@ -24,7 +24,7 @@ Step 1 (this epic's first unit): an inventory and a design doc (docs/) that deci
 Candidate kinds (the exact list is kept privately, outside this public repo):
 - Scrapers that duplicate Leket's sites: Reddit, claude.ai sessions and YouTube console scripts, a Discord console mirror, and one other chat site's console export.
 - Converters from chat exports to Markdown: Discord DMs and channels, Gemini, ChatGPT, Claude and similar.
-- Probably OUT: Google Takeout and Discord data-package unpackers.
+- Probably OUT (a tentative recommendation for the inventory to confirm, not a ruling): Google Takeout and Discord data-package unpackers.
 
 Constraints:
 - Leket is public (MIT). Only generic code moves in. Names, paths and real data stay private, where a thin wrapper may call `leket`.
@@ -33,9 +33,9 @@ Constraints:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Inventory and design doc in docs/, with IN or OUT and a reason per candidate
+- [x] #1 Inventory and design doc in docs/ (docs/tools-inventory.md), with IN or OUT and a reason per candidate
 - [ ] #2 Lila has ruled on the IN/OUT list (AskUserQuestion, with a recommendation)
-- [ ] #3 Each IN item has its own task; each retired script's owning session is told once its leket path ships
+- [ ] #3 After #2's ruling (not before), each IN item has its own task; each retired script's owning session is told once its leket path ships
 <!-- AC:END -->
 
 ## Implementation Notes
