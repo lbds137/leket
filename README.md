@@ -136,6 +136,15 @@ node bin/leket.js convert discord <save>... [--out DIR] [--by none|year|month] [
 
 A save is Leket's Discord zip (for a save in parts, part 1, which holds the messages) or the `.json` inside it; several saves of the same conversation are merged by message id. It writes one Markdown transcript, or one per year or month (`--by`; a server channel defaults to month), with each day under its own heading and each message's replies, forwards and attachments shown in words. A server channel also gets a participants table (nicknames, roles, first and last message) and an index of its files. Times are shown in `--tz` (default: this computer's zone). `--name` shows an account under a label of your choosing, `--embeds` adds link previews' titles, and `--voice` adds machine transcripts of voice messages; `node bin/leket.js convert --help` lists every option.
 
+### Reddit posts
+
+```
+node bin/leket.js reddit --from-json reddit-<post id>.json [--out DIR] [--file PATH]
+node bin/leket.js reddit <post-url> [--out DIR] [--file PATH]
+```
+
+It writes `reddit-<post id>.md`, the same Markdown the extension's Save writes, and saves an image post's picture or every gallery image into `reddit-<post id>-images/` beside it, under the same guards as the extension (https only, no redirects, no local or private-network address). An image that can't be saved stays linked where it's hosted, and the exit code is 3 instead of 0. `--file PATH` names the `.md` itself; `--file -` prints it and fetches no images. Reddit usually refuses a fetch from a script that isn't logged in (HTTP 403), so the usual path is to save the post with the extension and give its `reddit-<post id>.json` to `--from-json`. A post address (or a share link, which is resolved by its redirect) works when reddit allows it.
+
 ### YouTube videos
 
 ```
