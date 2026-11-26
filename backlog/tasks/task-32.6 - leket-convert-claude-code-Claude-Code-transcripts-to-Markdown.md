@@ -1,10 +1,10 @@
 ---
 id: TASK-32.6
 title: 'leket convert claude-code: Claude Code transcripts to Markdown'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-26T11:27:00Z'
-updated_date: '2026-11-26T17:27:00Z'
+updated_date: '2026-11-26T17:49:00Z'
 labels:
   - convert
 dependencies: []
@@ -23,5 +23,11 @@ Row K: Claude Code JSONL transcripts to readable Markdown; folder layout stays p
 <!-- AC:BEGIN -->
 - [x] #1 One .md per session from its JSONL
 - [x] #2 Unit tests on a synthetic fixture cover the format's edge cases the original handles
-- [ ] #3 The original's owning session is told it can retire its copy once this ships
+- [x] #3 The original's owning session is told it can retire its copy once this ships
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped 0.12.0 (PR #205, main 586c417); Chats told 11-26 via SendMessage.
+<!-- SECTION:NOTES:END -->
