@@ -250,6 +250,13 @@ test("caps: past the image count the rest link out unfetched; past the total siz
   assert.equal(tight.code, 3);
   assert.match(tight.stderr, /couldn't save image 2 \(not kept: the images would total over/);
   assert.ok(!/image 1/.test(tight.stderr), tight.stderr);
+  // a partial caps keeps the other cap's default rather than switching it off
+  const many = [];
+  const counted = async (url) => { many.push(url); return new Response(png, { headers: { "content-type": "image/png" } }); };
+  const partial = await captured(gallery(101), { out: tmp(), fetch: counted, caps: { mb: 1 } });
+  assert.equal(partial.code, 3);
+  assert.equal(many.length, 100);
+  assert.match(partial.stderr, /couldn't save image 101 \(not fetched: past 100 images\)/);
 });
 
 test("the post's JSON is refused past its cap, without reading the rest", async () => {
@@ -314,6 +321,9 @@ test("server text reaches stderr with its control characters escaped", async () 
 test("an SVG served as an image is not saved under a raster name: it links out", async () => {
   const svg = async () => new Response("<svg/>", { headers: { "content-type": "image/svg+xml" } });
   await assert.rejects(fetchImageData({ n: 1, u: "https://i.redd.it/a.svg", ext: "" }, { fetch: svg }), /not fetched: an SVG drawing, not a picture/);
+  // the non-standard image/svg some servers send is the same drawing
+  const loose = async () => new Response("<svg/>", { headers: { "content-type": "image/svg; charset=utf-8" } });
+  await assert.rejects(fetchImageData({ n: 1, u: "https://i.redd.it/a.svg", ext: "" }, { fetch: loose }), /not fetched: an SVG drawing, not a picture/);
 });
 
 test("--file - into a reader that closed early stops quietly with 141", async () => {
