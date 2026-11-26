@@ -60,12 +60,17 @@ export async function driveYouTube(opts) {
       + "font:13px/1.5 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.5)";
     document.documentElement.appendChild(panel);
   } else {
+    // an earlier run's panel, possibly mid-fade: this run owns it now
     panel.replaceChildren();
+    panel.style.transition = "";
+    panel.style.opacity = "";
   }
+  // a run a newer one superseded keeps narrating into a line nobody sees: the panel is
+  // the newer run's now (runToken is set below, before the first say)
   const say = (text) => {
     const p = document.createElement("div");
     p.textContent = text;
-    panel.appendChild(p);
+    if (window.__leketYouTubeRun === runToken) panel.appendChild(p);
     return p;
   };
 
@@ -133,7 +138,7 @@ export async function driveYouTube(opts) {
     return rows;
   };
 
-  say("Opening the transcript…");
+  const transcriptLine = say("Opening the transcript…");
   let transcript = readTranscript();
   if (transcript.length === 0) {
     const expand = document.querySelector("#description-inline-expander #expand");
@@ -163,6 +168,9 @@ export async function driveYouTube(opts) {
     metadata.transcript_note = "As YouTube's transcript panel showed it; the language is YouTube's "
       + "choice for this viewer (interface language: " + (document.documentElement.lang || "unknown") + ").";
   }
+  transcriptLine.textContent = transcript.length > 0
+    ? "Transcript: " + transcript.length + " lines."
+    : "Transcript: none. " + metadata.transcript_note;
 
   // ---- comments: the top-level continuation loads more threads while it is on
   // screen; a continuation inside a ytd-comment-replies-renderer belongs to that
@@ -322,13 +330,33 @@ export async function driveYouTube(opts) {
       : "No comments were collected: the page never showed a comment section (comments may be turned off).";
   }
   const replyTotal = comments.reduce((n, c) => n + c.replies.length, 0);
-  if (aborted === "video-changed" || aborted === "superseded") {
-    // what was read belongs to another video, or a newer run owns this tab: the page
-    // saves nothing from this run
-    say(aborted === "superseded" ? "Stopped: a newer save took over." : "Stopped: the tab moved to another video.");
+  // the overlay's last line stays long enough to read, then the panel fades out — unless
+  // a newer run has taken the panel over by then. The fade is skipped for a reader who
+  // asked for reduced motion
+  const fadeOut = () => {
+    setTimeout(() => {
+      if (window.__leketYouTubeRun !== runToken || !panel.isConnected) return;
+      let still = false;
+      try { still = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { /* fade */ }
+      if (still) { panel.remove(); return; }
+      panel.style.transition = "opacity .6s";
+      panel.style.opacity = "0";
+      setTimeout(() => { if (window.__leketYouTubeRun === runToken) panel.remove(); }, 700);
+    }, 6000);
+  };
+  if (aborted === "superseded") {
+    // a newer run owns this tab and its panel: this run writes nothing more there, and
+    // the page saves nothing from it
+    return { metadata, transcript: [], comments: [], stats: { threads: 0, replies: 0 }, aborted };
+  }
+  if (aborted === "video-changed") {
+    // what was read belongs to another video: the page saves nothing from this run
+    say("Stopped: the tab moved to another video.");
+    fadeOut();
     return { metadata, transcript: [], comments: [], stats: { threads: 0, replies: 0 }, aborted };
   }
   say("Done: " + comments.length + " comments, " + replyTotal + " replies, " + transcript.length
     + " transcript lines. Leket is saving the files.");
+  fadeOut();
   return { metadata, transcript, comments, stats: { threads: comments.length, replies: replyTotal }, aborted };
 }

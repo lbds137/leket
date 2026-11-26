@@ -65,16 +65,19 @@ const run = async () => {
     // answer is ignored, and the next run's token stops the old driver
     const GIVE_UP_MS = 17 * 60 * 1000;
     let injection;
+    let giveUp;
     try {
       [injection] = await Promise.race([
         chrome.scripting.executeScript({ target: { tabId }, func: driveYouTube }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), GIVE_UP_MS)),
+        new Promise((_, reject) => { giveUp = setTimeout(() => reject(new Error("timeout")), GIVE_UP_MS); }),
       ]);
     } catch (err) {
       say((err && err.message) === "timeout"
         ? "The YouTube tab stopped answering — reload it, keep it in front, and press Save again."
         : `Leket couldn't read the YouTube tab (${(err && err.message) || err}) — reload the video, keep it in front, and press Save again.`, "warn");
       return;
+    } finally {
+      clearTimeout(giveUp);
     }
     const result = injection && injection.result;
     if (!result || !result.metadata) {
@@ -107,7 +110,6 @@ const run = async () => {
         // overwrite: a re-save replaces the file instead of landing beside it as "(1)"
         saved = await trackDownload(chrome.downloads, { url, filename: name, conflictAction: "overwrite" }, {
           // a save with no word in 15 minutes may still be reading the blob URL: free
-          // it only once the download truly ends
           // it only once the download truly ends, and say how it ended if no newer run
           // has taken over the status line
           onLate: (ok) => {

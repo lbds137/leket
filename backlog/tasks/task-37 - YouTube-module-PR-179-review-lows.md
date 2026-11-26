@@ -4,7 +4,7 @@ title: 'YouTube module: PR #179 review lows'
 status: To Do
 assignee: []
 created_date: '2026-11-26T03:43:00Z'
-updated_date: '2026-11-26T03:48:00Z'
+updated_date: '2026-11-26T06:13:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -21,4 +21,6 @@ claude-review on PR #179 (merged 11-26), all low: (1) page.js onLate comment has
 
 <!-- SECTION:NOTES:BEGIN -->
 Live-check items carried from TASK-29 (closed), for the first real run on a large video: (a) does YouTube reuse one replies-continuation element per page (the driver gives each 3 tries); (b) comment line breaks arrive as \n or <br> (both read); (c) the header count mounts late (re-read at the end); (d) the video-changed and superseded stops have no smoke scenario (needs a mid-run in-site navigation); plus wall time vs the 15-min budget (item 4) and the overlay persistence (item 5).
+
+Items 1-3, 5-7 DONE (branch task-37-youtube-lows, 0.6.6): (1) duplicated onLate comment line removed; (2) package.json description names YouTube, and Messenger (also missing; manifest has both); (3) GIVE_UP_MS timer cleared in a finally; (5) the overlay lingers 6 s after Done or the video-changed stop, then fades (.6s; removed at once under prefers-reduced-motion), unless a newer run took the panel; a superseded run no longer writes into the newer run's panel (say() checks the run token); (7) the transcript line ends as 'Transcript: N lines.' or 'Transcript: none. <note>'. (6) covered in the smoke, not node unit tests (the driver is DOM-only and the repo has no DOM library; adding jsdom for one module ruled out): a youtube-old scenario serves the ytd-transcript-segment-renderer A/B and lc-less replies with one re-rendered; readBlock was already covered (\n and <br> checks). Red-first: main's driver fails the two overlay checks; removing the author+text fallback and the old-renderer branch fails the two youtube-old checks. Accessibility: white on #1e1f22 ~16.5:1 by luminance arithmetic, theme-independent (panel paints its own background); no colour signal; no targets. Item 4 stays open: live-run gated (wall time of the serial reply clicks on a ~1500-thread video), with the live-check items (a)-(d) above.
 <!-- SECTION:NOTES:END -->
