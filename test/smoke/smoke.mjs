@@ -26,8 +26,9 @@
 // probes the matched tab's localStorage, pages a scripted history socket (the harness's
 // interception can't cover a WebSocket handshake, so the page's WebSocket is swapped for
 // a fake that answers three batches), walks the diary and memories on both Replika hosts,
-// and must leave a picture whose signed host the manifest has no permission for as not
-// captured — a served-but-forbidden fetch is exactly what's tested. Each scenario runs on
+// must save both pictures through the S3 permission, and must leave a voice clip whose host
+// the manifest has no permission for as not captured — a served-but-forbidden fetch is
+// exactly what's tested. Each scenario runs on
 // its own: a throw fails it and the next one starts.
 // Every page is synthetic and served from this file; no request leaves the machine:
 // each target's requests are intercepted, DNS resolves nothing and no proxy is used.
@@ -1115,8 +1116,9 @@ async function scenarios(cdp, downloads) {
 
   // ---- replika: popup -> the module's page -> the localStorage probe on the matched tab,
   // a scripted history socket (three batches, the picture's raw link inside), the diary
-  // and memories on both hosts, and one picture whose signed host the manifest has no
-  // permission for: served, but refused, so it must come out not captured ----
+  // and memories on both hosts, both pictures saved through the S3 permission, and one
+  // voice clip whose host the manifest has no permission for: served, but refused, so it
+  // must come out not captured ----
   await scenario("replika", async () => {
     console.log("smoke: replika save");
     await open(REPLIKA_HOME);
@@ -1157,13 +1159,8 @@ async function scenarios(cdp, downloads) {
       globalThis.WebSocket = FakeSocket;
       return true; })()`);
     check(swapped === true, "replika: the page's WebSocket is swapped for the scripted fake");
-    // a test-side lever, the sessions scenario's pattern: the voice clip's fetch is refused,
-    // and fetchFile's 3 s retry wait would idle the scenario for 30 s — 3000 ms becomes 0
-    // on this page alone (the fake socket's 0 ms dispatch and the history timer are untouched)
-    await evalIn(rp, `(() => {
-      const st = window.setTimeout;
-      window.setTimeout = (f, ms, ...a) => st(f, ms === 3000 ? 0 : ms, ...a);
-      return true; })()`);
+    // no retry-wait lever here: collectMedia's own short retry (3 tries, 1 s apart) is the
+    // only wait the refused voice clip costs
     await evalIn(rp, `document.getElementById("replika-run").click(), true`);
     const end = await waitFor(() => evalIn(rp, `(() => { const p = document.getElementById("replika-status"); const t = p.hidden ? "" : p.textContent;
       return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,

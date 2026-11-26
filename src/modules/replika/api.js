@@ -29,6 +29,7 @@ export const HISTORY_SILENT = "no reply from Replika for 30 s";
 export const MEDIA_LINK_UNUSABLE = "the picture's link was not usable";
 export const MEDIA_VOICE_LINK_UNUSABLE = "the voice clip's link was not usable";
 export const MEDIA_FETCH_FAILED = "the file host refused or failed";
+export const MEDIA_HOST_NOT_REPLIKA = "the picture's link points outside Replika's picture storage";
 
 // an error whose message is one of this module's fixed, secret-free texts
 // (status: the HTTP status when the call got one, else null)
@@ -454,4 +455,18 @@ export function usableMediaUrl(u) {
   if (p.hostname.includes(":")) return false; // a bracketed IPv6 literal
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(p.hostname)) return false; // an IPv4 literal
   return true;
+}
+
+// The second check a signed picture link must pass: it points into Replika's own picture
+// storage. Chrome ignores the path in a host permission, so the manifest's S3 entry grants
+// the whole s3-us-west-1 host; this keeps the fetch to Replika's bucket on it.
+export const PICTURE_BUCKET_HOST = "s3-us-west-1.amazonaws.com";
+export const PICTURE_BUCKET_PATH = "/replika-content-images/";
+export const USER_MEDIA_HOST = "luka-user-media.s3.us-west-1.amazonaws.com";
+export function replikaPictureUrl(u) {
+  if (!usableMediaUrl(u)) return false;
+  const p = new URL(u);
+  if (p.username || p.password || p.port) return false;
+  if (p.hostname === USER_MEDIA_HOST) return true;
+  return p.hostname === PICTURE_BUCKET_HOST && p.pathname.startsWith(PICTURE_BUCKET_PATH);
 }

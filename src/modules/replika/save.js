@@ -8,7 +8,7 @@
 import { ZipWriter } from "../../lib/zip.js";
 import { esc } from "../../lib/render.js";
 import { fetchFile } from "../../lib/build.js";
-import { readHistory, readDiary, readMemories, signedImageUrl, usableMediaUrl, SignedOut, ApiError, MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED } from "./api.js";
+import { readHistory, readDiary, readMemories, signedImageUrl, usableMediaUrl, replikaPictureUrl, SignedOut, ApiError, MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED, MEDIA_HOST_NOT_REPLIKA } from "./api.js";
 
 // fixed reasons for an unexpected throw: its own text never reaches an output
 export const MEDIA_SIGN_FAILED = "Replika didn't give a link for this file";
@@ -234,8 +234,11 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
   // fetchFile answers a typeless Blob (build.js keeps the raw pieces), so the file's
   // extension comes from the response's content-type, recorded as it streams past
   const types = new Map();
-  const noted = async (url, init) => {
-    const resp = await fetchFn(url, init);
+  // one download's fetch, its redirect mode fixed for that file: a picture's fetch may not
+  // follow a redirect, so the host check below holds for the URL that is actually read
+  // (a voice clip's host is unknown and unchecked, so it follows them)
+  const noted = (redirect) => async (url, init) => {
+    const resp = await fetchFn(url, { ...init, redirect });
     try { types.set(url, resp && resp.headers ? resp.headers.get("content-type") : null); } catch { /* a stand-in without headers */ }
     return resp;
   };
@@ -267,8 +270,13 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
       plan.record.not_captured = plan.record.kind === "voice_message" ? MEDIA_VOICE_LINK_UNUSABLE : MEDIA_LINK_UNUSABLE;
       continue;
     }
+    const picture = plan.record.kind !== "voice_message";
+    if (picture && !replikaPictureUrl(target)) {
+      plan.record.not_captured = MEDIA_HOST_NOT_REPLIKA;
+      continue;
+    }
     // 3 tries a second apart: a host that refuses fails in ~3 s a file, not ~30 s
-    const got = await fetchFile(target, { fetchFn: noted, tries: 3, wait: 1000 });
+    const got = await fetchFile(target, { fetchFn: noted(picture ? "error" : "follow"), tries: 3, wait: 1000 });
     if (got.error) {
       plan.record.not_captured = MEDIA_FETCH_FAILED;
     } else {
