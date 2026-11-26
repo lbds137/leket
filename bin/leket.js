@@ -856,10 +856,10 @@ export async function readClaudeCodeSessions(paths) {
       files.push(...names.map((n) => join(p, n)));
     } else files.push(p);
   }
-  // a transcript given twice (itself and in its folder) is read once
+  // a transcript given twice (itself and in its folder, or by a link) is read once
   const seen = new Set();
   const sessions = [];
-  for (const f of files.filter((x) => !seen.has(resolve(x)) && seen.add(resolve(x)))) {
+  for (const f of files.filter((x) => !seen.has(realpathSync(x)) && seen.add(realpathSync(x)))) {
     const t = claudeCodeTurns();
     for await (const line of jsonlLines(f)) t.feed(line);
     const s = t.end();
