@@ -169,10 +169,14 @@ export async function driveYouTube(opts) {
   if (transcript.length > 0) {
     metadata.transcript_note = "As YouTube's transcript panel showed it; the language is YouTube's "
       + "choice for this viewer (interface language: " + (document.documentElement.lang || "unknown") + ").";
+  } else if (aborted) {
+    // a stop cut the waits short: the transcript was never read, not found missing
+    metadata.transcript_note = "Not read: the save stopped before the transcript loaded.";
   }
   transcriptLine.textContent = transcript.length > 0
     ? "Transcript: " + transcript.length + " lines."
-    : "Transcript: none. " + metadata.transcript_note;
+    : aborted ? "Transcript: not read (the save stopped)."
+      : "Transcript: none. " + metadata.transcript_note;
 
   // ---- comments: the top-level continuation loads more threads while it is on
   // screen; a continuation inside a ytd-comment-replies-renderer belongs to that
@@ -200,7 +204,9 @@ export async function driveYouTube(opts) {
     if (threadCount() > 0 || topContinuation() || Date.now() >= firstEnd || stopped()) break;
     await sleep(stepMs / 2);
   }
-  if (commentsBox) {
+  // after a stop, the phases below are skipped: their lines would narrate work that
+  // never ran
+  if (commentsBox && !aborted) {
     const line = say("Loading comments: " + threadCount() + " so far…");
     let threads = threadCount();
     let stalls = 0;
@@ -240,7 +246,7 @@ export async function driveYouTube(opts) {
   // tries. A round is progress only when replies grew or a button never clicked before
   // turned up; stallSteps rounds without progress, the time budget, or a stop reason
   // end the phase ----
-  say("Opening replies…");
+  if (!aborted) say("Opening replies…");
   const tries = new WeakMap();
   const threadHasReplies = (b) => {
     const box = b.closest("ytd-comment-replies-renderer");
