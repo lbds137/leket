@@ -49,8 +49,8 @@ input format only; the exact script paths are kept privately with the Leket sess
 | H | Claude sessions split + weekly archive pipeline (JSONL parts → per-session transcripts, systemd timer) | **OUT** | A consumer of Leket's files, wired to one machine's archive and timer. The design note's CLI contract table keeps it reading Leket's saves unchanged. |
 | I | claude.ai chat-outputs console script | **RETIRE** | Ported as the claude-chat module. |
 | J | YouTube transcript + comments guide (manual console steps) | **RETIRE** | Leket's YouTube module (extension) and `leket youtube` (CLI) save captions and the comment tree, replies included. Reverses the design note's "stays a guide": the reason is that the module now exists. |
-| K | Claude Code transcripts → topic-folder Markdown | **DEFERRED** | Generic input, but it lives inside the archive's folder layout and changed 11-10. Promote when a second consumer wants it, or when it next needs real work. |
-| L | Historical chat-log converters: SMS backup XML, Signal, WhatsApp, AIM, Google Voice, Google Chat | **DEFERRED** | Each did a one-time import (last changed 10-05 to 10-18). Promote one when a fresh export of that kind arrives; moving them earlier is upkeep with no new use. |
+| K | Claude Code transcripts → topic-folder Markdown | **IN** (ruled; recommended DEFERRED) — `leket convert claude-code` | Generic input; the folder layout stays in the private wrapper. |
+| L | Historical chat-log converters: SMS backup XML, Signal, WhatsApp, AIM, Google Voice, Google Chat | **IN** (ruled; recommended DEFERRED) — one `leket convert <format>` each | Each did a one-time import (last changed 10-05 to 10-18). Recommended waiting for a fresh export; Lila ruled them in now, so the next export of any of these kinds converts with Leket. |
 | M | Screenshot OCR stitching, a bot-DM rebuild with voice transcription, a voice-clip fetcher, a mod-log → TSV converter, a DiscordChatExporter-HTML → text converter | **OUT** | One-off, tied to one dataset each. |
 | N | claude.ai export → git-history replay (with a transcripts mode) | **OUT** | Built for one repo's import (git replay). The transcripts mode is the only generic piece; see O. |
 | O | claude.ai data export → Markdown | **DEFERRED (gap, nothing to move)** | No converter exists; the export sits unconverted. Becomes `leket convert claude` when Lila wants that archive readable. |
@@ -58,10 +58,15 @@ input format only; the exact script paths are kept privately with the Leket sess
 | Q | Google Takeout extract/plan/verify family, Discord data-package unpacker | **OUT** (tentative, as listed in TASK-32) | They place Takeout contents into Drive folders against that project's own plan files and decisions; no conversion, and not usable standalone. |
 | R | The Discord console mirror in the personal archive project | **Pending its owner's answer** | Asked 11-26 whether a `leket` zip + `leket convert discord` would let it retire the console copy. |
 
-## If Lila rules as recommended
+## Ruling (Lila 2026-11-26)
 
-- Five IN items become tasks: A (A1+A2), B, C, D's converter, E; plus one task to tell each
-  owner which scripts to retire (F, G, I, J now; A/B/C/D/E once each `leket` path ships).
-- TASK-32 AC3 (a task per IN item, owners told) starts only after AC2 (her ruling).
+"Wider: historical too": everything recommended IN, plus K and L. O (the claude.ai export
+converter) stays DEFERRED; D's site module stays DEFERRED; OUT rows stay OUT.
+
+- Each IN item has its own task: A (A1+A2 as one command), B, C, D's converter, E, K, and
+  each of L's six formats.
+- Owners are told to retire G, I and J now (Leket already ships their paths). F waits for E,
+  because the Reddit CLI's error hint points at F; each converter's original is retired
+  once its `leket` command ships.
 - The design note's CLI contract table gains a `leket convert` row; its "stays a guide"
   line for the YouTube guide gets the retirement and this doc as the reason.
