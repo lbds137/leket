@@ -34,6 +34,12 @@ test("inline marks, code spans and links", () => {
     "call (tel:+1-555) get (ftp://x.org/f_1) it sms:1 tel:2 f .");
 });
 
+test("a line break inside a tel:/sms: address can't start a heading, list or table row", () => {
+  assert.equal(md('<p><a href="tel:1\n\n# Injected">call</a></p><h2><a href="tel:2\n- x">c</a></h2>' +
+    '<table><tr><td><a href="sms:3\r\n|y">d</a></td></tr></table><p><a href="ftp://h/a b\tc">f</a></p>'),
+  "call (tel:1# Injected)\n\n## c (tel:2- x)\n\n| d (sms:3\\\\|y) |\n|---|\n\nf (ftp://h/a bc)");
+});
+
 test("a leading non-ASCII space doesn't unmask a scripted scheme", () => {
   assert.equal(md('<p><a href="&nbsp;javascript:alert(1)">x</a> <a href="&#x3000;data:x">y</a></p>'), "x y");
 });
