@@ -46,7 +46,7 @@ const str = (x) => (typeof x === "string" ? x : "");
 export function turns() {
   const out = [];
   let pending = []; // [at, text]: reply text not yet followed by a tool call
-  const asked = new Set(); // AskUserQuestion call ids
+  const asked = new Map(); // AskUserQuestion call id → its questions' text (a Set)
   let title = "", sessionId = "", unparsed = 0, origins = 0;
   const flush = () => {
     if (pending.length) out.push({ at: pending[0][0], role: "assistant", text: pending.map(([, t]) => t).join("\n\n") });
@@ -75,24 +75,26 @@ export function turns() {
             pending.push([when, `**Question:** ${str(q.question)}\n\n${opts}`]);
           }
           flush();
-          if (typeof b.id === "string") asked.add(b.id);
+          if (typeof b.id === "string") asked.set(b.id, new Set(qs.map((q) => str(q.question))));
         } else if (b.type === "tool_use") pending = [];
       }
       return;
     }
     if (Array.isArray(content) && content.some((b) => obj(b)?.type === "tool_result")) {
-      // the record's toolUseResult answers one question call: it is that call's answer, and
-      // any other asked call's result in the record is its own text
-      let answers = obj(obj(d.toolUseResult)?.answers);
-      for (const b of content.filter(obj)) {
-        if (!asked.has(b.tool_use_id)) continue;
-        const own = answers && Object.keys(answers).length;
+      // the record's toolUseResult answers one question call: the call that asked a question
+      // its answers name (they are keyed by the question's text), else the record's first
+      // asked call; any other asked call's result in the record is its own text
+      const answers = obj(obj(d.toolUseResult)?.answers);
+      const keys = answers ? Object.keys(answers) : [];
+      const results = content.filter((b) => obj(b) && asked.has(b.tool_use_id));
+      const owner = results.find((b) => keys.some((k) => asked.get(b.tool_use_id).has(k))) || results[0];
+      for (const b of results) {
+        const own = b === owner && keys.length;
         const text = own
           ? Object.entries(answers).map(([q, a]) => `${q} → **${Array.isArray(a) ? a.map(String).join(", ") : String(a)}**`).join("\n")
           : typeof b.content === "string" ? b.content
             : Array.isArray(b.content) ? b.content.filter((x) => obj(x)?.type === "text").map((x) => str(x.text)).join("\n\n")
               : String(b.content ?? "None");
-        if (own) answers = null;
         out.push({ at: when, role: "user", answer: true, text: `*(answering the question)*\n\n${text}` });
       }
       return; // a tool's output neither ends the reply nor is shown

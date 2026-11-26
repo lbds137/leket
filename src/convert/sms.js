@@ -15,7 +15,8 @@
 //
 // A conversation is the other number's last 10 digits (an address with no digits, such as
 // a sender's name, is its own). SMS type 1 is received, 2 sent; drafts, outbox and failed
-// sends (3-6) are kept, marked " (not sent)". An MMS's text and attachments are its parts
+// sends (3-6) are kept, marked " (not sent)", as are an MMS's (msg_box 3-5: drafts, outbox,
+// failed; 1 is received, 2 sent). An MMS's text and attachments are its parts
 // (the SMIL layout part is passed over); one dated in seconds is read as such.
 // A group MMS (more than one other number) is left out and counted, or with groups kept:
 // in the chosen number's conversation when there is one, else as its own conversation,
@@ -34,6 +35,8 @@
 //   - with a number, an MMS kept because one of its <addr> lines names that number goes in
 //     that conversation, as in the original's one file
 //   - a message with no usable date is left out and counted (the original stopped)
+//   - an MMS draft, or one in the outbox or failed, is marked " (not sent)" as an SMS is
+//     (the original marked only SMS)
 //   - the file ends in a line break; the media list is attachments.tsv inside the media
 //     folder (the original wrote attachments-sms.tsv beside it)
 //   - see src/lib/xml.js for the one way the XML reading differs from Python's
@@ -58,9 +61,10 @@ const last4 = (key) => (isNumber(key) ? `…${key.slice(-4)}` : key || "…");
 // media (true: hand each attachment's bytes to onAttachment(name, base64) as it is read).
 // feed(chunk) each chunk of the file in order, then end() → { conversations: Map(key →
 // { key, group, members, contact, messages: [{ ms, mine, from, group, text, files, note }],
-// skippedGroups }), skippedGroups, undated, listed: Map(key → the first name a group MMS gave it) }. A group message's from is its sender's key
-// (null for the backup's owner, "" when the MMS names none) and its group is { members, listed } (listed: a Map, key → the name
-// contact_name gave, when it lines up); names are looked up when rendering.
+// skippedGroups }), skippedGroups, undated, listed: Map(key → the first name a group MMS
+// gave it) }. A group message's from is its sender's key (null for the backup's owner, ""
+// when the MMS names none) and its group is { members, listed } (listed: a Map, key → the
+// name contact_name gave, when it lines up); names are looked up when rendering.
 export function messages({ number = "", groups = false, timeZone = "UTC", media = false, onAttachment = () => {} } = {}) {
   const want = digits(number);
   const conversations = new Map();
@@ -68,7 +72,7 @@ export function messages({ number = "", groups = false, timeZone = "UTC", media 
   let undated = 0, skippedGroups = 0;
   const listedNames = new Map(); // key → the first name a group MMS's contact_name gave it
   const fileNames = new Set(); // attachment names given so far (lower case)
-  const conv =(key, group = false, members = [key]) => {
+  const conv = (key, group = false, members = [key]) => {
     if (!conversations.has(key)) conversations.set(key, { key, group, members, contact: "", messages: [], skippedGroups: 0 });
     return conversations.get(key);
   };
@@ -137,7 +141,8 @@ export function messages({ number = "", groups = false, timeZone = "UTC", media 
       files.push(fn);
       if (media && p.attrs.data) onAttachment(fn, p.attrs.data);
     }
-    c.messages.push({ ms, mine: a.msg_box !== "1", from, group, text: text.join("\n"), files, note: "" });
+    const box = a.msg_box;
+    c.messages.push({ ms, mine: box !== "1", from, group, text: text.join("\n"), files, note: box === "3" || box === "4" || box === "5" ? " (not sent)" : "" });
   };
 
   const xml = reader(["sms", "mms"], (el) => (el.name === "sms" ? onSms(el.attrs) : onMms(el.attrs, el.children)));
@@ -207,7 +212,7 @@ export function plan({ conversations, skippedGroups, undated, listed = new Map()
     files.push({ name, text: render(c, { source, title: want ? title : undefined, me, label, timeZone }) });
     stats.conversations++;
     stats.messages += c.messages.length;
-    stats.mine += c.messages.filter((m) => m.mine).length;
+    stats.mine += c.messages.filter((m) => m.mine && !m.note).length; // sent: not a draft or a failed send
   }
   return { files, stats };
 }

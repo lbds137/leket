@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +87,19 @@ test("two questions answered in one record: its answers go to the first, the sec
   assert.deepEqual(shape(s).filter(([r]) => r === "user").slice(1), [
     ["user", "*(answering the question)*\n\nA? → **yes**"],
     ["user", "*(answering the question)*\n\nskipped"],
+  ]);
+});
+
+test("two questions in one record, answers naming the second: they go to the second, matched by question text", () => {
+  const s = run([
+    prompt(0, "Ask twice"),
+    reply(1, ask("q1", [{ question: "A?", options: [] }]), ask("q2", [{ question: "B?", options: [] }])),
+    { ...base(2), type: "user", toolUseResult: { answers: { "B?": "no" } },
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "q1", content: "skipped" }, { type: "tool_result", tool_use_id: "q2", content: "x" }] } },
+  ]);
+  assert.deepEqual(shape(s).filter(([r]) => r === "user").slice(1), [
+    ["user", "*(answering the question)*\n\nskipped"],
+    ["user", "*(answering the question)*\n\nB? → **no**"],
   ]);
 });
 
@@ -228,8 +241,9 @@ test("CLI: a folder's top-level transcripts become one file each; the summary na
   const j = leket(["convert", "claude-code", join(src, "sess-0001-aaaa.jsonl"), "--out", out, "--json"]);
   assert.equal(j.status, 0, j.stderr);
   assert.equal(JSON.parse(readFileSync(join(out, "2024-03-05 Hello there.json"), "utf8")).turns.length, 2);
-  // a transcript given both itself and in its folder is read once
-  const twice = leket(["convert", "claude-code", join(src, "sess-0001-aaaa.jsonl"), src, "--out", join(d, "twice")]);
+  // a transcript given itself, in its folder and by a link is read once
+  symlinkSync(join(src, "sess-0001-aaaa.jsonl"), join(d, "link.jsonl"));
+  const twice = leket(["convert", "claude-code", join(src, "sess-0001-aaaa.jsonl"), src, join(d, "link.jsonl"), "--out", join(d, "twice")]);
   assert.equal(twice.status, 0, twice.stderr);
   assert.deepEqual(readdirSync(join(d, "twice")), ["2024-03-05 Hello there.md"]);
   assert.match(twice.stderr, /1 sessions, 2 messages/);

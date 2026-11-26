@@ -199,6 +199,17 @@ test("an address that is an Object property's name, or empty, is an ordinary con
   assert.match(files[1].text, /only the conversation with no address\./);
 });
 
+test("an MMS draft, outbox or failed send is marked (not sent), and neither it nor an unsent SMS counts as sent", () => {
+  const mms = (box, text) => `<mms date="17096${box}0000000" msg_box="${box}" address="5550100001"><parts><part ct="text/plain" text="${text}"/></parts></mms>`;
+  const xml = doc(mms(1, "in"), mms(2, "out"), mms(3, "draft"), mms(4, "outbox"), mms(5, "failed"),
+    sms({ address: "5550100001", date: "1709700000000", type: "3", body: "sms draft" }),
+    sms({ address: "5550100001", date: "1709700000001", type: "2", body: "sms sent" }));
+  const { files, stats } = convert(xml, { me: "Me" });
+  assert.deepEqual(files[0].text.match(/^> -# .*$/gm).map((l) => l.replace(/ — .* (AM|PM)/, "")),
+    ["> -# …0001", "> -# Me", "> -# Me (not sent)", "> -# Me (not sent)", "> -# Me (not sent)", "> -# Me (not sent)", "> -# Me"]);
+  assert.equal(stats.mine, 2);
+});
+
 test("--number: an MMS kept because an <addr> names the number goes in that conversation's one file", () => {
   const xml = doc(
     `<mms date="1709600000000" msg_box="1" address="5550100002"><parts><part ct="text/plain" text="via addr"/></parts><addrs><addr address="5550100001" type="151"/></addrs></mms>`,
@@ -264,7 +275,7 @@ test("CLI: writes one file per conversation and, with --media, the attachments a
   const r = leket(["convert", "sms", FIXTURE, "--out", out, "--media", media]);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(readdirSync(out).sort(), ["media", "sms-ACMEBANK.md", "sms-Alex.md", "sms-Sam.md", `sms-${chr(0x2026)}2345.md`].sort());
-  assert.match(r.stderr, /4 conversations, 9 messages \(3 sent from the backup's phone\)/);
+  assert.match(r.stderr, /4 conversations, 9 messages \(1 sent from the backup's phone\)/);
   assert.match(r.stderr, /Group messages left out \(give --groups to keep them\): 2\./);
   const tsv = readFileSync(join(media, "attachments.tsv"), "utf8").trim().split("\n");
   assert.equal(tsv[0], "file\tsize\tmd5");
