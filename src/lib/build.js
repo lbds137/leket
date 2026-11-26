@@ -26,6 +26,7 @@ export const restBetweenFiles = () => 500 + Math.random() * 500;
 // the answer is then { stopped: true } (no error of its own: the stop is the reason).
 // `maxBytes` (left out: no cap) refuses a file that says or turns out to be larger, before
 // it is held whole: { error, tooBig: true }, not tried again (a retry gets the same file).
+// The error text is a raw byte count: a caller maps tooBig to its own reason.
 export async function fetchFile(url, { fetchFn = fetch, tries = 5, wait = 3000, idle = 60000, signal, maxBytes = Infinity } = {}) {
   const tooBig = { error: `over ${maxBytes} bytes`, tooBig: true };
   let last;
