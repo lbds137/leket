@@ -37,7 +37,7 @@ export function mergeSaves(saves) {
   const since = [], extracted = [], spans = [];
   for (const [i, d] of saves.entries()) {
     if (!d || typeof d !== "object" || !Array.isArray(d.messages)) throw new Error(`save ${i + 1} has no messages list: not a Discord save`);
-    if (d.channel_id !== channel) throw new Error(`save ${i + 1} is of channel ${d.channel_id}, not ${channel}: give saves of one conversation`);
+    if (d.channel_id !== channel) throw new Error(`save ${i + 1} is of channel ${shown(d.channel_id)}, not ${shown(channel)}: give saves of one conversation`);
     // findIndex, not find: a hole in the list is itself a bad entry
     const bad = d.messages.findIndex((m) => !m || typeof m.id !== "string" || !/^\d+$/.test(m.id));
     if (bad >= 0) throw new Error(`save ${i + 1} has a message whose id (${JSON.stringify(d.messages[bad] && d.messages[bad].id)}) isn't a Discord id`);

@@ -118,9 +118,10 @@ export async function fetchImage(row, opts) {
 // it. Shared by the extension (fetchImage) and `leket reddit`, which writes the bytes.
 export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } = {}) {
   // The post author picks the image URL: a GET to a non-https or private host leaks the
-  // saver's IP and pokes their network even though CORS hides the reply. Known limit: a
-  // public name that resolves by DNS to a private address is not caught (an extension
-  // can't resolve names before fetching). Redirects are not followed: the next hop could be
+  // saver's IP and pokes their network even though CORS hides the reply. Known limit in
+  // the extension: a public name that resolves by DNS to a private address is not caught
+  // (an extension can't resolve names before fetching); the CLI passes guardedFetch
+  // (src/lib/guarded-fetch.js), whose lookup refuses such an answer. Redirects are not followed: the next hop could be
   // any scheme or host, and fetch can't show it before sending the request, so an image
   // behind a redirect keeps its remote link.
   let parsed;
@@ -154,6 +155,8 @@ export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } =
   try {
     r = await doFetch(parsed.href, { credentials: "omit", redirect: "manual", signal: AbortSignal.timeout(60_000) });
   } catch (e) {
+    // guardedFetch's lookup refusal is a reason of its own, not a network failure
+    if (e && e.code === "EPRIVATEADDR") throw new Error(e.message);
     throw unreachable(e);
   }
   // a browser hides a manual redirect as an opaque response; Node's fetch hands back the 3xx
@@ -172,8 +175,9 @@ export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } =
     throw refuse(`the server sent ${ctype || "no content type"}, not an image`);
   }
   // an SVG is a drawing in markup (it can carry script): saved under imageFileName's
-  // raster name it opens as nothing, so it keeps its remote link instead
-  if (ctype === "image/svg+xml") throw refuse("not fetched: an SVG drawing, not a picture");
+  // raster name it opens as nothing, so it keeps its remote link instead (some servers
+  // send the non-standard image/svg)
+  if (/^image\/svg(\+xml)?$/.test(ctype)) throw refuse("not fetched: an SVG drawing, not a picture");
   const cl = Number(r.headers && typeof r.headers.get === "function" && r.headers.get("content-length"));
   if (cl > MAX_MEDIA_BYTES) throw refuse(`over ${MEDIA_CAP_MB} MB`);
   if (!r.body) throw new Error("the server sent no image data");

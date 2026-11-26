@@ -119,6 +119,9 @@ test("hidden bars: largest count per kind across saves; unopened bars skipped; a
 test("refusals: saves of two conversations, a save with no messages list, no messages at all", () => {
   const [d] = dmSaves(), [c] = channelSaves();
   assert.throws(() => mergeSaves([d, c]), /save 2 is of channel 700, not 900/);
+  // a save's channel id is untrusted text: a control character comes out escaped
+  assert.throws(() => mergeSaves([d, { ...c, channel_id: "7\x1b[2J" }]),
+    (e) => !e.message.includes("\x1b") && /save 2 is of channel 7\\x1b\[2J, not 900/.test(e.message));
   assert.throws(() => mergeSaves([{ channel_id: "1" }]), /no messages list/);
   // a non-save after a save is named as one, not as another channel; a null save doesn't crash
   assert.throws(() => mergeSaves([d, {}]), /save 2 has no messages list/);
@@ -347,6 +350,7 @@ test("CLI: a bad --voice map, a save that isn't JSON or a bad id write nothing a
     [voice("arr.json", "[1]"), /isn't a voice map/],
     [voice("odd.json", JSON.stringify({ "105_0": { text: "no duration" } })), /isn't a voice map .*: 105_0 has no duration in seconds/],
     [voice("bad.json", "{"), /--voice .*bad\.json: .*JSON/],
+    [voice("esc.json", JSON.stringify({ "105_0\x1b[31m": { text: "x" } })), /: 105_0\\x1b\[31m has no duration/],
   ]) {
     const r = leket(["convert", "discord", save, "--out", out, "--voice", v]);
     assert.equal(r.status, 1, v);

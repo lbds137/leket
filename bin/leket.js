@@ -35,6 +35,7 @@ import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
 import { REDDIT_IMAGES_CAP_MB, REDDIT_JSON_CAP_MB, REDDIT_MAX_IMAGES } from "../src/lib/limits.js";
 import { images as redditImages, postOf, render as renderReddit } from "../src/modules/reddit/md.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
+import { guardedFetch } from "../src/lib/guarded-fetch.js";
 
 const { MAX_STRING_LENGTH } = bufferConstants;
 // a picture an earlier `leket reddit` saved: its number and one of imageFileName's extensions
@@ -417,7 +418,7 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
       const shape = `--voice ${voicePath} isn't a voice map (a JSON object of "<message id>_<n>": {"duration": seconds, "text": "..."})`;
       if (!voice || typeof voice !== "object" || Array.isArray(voice)) throw new Error(shape);
       const odd = Object.entries(voice).find(([, v]) => !v || typeof v !== "object" || !Number.isFinite(v.duration) || v.duration < 0);
-      if (odd) throw new Error(`${shape}: ${odd[0]} has no duration in seconds (a number, 0 or more)`);
+      if (odd) throw new Error(`${shape}: ${shown(odd[0])} has no duration in seconds (a number, 0 or more)`);
     }
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
@@ -604,9 +605,10 @@ const STDIO = { out: (s) => process.stdout.write(s), err: (s) => process.stderr.
 // Writes the post's Markdown (and its images, unless printing) and returns the exit
 // code; `say` takes what it prints (tests pass their own: node's test runner reports
 // over the real stdout). Everything is rendered once before anything is written, so
-// data that isn't a post writes nothing.
-export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, say = STDIO,
-  caps = { images: REDDIT_MAX_IMAGES, mb: REDDIT_IMAGES_CAP_MB } } = {}) {
+// data that isn't a post writes nothing. Images come through guardedFetch, which refuses
+// a name whose DNS answer is a private address (TASK-40).
+export async function saveRedditPost(data, { out, file, fetch: doFetch = guardedFetch, say = STDIO,
+  caps: { images: maxImages = REDDIT_MAX_IMAGES, mb: capMb = REDDIT_IMAGES_CAP_MB } = {} } = {}) {
   let p, md;
   try {
     p = postOf(data);
@@ -637,10 +639,10 @@ export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, 
   for (const [n, u, , ext] of redditImages(p)) {
     if (!u) continue;
     try {
-      if (fetched >= caps.images) throw new Error(`not fetched: past ${caps.images} images`);
+      if (fetched >= maxImages) throw new Error(`not fetched: past ${maxImages} images`);
       fetched++;
       const { blob, name } = await fetchImageData({ n, u, ext }, { fetch: doFetch });
-      if (bytes + blob.size > caps.mb * 1048576) throw new Error(`not kept: the images would total over ${caps.mb} MB`);
+      if (bytes + blob.size > capMb * 1048576) throw new Error(`not kept: the images would total over ${capMb} MB`);
       bytes += blob.size;
       await mkdir(folder, { recursive: true });
       await writeFile(join(folder, name), Buffer.from(await blob.arrayBuffer()));
@@ -701,7 +703,7 @@ async function redditMain(args, { fetch: doFetch = fetch } = {}) {
   } else {
     try { data = await fetchRedditPost(positionals[0], { fetch: doFetch }); } catch (e) { return fail(e.message, 1); }
   }
-  return saveRedditPost(data, { out: v.out, file: v.file, fetch: doFetch });
+  return saveRedditPost(data, { out: v.out, file: v.file });
 }
 
 export async function main(argv) {

@@ -1,0 +1,110 @@
+// guardedFetch (TASK-40): the CLI's image fetch refuses a name whose DNS answer is a local
+// or private-network address, before connecting; a public answer is fetched as fetch()
+// would, redirects unfollowed. DNS is stood in for, and the server is a local https one
+// with a throwaway certificate, so nothing here leaves the machine.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:https";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { guardedFetch, makeLookup } from "../src/lib/guarded-fetch.js";
+import { postPage } from "./fixtures/reddit.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const BIN = join(here, "..", "bin", "leket.js");
+const tmp = () => mkdtempSync(join(tmpdir(), "leket-guard-"));
+
+// a resolver answering every name with `answers`, as dns.lookup(name, {all: true}) does
+const answering = (...answers) => (name, opts, cb) => cb(null, answers);
+const lookupOf = (resolve, all) => new Promise((res) => makeLookup(resolve)("img.example", { all }, (...args) => res(args)));
+
+test("lookup: a private answer (v4, v6, v4-mapped, or one of several) is refused; public answers pass", async () => {
+  for (const a of [
+    { address: "127.0.0.1", family: 4 }, { address: "10.1.2.3", family: 4 }, { address: "192.168.0.9", family: 4 },
+    { address: "::1", family: 6 }, { address: "fd00::1", family: 6 }, { address: "::ffff:127.0.0.1", family: 6 },
+  ]) {
+    const [err] = await lookupOf(answering(a), true);
+    assert.equal(err && err.code, "EPRIVATEADDR", a.address);
+    assert.match(err.message, new RegExp(`img\\.example resolves to a local or private-network address \\(${a.address.replace(/\./g, "\\.")}\\)`));
+  }
+  const pub4 = { address: "151.101.1.140", family: 4 }, pub6 = { address: "2a04:4e42::396", family: 6 };
+  const [mixedErr] = await lookupOf(answering(pub4, { address: "10.0.0.1", family: 4 }), true);
+  assert.equal(mixedErr.code, "EPRIVATEADDR", "one private answer among public ones refuses the name");
+  assert.deepEqual(await lookupOf(answering(pub4, pub6), true), [null, [pub4, pub6]]);
+  assert.deepEqual(await lookupOf(answering(pub6, pub4), false), [null, pub6.address, 6]);
+  const nx = Object.assign(new Error("getaddrinfo ENOTFOUND img.example"), { code: "ENOTFOUND" });
+  assert.deepEqual(await lookupOf((n, o, cb) => cb(nx), true), [nx]);
+});
+
+test("guardedFetch: a private answer fails before any connection", async () => {
+  let connected = 0;
+  const server = createServer((req, res) => { connected++; res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const url = `https://img.example:${server.address().port}/a.png`;
+    await assert.rejects(guardedFetch(url, { lookup: makeLookup(answering({ address: "127.0.0.1", family: 4 })) }),
+      (e) => e.code === "EPRIVATEADDR");
+    assert.equal(connected, 0);
+  } finally {
+    server.close();
+  }
+});
+
+// a self-signed certificate for img.example, made fresh for the run
+function certificate() {
+  const dir = tmp();
+  const r = spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=img.example",
+    "-addext", "subjectAltName=DNS:img.example", "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem")], { encoding: "utf8" });
+  assert.equal(r.status, 0, `openssl is needed for this test: ${r.stderr || r.error}`);
+  return { key: readFileSync(join(dir, "key.pem")), cert: readFileSync(join(dir, "cert.pem")) };
+}
+
+test("guardedFetch: a public answer is fetched as a Response; a redirect and a 204 come back unfollowed", async () => {
+  const tls = certificate();
+  const server = createServer(tls, (req, res) => {
+    if (req.url === "/a.png") { res.writeHead(200, { "content-type": "image/png", "set-cookie": ["a=1", "b=2"] }); res.end(Buffer.from([1, 2, 3])); }
+    else if (req.url === "/moved") { res.writeHead(302, { location: "https://elsewhere.example/x" }); res.end("moved"); }
+    else { res.writeHead(204); res.end(); }
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  // the stand-in DNS sends img.example to this server, past the guard: the guard is the
+  // test above; this one pins what a fetched answer looks like
+  const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
+  const base = `https://img.example:${server.address().port}`;
+  try {
+    const r = await guardedFetch(`${base}/a.png`, { lookup: direct, ca: tls.cert });
+    assert.equal(r.status, 200);
+    assert.equal(r.ok, true);
+    assert.equal(r.headers.get("content-type"), "image/png");
+    assert.deepEqual(new Uint8Array(await r.arrayBuffer()), new Uint8Array([1, 2, 3]));
+    const moved = await guardedFetch(`${base}/moved`, { lookup: direct, ca: tls.cert });
+    assert.equal(moved.status, 302);
+    assert.equal(moved.headers.get("location"), "https://elsewhere.example/x");
+    await moved.body.cancel();
+    const empty = await guardedFetch(`${base}/none`, { lookup: direct, ca: tls.cert });
+    assert.equal(empty.status, 204);
+    assert.equal(empty.body, null);
+  } finally {
+    server.close();
+  }
+});
+
+test("CLI: leket reddit refuses an image whose name resolves to a private address (the default image fetch is guarded)", () => {
+  const dir = tmp();
+  const src = join(dir, "reddit-abc123.json");
+  writeFileSync(src, JSON.stringify(postPage({ post_hint: "image", url: "https://img.example/a.png", is_self: false })));
+  // a preload standing in for DNS: every name resolves to 127.0.0.1
+  const preload = join(dir, "dns.mjs");
+  writeFileSync(preload, `import dns from "node:dns";
+dns.lookup = (name, opts, cb) => { if (typeof opts === "function") { cb = opts; opts = {}; }
+  const a = { address: "127.0.0.1", family: 4 };
+  process.nextTick(() => (opts && opts.all ? cb(null, [a]) : cb(null, a.address, a.family))); };
+`);
+  const r = spawnSync(process.execPath, ["--import", preload, BIN, "reddit", "--from-json", src, "--out", dir], { encoding: "utf8" });
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /couldn't save image 1 \(not fetched: img\.example resolves to a local or private-network address \(127\.0\.0\.1\)\); the \.md links https:\/\/img\.example\/a\.png/);
+});
