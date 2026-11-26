@@ -106,7 +106,7 @@ function escapeLineStart(line) {
     .replace(/^(\d{1,9})([.)])/, "$1\\$2");
 }
 
-function codeSpan(s) {
+export function codeSpan(s) {
   s = s.replace(/[\r\n]+/g, " ");
   if (!s) return "";
   const longest = Math.max(0, ...[...s.matchAll(/`+/g)].map((m) => m[0].length));
