@@ -3,14 +3,15 @@
 // folder, --file / stdout, refusals that write nothing, and the logged-out URL path.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { render } from "../src/modules/reddit/md.js";
 import { fetchRedditPost, redditPostId, redditUrl, saveRedditPost } from "../bin/leket.js";
+import { fetchImageData } from "../src/modules/reddit/prepare.js";
 import { postPage } from "./fixtures/reddit.js";
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "leket.js");
@@ -212,4 +213,118 @@ test("fetchRedditPost follows reddit's redirect of the JSON address; a bare or b
   await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: broken }), /redirects off reddit, to http:\/\/\[/);
   const cut = async () => new Response(new ReadableStream({ start(c) { c.error(new Error("connection reset")); } }));
   await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: cut }), /couldn't read reddit's answer for post abc123 \(connection reset\)/);
+});
+
+// --- the #197 review lows ---
+
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+const gallery = (n) => postPage({
+  is_gallery: true,
+  gallery_data: { items: Array.from({ length: n }, (_, i) => ({ media_id: `m${i + 1}` })) },
+  media_metadata: Object.fromEntries(Array.from({ length: n }, (_, i) => [`m${i + 1}`, { status: "valid", m: "image/png", s: { u: `https://i.redd.it/${i + 1}.png` } }])),
+});
+
+test("a re-save replaces an image saved under another extension, keeps one it couldn't fetch again, and leaves other files", async () => {
+  const dir = tmp();
+  const folder = join(dir, "reddit-abc123-images");
+  mkdirSync(folder);
+  for (const f of ["01.jpg", "02.jpg", "notes.txt", "1.txt"]) writeFileSync(join(folder, f), "old");
+  const fetch = async (url) => url.endsWith("/1.png")
+    ? new Response(png, { headers: { "content-type": "image/png" } })
+    : new Response("gone", { status: 404 });
+  const r = await captured(gallery(2), { out: dir, fetch });
+  assert.equal(r.code, 3, r.stderr);
+  assert.deepEqual(readdirSync(folder).sort(), ["01.png", "02.jpg", "1.txt", "notes.txt"]);
+  assert.match(r.stderr, /couldn't save image 2 \(the server answered 404\); the \.md links https:\/\/i\.redd\.it\/2\.png; 02\.jpg from an earlier save stays in /);
+});
+
+test("caps: past the image count the rest link out unfetched; past the total size an image isn't kept", async () => {
+  const dir = tmp();
+  const asked = [];
+  const fetch = async (url) => { asked.push(url); return new Response(png, { headers: { "content-type": "image/png" } }); };
+  const r = await captured(gallery(3), { out: dir, fetch, caps: { images: 2, mb: 1 } });
+  assert.equal(r.code, 3);
+  assert.equal(asked.length, 2, "the third is never asked for");
+  assert.match(r.stderr, /couldn't save image 3 \(not fetched: past 2 images\)/);
+  const tight = await captured(gallery(2), { out: tmp(), fetch, caps: { images: 100, mb: 6 / 1048576 } });
+  assert.equal(tight.code, 3);
+  assert.match(tight.stderr, /couldn't save image 2 \(not kept: the images would total over/);
+  assert.ok(!/image 1/.test(tight.stderr), tight.stderr);
+});
+
+test("the post's JSON is refused past its cap, without reading the rest", async () => {
+  let pulled = 0;
+  const mb = new Uint8Array(1048576);
+  const endless = async () => new Response(new ReadableStream({ pull(c) { pulled++; c.enqueue(mb); } }));
+  await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: endless }), /reddit's answer for post abc123 is over 64 MB/);
+  assert.ok(pulled <= 66, `stopped near the cap, read ${pulled} MB`);
+});
+
+test("fetchRedditPost refuses a post other than the one asked for", async () => {
+  const other = postPage({ id: "zzz999" });
+  await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: async () => new Response(JSON.stringify(other)) }), /reddit answered with post zzz999, not abc123/);
+  // reddit's ids are lower case; an address in capitals is the same post
+  assert.deepEqual(await fetchRedditPost("https://redd.it/ABC123", { fetch: async () => new Response(JSON.stringify(selfPost)) }), selfPost);
+});
+
+test("redditUrl takes the phone and short hosts (m., sh., i.)", () => {
+  for (const h of ["m", "sh", "i"]) assert.ok(redditUrl(`https://${h}.reddit.com/r/x/comments/abc123/t/`), h);
+  assert.equal(redditUrl("https://x.reddit.com/comments/abc123"), null);
+});
+
+test("redirects: a share link through two hops resolves; more than 5 hops is refused", async () => {
+  const asked = [];
+  const twoHops = async (url) => {
+    asked.push(url);
+    if (url.endsWith("/s/One")) return new Response(null, { status: 301, headers: { location: "/r/x/s/Two" } });
+    if (url.endsWith("/s/Two")) return new Response(null, { status: 302, headers: { location: "https://old.reddit.com/r/x/comments/abc123/t/" } });
+    return new Response(JSON.stringify(selfPost));
+  };
+  assert.deepEqual(await fetchRedditPost("https://www.reddit.com/r/x/s/One", { fetch: twoHops }), selfPost);
+  assert.equal(asked.length, 3);
+  let n = 0;
+  const loop = async () => new Response(null, { status: 301, headers: { location: `/r/x/s/Hop${n++}` } });
+  await assert.rejects(fetchRedditPost("https://www.reddit.com/r/x/s/Start", { fetch: loop }), /redirects more than 5 times/);
+  assert.equal(n, 6, "the first ask and 5 hops");
+});
+
+test("a .md that can't be written after images saved: exit 1, and the images stay", async () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "x.md")); // a folder where the .md goes: its write fails, x-images is fine
+  const fetch = async () => new Response(png, { headers: { "content-type": "image/png" } });
+  const r = await captured(gallery(1), { file: join(dir, "x.md"), fetch });
+  assert.equal(r.code, 1, r.stderr);
+  assert.match(r.stderr, /couldn't write .*x\.md \(.*\); the images saved in .*x-images stay\./);
+  assert.deepEqual(readdirSync(join(dir, "x-images")), ["01.png"]);
+});
+
+test("server text reaches stderr with its control characters escaped", async () => {
+  const esc = async () => new Response(null, { status: 302, headers: { location: "https://evil.example/\x1b[2J" } });
+  await assert.rejects(fetchRedditPost("https://www.reddit.com/r/x/s/Code", { fetch: esc }), (e) => {
+    assert.ok(!e.message.includes("\x1b"), JSON.stringify(e.message));
+    assert.match(e.message, /to https:\/\/evil\.example\/\\x1b\[2J/);
+    return true;
+  });
+  const typed = async () => new Response(png, { headers: { "content-type": "text/\x1b[31mred" } });
+  const r = await captured(gallery(1), { out: tmp(), fetch: typed });
+  assert.ok(!r.stderr.includes("\x1b"), JSON.stringify(r.stderr));
+  assert.match(r.stderr, /the server sent text\/\\x1b\[31mred, not an image/);
+});
+
+test("an SVG served as an image is not saved under a raster name: it links out", async () => {
+  const svg = async () => new Response("<svg/>", { headers: { "content-type": "image/svg+xml" } });
+  await assert.rejects(fetchImageData({ n: 1, u: "https://i.redd.it/a.svg", ext: "" }, { fetch: svg }), /not fetched: an SVG drawing, not a picture/);
+});
+
+test("--file - into a reader that closed early stops quietly with 141", async () => {
+  const dir = tmp();
+  const src = join(dir, "big.json");
+  writeFileSync(src, JSON.stringify(postPage({ selftext: "x".repeat(300000) }, [])));
+  const child = spawn(process.execPath, [BIN, "reddit", "--from-json", src, "--file", "-"], { stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.destroy();
+  let err = "";
+  child.stderr.on("data", (d) => { err += d; });
+  const code = await new Promise((res) => child.on("close", res));
+  assert.equal(err, "", "no stack trace");
+  assert.equal(code, 141);
 });

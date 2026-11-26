@@ -14,6 +14,7 @@
 // "<message id>_f<k>_<n>" inside a forward → {duration: seconds, text}) puts machine
 // transcripts under their attachment lines.
 // Pure: no file access. bin/leket.js reads the saves and writes what render() returns.
+import { shown } from "../../lib/shown.js";
 
 // a snowflake id is past 2^53: compared as BigInt, never as a Number
 const byId = (a, b) => {
@@ -123,7 +124,12 @@ const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 const voiceLine = (v) =>
   `[voice message, ${mmss(v.duration)}, machine transcript, not checked against the audio: ${v.text || "(no speech heard)"}]`;
 const cell = (s) => String(s ?? "").replace(/\|/g, "\\|");
-const utc = (iso) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
+// a gap's ends in minutes, or in seconds (or milliseconds) when the ends need them, so
+// a short gap never reads "12:00 UTC to 12:00 UTC"
+const gapEnds = (g) => {
+  const n = [g.from, g.to].every((t) => t.endsWith(":00.000Z")) ? 16 : [g.from, g.to].every((t) => t.endsWith(".000Z")) ? 19 : 23;
+  return [g.from, g.to].map((t) => `${t.slice(0, n).replace("T", " ")} UTC`);
+};
 
 // The files for one merged conversation: [{name, text}], names relative to the output
 // folder, each starting with `base`. by: "none" (one file), "year" or "month".
@@ -132,6 +138,8 @@ export function render(conv, { base, by = conv.isDm ? "none" : "month", title = 
   const msgs = conv.messages;
   if (!msgs.length) throw new Error("the save(s) hold no messages");
   const local = clock(timeZone);
+  const unreadable = msgs.find((m) => !Number.isFinite(Date.parse(m.datetime)));
+  if (unreadable) throw new Error(`message ${shown(unreadable.id)} has no readable time (datetime ${shown(JSON.stringify(unreadable.datetime) ?? "missing")})`);
   const at = new Map(msgs.map((m) => [m.id, local(m.datetime)]));
   const named = new Map(Object.entries(names));
   const name = (m) => (m.author_username != null && named.has(m.author_username) ? named.get(m.author_username) : m.author || "?");
@@ -144,7 +152,7 @@ export function render(conv, { base, by = conv.isDm ? "none" : "month", title = 
   const source = `${conv.saves} save(s) of channel ${conv.channel}${conv.isDm ? "" : ` in ${conv.guild || "the server"}`}`
     + (ex.length ? `, exported ${ex[0]}${ex[ex.length - 1] !== ex[0] ? ` to ${ex[ex.length - 1]}` : ""}` : "")
     + `; ${start}`
-    + conv.gaps.map((g) => `; GAP: no save covers ${utc(g.from)} to ${utc(g.to)}, so messages from then may be missing`).join("");
+    + conv.gaps.map((g) => gapEnds(g)).map(([from, to]) => `; GAP: no save covers ${from} to ${to}, so messages from then may be missing`).join("");
   const span = (part) => `${at.get(part[0].id).date} to ${at.get(part[part.length - 1].id).date}`;
 
   const body = (m) => {

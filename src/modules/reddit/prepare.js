@@ -171,6 +171,9 @@ export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } =
   if (!ctype.startsWith("image/")) {
     throw refuse(`the server sent ${ctype || "no content type"}, not an image`);
   }
+  // an SVG is a drawing in markup (it can carry script): saved under imageFileName's
+  // raster name it opens as nothing, so it keeps its remote link instead
+  if (ctype === "image/svg+xml") throw refuse("not fetched: an SVG drawing, not a picture");
   const cl = Number(r.headers && typeof r.headers.get === "function" && r.headers.get("content-length"));
   if (cl > MAX_MEDIA_BYTES) throw refuse(`over ${MEDIA_CAP_MB} MB`);
   if (!r.body) throw new Error("the server sent no image data");
