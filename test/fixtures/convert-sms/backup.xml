@@ -1,0 +1,54 @@
+﻿<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<!--File Created By SMS Backup & Restore v10.20.002 on 05/03/2024 12:00:00-->
+<?xml-stylesheet type="text/xsl" href="sms.xsl"?>
+<smses count="11" backup_set="00000000-0000-0000-0000-000000000000" backup_date="1709900000000" type="full">
+  <sms protocol="0" address="+1 (555) 010-0001" date="1709647200000" type="1" subject="null" body="hi there &amp; welcome&#10;second line" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="1709647199000" sub_id="1" readable_date="Mar 5, 2024 9:00:00 AM" contact_name="Sam" />
+  <sms protocol="0" address="5550100001" date="1709647260000" type="2" subject="null" body="" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="1" readable_date="Mar 5, 2024 9:01:00 AM" contact_name="(Unknown)" />
+  <sms protocol="0" address="5550100001" date="1709647320000" type="5" subject="null" body="this one failed &lt;3 &quot;quoted&quot;" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="1" readable_date="" contact_name="Sam" />
+  <sms protocol="0" address="5550100002" date="1709650800000" type="1" subject="null" body="alex here" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="1" readable_date="" contact_name="Alex" />
+  <sms protocol="0" address="ACMEBANK" date="1709654400000" type="1" subject="null" body="Your code is 000000" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="1" readable_date="" contact_name="(Unknown)" />
+  <sms protocol="0" address="72345" date="1709658000000" type="1" subject="null" body="Reply STOP to end" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="1" readable_date="" contact_name="(Unknown)" />
+  <mms date="1709690400" rr="null" sub="null" ct_t="application/vnd.wap.multipart.related" read_status="null" seen="1" msg_box="1" address="5550100001" sub_cs="null" resp_st="null" retr_st="null" d_tm="null" text_only="0" exp="null" locked="0" m_id="null" st="null" retr_txt_cs="null" retr_txt="null" creator="null" date_sent="0" read="1" m_size="null" rpt_a="null" ct_cls="null" pri="null" sub_id="1" tr_id="null" resp_txt="null" ct_l="null" m_cls="null" d_rpt="null" v="null" _id="1" m_type="132" readable_date="" contact_name="Sam">
+    <parts>
+      <part seq="-1" ct="application/smil" name="null" chset="null" cd="null" fn="null" cid="&lt;smil&gt;" cl="smil.xml" ctt_s="null" ctt_t="null" text='&lt;smil&gt;&lt;body&gt;&lt;/body&gt;&lt;/smil&gt;' />
+      <part seq="0" ct="text/plain" name="null" chset="106" cd="null" fn="null" cid="null" cl="null" ctt_s="null" ctt_t="null" text="look at this" />
+      <part seq="0" ct="image/jpeg" name="null" chset="null" cd="null" fn="null" cid="null" cl="photo.jpg" ctt_s="null" ctt_t="null" data="R0lGODlhLWZha2UtcGljdHVyZQ==" />
+      <part seq="0" ct="image/png" name="null" chset="null" cd="null" fn="null" cid="null" cl="null" ctt_s="null" ctt_t="null" data="R0lGODlhLWZha2UtcGljdHVyZQ==" />
+      <part seq="0" ct="audio/amr" name="voice.amr" chset="null" cd="null" fn="null" cid="null" ctt_s="null" ctt_t="null" data="R0lGODlhLWZha2UtcGljdHVyZQ==" />
+      <part seq="0" ct="text/plain" name="null" chset="106" cd="null" fn="null" cid="null" cl="null" ctt_s="null" ctt_t="null" text="and this" />
+    </parts>
+    <addrs>
+      <addr address="5550100001" type="137" charset="106" />
+      <addr address="5550100000" type="151" charset="106" />
+    </addrs>
+  </mms>
+  <sms protocol="0" address="5550100001" date="1709733600000" type="3" subject="null" body="a draft   " toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="1" readable_date="" contact_name="Sam" />
+  <mms date="1709740800000" msg_box="1" address="5550100001~5550100002" m_type="132" contact_name="Sam, Alex" readable_date="">
+    <parts>
+      <part seq="0" ct="text/plain" name="null" cl="null" text="group hello" />
+    </parts>
+    <addrs>
+      <addr address="+15550100002" type="137" charset="106" />
+      <addr address="5550100001" type="151" charset="106" />
+      <addr address="5550100000" type="151" charset="106" />
+    </addrs>
+  </mms>
+  <mms date="1709744400000" msg_box="2" address="5550100001~5550100003" m_type="128" contact_name="Sam" readable_date="">
+    <parts>
+      <part seq="0" ct="text/plain" name="null" cl="null" text="to both&#10;of you" />
+    </parts>
+    <addrs>
+      <addr address="5550100000" type="137" charset="106" />
+      <addr address="5550100001" type="151" charset="106" />
+      <addr address="5550100003" type="151" charset="106" />
+    </addrs>
+  </mms>
+  <mms date="1709748000000" msg_box="1" address="5550100002" m_type="132" contact_name="Alex" readable_date="">
+    <parts>
+      <part seq="-1" ct="application/smil" name="null" cl="smil.xml" text="&lt;smil/&gt;" />
+    </parts>
+    <addrs>
+      <addr address="5550100002" type="137" charset="106" />
+    </addrs>
+  </mms>
+</smses>

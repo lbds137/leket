@@ -178,10 +178,10 @@ function inline(nodes, ctx) {
         const core = label.slice(lead.length, label.length - trail.length);
         if (!LINKABLE.test(href.trim())) {
           // the address as text, unless scripted or already the label
-          // control characters go from the address as shown: a browser's URL parser drops tabs
-          // and line breaks (a line break would end the paragraph, heading or table row) and
-          // percent-encodes the rest, which as raw text would only garble the line
-          const shown = href.trim().replace(/[\x00-\x1f\x7f]/g, "");
+          // control characters (C0, DEL and C1) go from the address as shown: a browser's URL
+          // parser drops tabs and line breaks (a line break would end the paragraph, heading or
+          // table row) and percent-encodes the rest, which as raw text would only garble the line
+          const shown = href.trim().replace(/[\x00-\x1f\x7f-\x9f]/g, "");
           const addr = SCRIPTED.test(shown.replace(/[\x00-\x20]/g, "")) || textOf(n).trim() === shown ? "" : escapeText(shown);
           add(!addr ? label : `${lead}${core ? `${core} (${addr})` : addr}${trail}`);
           break;

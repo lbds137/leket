@@ -43,6 +43,8 @@ test("a line break inside a tel:/sms: address can't start a heading, list or tab
 test("other control characters go from a non-web address as shown too", () => {
   const c = String.fromCharCode;
   assert.equal(md(`<p><a href="tel:1${c(1)}2${c(0x1b)}[31m3${c(0x7f)}">call</a></p>`), "call (tel:12\\[31m3)");
+  // C1 too: NEL, CSI (an escape sequence's one-character start) and the range's ends
+  assert.equal(md(`<p><a href="tel:4${c(0x80)}5${c(0x85)}6${c(0x9b)}31m7${c(0x9f)}">call</a></p>`), "call (tel:45631m7)");
 });
 
 test("oneLineText: line breaks become spaces, a trailing # run is kept from CommonMark's closing sequence", () => {

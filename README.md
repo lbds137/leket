@@ -166,6 +166,12 @@ node bin/leket.js convert claude-code <transcript>... [--out DIR] [--user LABEL]
 
 A transcript is one of Claude Code's session files (`~/.claude/projects/<folder>/<session id>.jsonl`), or a folder of them (subfolders, where subagents' transcripts live, are not read). It writes one `.md` per session, named `YYYY-MM-DD Title` (the session's name in Claude Code, else the start of its first prompt), holding what you typed and what you were shown: your prompts (system reminders taken out), your answers to its questions, and the text of each reply. Tool calls, their output and text written before a tool call are left out. Sessions with no prompt typed by a person, such as scheduled or headless runs, are left out and counted in the summary. `--json` writes each session's turns (time, role, text) instead, for a script of your own to pick from.
 
+```
+node bin/leket.js convert sms <backup.xml> [--out DIR] [--me LABEL] [--name NUMBER=LABEL]... [--tz ZONE] [--number NUMBER [--title TEXT] [--base NAME]] [--groups] [--media DIR]
+```
+
+A backup is the `sms-*.xml` file the Android app SMS Backup & Restore writes. It writes one `sms-Name.md` per conversation, SMS and MMS together, in the same day-by-day shape as `convert discord`. Drafts and failed sends are marked "(not sent)", and each MMS picture, recording or video is named as `[attachment: filename]`. A person's name comes from `--name`, else the backup's contact name, else the number's last 4 digits; `--me` names you (default Me). Group texts are left out and counted unless you give `--groups`. `--number` writes only the conversation with that number (with `--groups`, the group texts that include it go into it, marked), and `--media DIR` saves the attachments themselves with a list of their sizes and md5 sums. The file is read a piece at a time, holding one message whole at a time, so attachments never all sit in memory at once.
+
 ### Reddit posts
 
 ```
@@ -218,8 +224,8 @@ Layout:
 - `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
-- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `common.js`: their times, file names and folder checks.
-- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini converter (its text escapes serve the character-chat one too).
+- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `sms.js`: `leket convert sms`; `common.js`: their times, file names and folder checks.
+- `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini converter (its text escapes serve the character-chat one too); `xml.js`: a streaming XML reader, for the SMS converter.
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.
 - `test/smoke/smoke.mjs`: the smoke run (`npm run smoke`).

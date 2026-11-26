@@ -37,9 +37,9 @@ const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : null);
 const str = (x) => (typeof x === "string" ? x : "");
 
 // A session's turns, from its lines in order: feed(line) each, then end() →
-// { turns: [{ at, role: "user" | "assistant", text }], title, sessionId, unparsed,
-// origins }. at is the record's own timestamp, as written (UTC ISO 8601); text is Markdown
-// as the original wrote it. title: the session's last custom-title record (its name in
+// { turns: [{ at, role: "user" | "assistant", answer?, text }], title, sessionId, unparsed,
+// origins }. at is the record's own timestamp, as written (UTC ISO 8601); answer is true on
+// the person's answer to a question; text is Markdown as the original wrote it. title: the session's last custom-title record (its name in
 // Claude Code), "" if none. unparsed: lines that aren't JSON (a live transcript's last line
 // can be half-written). origins: how many prompt records had a turnOrigin field at all (an
 // older transcript has none, so none of its prompts can be told to be the person's).
@@ -81,15 +81,19 @@ export function turns() {
       return;
     }
     if (Array.isArray(content) && content.some((b) => obj(b)?.type === "tool_result")) {
+      // the record's toolUseResult answers one question call: it is that call's answer, and
+      // any other asked call's result in the record is its own text
+      let answers = obj(obj(d.toolUseResult)?.answers);
       for (const b of content.filter(obj)) {
         if (!asked.has(b.tool_use_id)) continue;
-        const answers = obj(obj(d.toolUseResult)?.answers);
-        const text = answers && Object.keys(answers).length
+        const own = answers && Object.keys(answers).length;
+        const text = own
           ? Object.entries(answers).map(([q, a]) => `${q} → **${Array.isArray(a) ? a.map(String).join(", ") : String(a)}**`).join("\n")
           : typeof b.content === "string" ? b.content
             : Array.isArray(b.content) ? b.content.filter((x) => obj(x)?.type === "text").map((x) => str(x.text)).join("\n\n")
               : String(b.content ?? "None");
-        out.push({ at: when, role: "user", text: `*(answering the question)*\n\n${text}` });
+        if (own) answers = null;
+        out.push({ at: when, role: "user", answer: true, text: `*(answering the question)*\n\n${text}` });
       }
       return; // a tool's output neither ends the reply nor is shown
     }
@@ -132,7 +136,7 @@ function firstLine(text) {
 export function titleOf(session) {
   const named = pyStrip(session.title.replace(/[\r\n]+/g, " "));
   if (named) return named;
-  const first = session.turns.find((t) => t.role === "user" && !t.text.startsWith("*(answering"));
+  const first = session.turns.find((t) => t.role === "user" && !t.answer);
   return (first && firstLine(first.text)) || "Untitled session";
 }
 
