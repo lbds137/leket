@@ -126,6 +126,24 @@ test("refusals: saves of two conversations, a save with no messages list, no mes
   assert.throws(() => render(mergeSaves([{ ...d, messages: [] }]), { base: "x", timeZone: "UTC" }), /hold no messages/);
 });
 
+test("a message whose time can't be read is named in the refusal", () => {
+  const [d] = dmSaves();
+  const odd = { ...d, messages: d.messages.map((m, i) => (i === 1 ? { ...m, datetime: "yesterday\x1b" } : m)) };
+  const id = odd.messages[1].id;
+  assert.throws(() => render(mergeSaves([odd]), { base: "x", timeZone: "UTC" }),
+    new RegExp(`message ${id} has no readable time \\(datetime "yesterday\\\\u001b"\\)`));
+  const none = { ...d, messages: d.messages.map((m, i) => (i === 1 ? { ...m, datetime: undefined } : m)) };
+  assert.throws(() => render(mergeSaves([none]), { base: "x", timeZone: "UTC" }), /has no readable time \(datetime missing\)/);
+});
+
+test("a gap shorter than a minute is labelled in seconds, one off the second in milliseconds", () => {
+  const conv = mergeSaves(channelSaves());
+  const label = (from, to) => render({ ...conv, gaps: [{ from, to }] }, { base: "c", timeZone: "UTC" })[0].text;
+  assert.match(label("2025-02-02T09:00:15.000Z", "2025-02-02T09:00:45.000Z"), /GAP: no save covers 2025-02-02 09:00:15 UTC to 2025-02-02 09:00:45 UTC,/);
+  assert.match(label("2025-02-02T09:00:15.250Z", "2025-02-02T09:00:15.750Z"), /GAP: no save covers 2025-02-02 09:00:15\.250 UTC to 2025-02-02 09:00:15\.750 UTC,/);
+  assert.match(label("2025-02-02T09:00:00.000Z", "2025-02-02T10:00:00.000Z"), /GAP: no save covers 2025-02-02 09:00 UTC to 2025-02-02 10:00 UTC,/);
+});
+
 // --- the CLI ---
 
 test("CLI: converts JSON saves into --out and prints each path", () => {

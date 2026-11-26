@@ -19,7 +19,7 @@
 import { constants as bufferConstants } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import { constants, realpathSync } from "node:fs";
-import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -32,10 +32,13 @@ import { mergeSaves, render as renderDiscord } from "../src/modules/discord/conv
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
-
-const { MAX_STRING_LENGTH } = bufferConstants;
+import { REDDIT_IMAGES_CAP_MB, REDDIT_JSON_CAP_MB, REDDIT_MAX_IMAGES } from "../src/lib/limits.js";
 import { images as redditImages, postOf, render as renderReddit } from "../src/modules/reddit/md.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
+
+const { MAX_STRING_LENGTH } = bufferConstants;
+// a picture an earlier `leket reddit` saved: its number and one of imageFileName's extensions
+const SAVED_IMAGE = /^(\d+)\.(jpe?g|png|gif|webp)$/;
 
 const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max-comments N]
 
@@ -80,8 +83,9 @@ const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
   extension's Save writes: reddit-<post id>.md in DIR (default: the current directory),
   replacing an earlier save of the post. An image post's picture and every gallery
   image go in reddit-<post id>-images/ beside it (01.jpg, 02.png… in gallery order),
-  linked relatively; one that can't be saved keeps its remote link.
-  <post-url>        a post on reddit.com (www, old, new, np) or redd.it, or a share link
+  linked relatively; one that can't be saved keeps its remote link (and an earlier
+  save's copy of it stays). Up to ${REDDIT_MAX_IMAGES} images, ${REDDIT_IMAGES_CAP_MB} MB in all.
+  <post-url>        a post on reddit.com (www, old, new, np, m, sh, i) or redd.it, or a share link
                     (/r/SUB/s/CODE). Reddit usually refuses a logged-out fetch (HTTP
                     403): then save the post with the extension and use --from-json.
   --from-json FILE  the post's .json as the extension saves it (reddit-<id>.json)
@@ -493,7 +497,7 @@ async function convertMain(rest) {
 // --- leket reddit
 
 const REDDIT_UA = "leket (personal archiving; https://github.com/lbds137/leket)";
-const REDDIT_HOST = /^((www|old|new|np)\.)?reddit\.com$|^redd\.it$/;
+const REDDIT_HOST = /^((www|old|new|np|m|sh|i)\.)?reddit\.com$|^redd\.it$/;
 
 // A reddit address as an https URL, or null: reddit's own hosts only, on the default
 // port and with no login in it. An http address is asked over https.
@@ -532,7 +536,7 @@ async function redditGet(start, doFetch, { stopAtPost = false } = {}) {
     if (!loc) throw new Error(`${u.href} answered ${r.status} without saying where to`);
     let next = null;
     try { next = redditUrl(new URL(loc, u).href); } catch { /* not an address: refused below */ }
-    if (!next) throw new Error(`${u.href} redirects off reddit, to ${loc}`);
+    if (!next) throw new Error(`${u.href} redirects off reddit, to ${shown(loc)}`);
     if (stopAtPost && redditPostId(next)) return { url: next };
     u = next;
   }
@@ -556,13 +560,43 @@ export async function fetchRedditPost(address, { fetch: doFetch = fetch } = {}) 
   if (!r.ok) dropBody(r);
   if (r.status === 403 || r.status === 429) throw new Error(`reddit refused a logged-out fetch (HTTP ${r.status}); ${fromJson}`);
   if (!r.ok) throw new Error(`reddit answered ${r.status} for post ${id}`);
-  let text;
-  try { text = await r.text(); } catch (e) { throw new Error(`couldn't read reddit's answer for post ${id} (${(e && e.message) || e})`); }
+  const text = await readCapped(r, REDDIT_JSON_CAP_MB, `reddit's answer for post ${id}`);
+  let data;
   try {
-    return JSON.parse(text);
+    data = JSON.parse(text);
   } catch {
     throw new Error(`reddit answered with a page, not the post's JSON (a login or block page?); ${fromJson}`);
   }
+  // redirects stay on reddit, but the post saved must be the one asked for; data that
+  // isn't a post at all goes on to saveRedditPost, which says so
+  let got;
+  try { got = postOf(data).id; } catch { return data; }
+  if (typeof got === "string" && got.toLowerCase() !== id.toLowerCase()) {
+    throw new Error(`reddit answered with post ${shown(got)}, not ${id}`);
+  }
+  return data;
+}
+
+// A response body as text, read in chunks and refused past capMb, so a server can't
+// make the CLI hold an unbounded answer in memory.
+async function readCapped(r, capMb, what) {
+  const unread = (e) => new Error(`couldn't read ${what} (${shown((e && e.message) || e)})`);
+  if (!r.body) return "";
+  const reader = r.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    let step;
+    try { step = await reader.read(); } catch (e) { throw unread(e); }
+    if (step.done) break;
+    total += step.value.byteLength;
+    if (total > capMb * 1048576) {
+      reader.cancel().catch(() => {});
+      throw new Error(`${what} is over ${capMb} MB, more than a post's JSON should be`);
+    }
+    chunks.push(step.value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 const STDIO = { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) };
@@ -571,13 +605,14 @@ const STDIO = { out: (s) => process.stdout.write(s), err: (s) => process.stderr.
 // code; `say` takes what it prints (tests pass their own: node's test runner reports
 // over the real stdout). Everything is rendered once before anything is written, so
 // data that isn't a post writes nothing.
-export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, say = STDIO } = {}) {
+export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, say = STDIO,
+  caps = { images: REDDIT_MAX_IMAGES, mb: REDDIT_IMAGES_CAP_MB } } = {}) {
   let p, md;
   try {
     p = postOf(data);
     md = renderReddit(data);
   } catch (e) {
-    say.err(`leket: ${e.message}; nothing written.\n`);
+    say.err(`leket: ${shown(e.message)}; nothing written.\n`);
     return 1;
   }
   if (file === "-") { say.out(md); return 0; }
@@ -585,24 +620,42 @@ export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, 
   if (dest === undefined) {
     // the id becomes a path: a crafted file must not walk out of DIR with it
     if (typeof p.id !== "string" || !/^[a-z0-9]+$/i.test(p.id)) {
-      say.err(`leket: the post's id (${JSON.stringify(p.id)}) isn't reddit's form; give --file PATH; nothing written.\n`);
+      say.err(`leket: the post's id (${shown(JSON.stringify(p.id))}) isn't reddit's form; give --file PATH; nothing written.\n`);
       return 1;
     }
     dest = join(out ?? ".", `reddit-${p.id}.md`);
   }
   const folder = `${dest.replace(/\.md$/i, "")}-images`;
+  // an earlier save's pictures, by number: one this run saves again under another
+  // extension (01.jpg now 01.png) is replaced; one this run couldn't fetch is kept (it
+  // may be the only copy left) and stderr says so
+  let earlier = [];
+  try { earlier = (await readdir(folder)).filter((f) => SAVED_IMAGE.test(f)); } catch { /* no folder yet */ }
+  const earlierOf = (n) => earlier.filter((f) => Number(SAVED_IMAGE.exec(f)[1]) === n);
   const saved = {};
-  let failed = 0;
+  let failed = 0, fetched = 0, bytes = 0;
   for (const [n, u, , ext] of redditImages(p)) {
     if (!u) continue;
     try {
+      if (fetched >= caps.images) throw new Error(`not fetched: past ${caps.images} images`);
+      fetched++;
       const { blob, name } = await fetchImageData({ n, u, ext }, { fetch: doFetch });
+      if (bytes + blob.size > caps.mb * 1048576) throw new Error(`not kept: the images would total over ${caps.mb} MB`);
+      bytes += blob.size;
       await mkdir(folder, { recursive: true });
       await writeFile(join(folder, name), Buffer.from(await blob.arrayBuffer()));
       saved[n] = name;
+      for (const old of earlierOf(n)) {
+        if (old !== name) {
+          await rm(join(folder, old), { force: true })
+            .catch((e) => say.err(`leket: couldn't remove ${old}, an earlier save's image ${n} (${shown(e.message)})\n`));
+        }
+      }
     } catch (e) {
       failed++;
-      say.err(`leket: couldn't save image ${n} (${e.message}); the .md links ${u}\n`);
+      const kept = earlierOf(n);
+      say.err(`leket: couldn't save image ${n} (${shown(e.message)}); the .md links ${shown(u)}`
+        + `${kept.length ? `; ${kept.join(", ")} from an earlier save stays in ${folder}` : ""}\n`);
     }
   }
   try {
@@ -610,7 +663,7 @@ export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, 
     await mkdir(dirname(dest), { recursive: true });
     await writeFile(dest, md);
   } catch (e) {
-    say.err(`leket: couldn't write ${dest} (${e.message})${Object.keys(saved).length ? `; the images saved in ${folder} stay` : ""}.\n`);
+    say.err(`leket: couldn't write ${dest} (${shown(e.message)})${Object.keys(saved).length ? `; the images saved in ${folder} stay` : ""}.\n`);
     return 1;
   }
   say.out(`${dest}\n`);
@@ -636,7 +689,7 @@ async function redditMain(args, { fetch: doFetch = fetch } = {}) {
     process.stderr.write(`${REDDIT_USAGE}\n`);
     return 2;
   }
-  const fail = (msg, code) => { process.stderr.write(`leket: ${msg}\n`); return code; };
+  const fail = (msg, code) => { process.stderr.write(`leket: ${shown(msg)}\n`); return code; };
   if (v.out !== undefined && v.file !== undefined) return fail("give --out or --file, not both", 2);
   if (v.file === "") return fail("--file takes a path (or - to print)", 2);
   if (positionals.length && !redditUrl(positionals[0])) return fail("give a reddit post address (reddit.com/r/…/comments/… or a share link), or --from-json FILE", 2);
@@ -693,6 +746,12 @@ export async function main(argv) {
 // run as a program, including through a symlink on PATH (argv[1] is then the link)
 const invokedAs = (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href; } catch { return ""; } })();
 if (import.meta.url === invokedAs) {
+  // a reader that stops early (leket reddit --file - | head) closes the pipe: stop
+  // quietly with 141, as a program killed by SIGPIPE does, instead of a stack trace
+  process.stdout.on("error", (e) => {
+    if (e.code !== "EPIPE") throw e;
+    process.exit(141);
+  });
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => {
     process.stderr.write(`leket: ${(e && e.stack) || e}\n`);
     process.exitCode = 1;
