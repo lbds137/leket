@@ -55,11 +55,15 @@ export function badFolder(f) {
   return f.split("/").some((p) => !p || p === "." || p === "..");
 }
 
-// "<" that a Markdown renderer would read as the start of an HTML tag or an autolink
-// ("<Media omitted>", "<Sam>", "<b>") → "\<", so the text shows instead of vanishing. One a
-// backslash already escapes is left alone. Inside a code span or code block the escape
-// shows as a backslash; that costs one character, where a tag left raw loses its text.
-export const escapeTag = (s) => s.replace(/(?<!\\)<(?=[A-Za-z/!?])/g, "\\<");
+// What a Markdown renderer would read as HTML in plain text, escaped with "\" so the text
+// shows as typed: a "<" starting a tag or an autolink ("<Media omitted>", "<Sam>", "<b>"),
+// which would vanish, and an "&" starting a character reference ("&lt;", "&amp;"), which
+// would show as the character. One a backslash already escapes is left alone: after an odd
+// run of backslashes ("\<"), not an even one ("\\<" is a backslash, then the tag). Inside
+// a code span or code block the escape shows as a backslash; that costs one character,
+// where a tag left raw loses its text.
+export const escapeTag = (s) =>
+  s.replace(/(?<!\\)((?:\\\\)*)(<(?=[A-Za-z/!?])|&(?=(?:#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);))/g, "$1\\$2");
 
 // [ms] → [earliest, latest], without spreading (a long chat would overflow the call stack)
 export function span(times) {
