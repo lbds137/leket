@@ -186,3 +186,30 @@ test("fetchRedditPost: a redirect off reddit, a 403, a 5xx and a page instead of
   const offline = async () => { throw new TypeError("fetch failed"); };
   await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: offline }), /couldn't reach reddit \(fetch failed\)/);
 });
+
+test("redditUrl asks over https only, on the default port, with no login; a post id is a whole segment", () => {
+  assert.equal(redditUrl("http://np.reddit.com/r/x/s/Code").href, "https://np.reddit.com/r/x/s/Code");
+  for (const bad of ["https://me:pw@www.reddit.com/comments/abc123", "https://www.reddit.com:8443/comments/abc123"]) {
+    assert.equal(redditUrl(bad), null, bad);
+  }
+  assert.equal(redditPostId(redditUrl("https://www.reddit.com/comments/abc_def/")), null);
+  assert.equal(redditPostId(redditUrl("https://www.reddit.com/comments/abc123.json")), "abc123");
+});
+
+test("fetchRedditPost follows reddit's redirect of the JSON address; a bare or broken Location and a failed read say so", async () => {
+  const asked = [];
+  const moved = async (url) => {
+    asked.push(url);
+    return url.includes("/comments/abc123.json?")
+      ? new Response(null, { status: 301, headers: { location: "/r/x/comments/abc123/a_post/.json?raw_json=1" } })
+      : new Response(JSON.stringify(selfPost));
+  };
+  assert.deepEqual(await fetchRedditPost("https://redd.it/abc123", { fetch: moved }), selfPost);
+  assert.equal(asked[1], "https://www.reddit.com/r/x/comments/abc123/a_post/.json?raw_json=1");
+  const bare = async () => new Response(null, { status: 302 });
+  await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: bare }), /answered 302 without saying where to/);
+  const broken = async () => new Response(null, { status: 302, headers: { location: "http://[" } });
+  await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: broken }), /redirects off reddit, to http:\/\/\[/);
+  const cut = async () => new Response(new ReadableStream({ start(c) { c.error(new Error("connection reset")); } }));
+  await assert.rejects(fetchRedditPost("https://redd.it/abc123", { fetch: cut }), /couldn't read reddit's answer for post abc123 \(connection reset\)/);
+});
