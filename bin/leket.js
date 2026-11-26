@@ -878,7 +878,7 @@ export async function readClaudeCodeSessions(paths) {
     const t = claudeCodeTurns();
     for await (const line of jsonlLines(f)) t.feed(line);
     const s = t.end();
-    sessions.push({ ...s, id: s.sessionId || basename(f).replace(/\.jsonl$/, ""), source: f });
+    sessions.push({ ...s, id: s.sessionId || basename(f).replace(/\.jsonl$/i, ""), source: f });
   }
   return sessions;
 }
@@ -1023,8 +1023,13 @@ export async function inputFiles(paths, ext, what) {
   const files = [];
   for (const p of paths) {
     if ((await stat(p)).isDirectory()) {
-      const names = (await readdir(p, { withFileTypes: true }))
-        .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(ext)).map((e) => e.name).sort();
+      const names = [];
+      for (const e of await readdir(p, { withFileTypes: true })) {
+        if (!e.name.toLowerCase().endsWith(ext)) continue;
+        // a link counts when it leads to a file; a broken one is passed over
+        if (e.isFile() || (e.isSymbolicLink() && (await stat(join(p, e.name)).catch(() => null))?.isFile())) names.push(e.name);
+      }
+      names.sort();
       if (!names.length) throw new Error(`${p} holds no ${ext} ${what}`);
       files.push(...names.map((n) => join(p, n)));
     } else files.push(p);

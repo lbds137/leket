@@ -126,7 +126,7 @@ export function render({ entries, messages, events }, { source, title, names = {
       if (L.at(-1) === ">") L[L.length - 1] = "";
       L.push(`## ${t.date} (${t.weekday})`, "");
     }
-    L.push(`> -# ${e.event ? "Signal" : label(e.who)} — ${t.stamp}`);
+    L.push(`> -# ${e.event ? "Signal" : escapeTag(label(e.who))} — ${t.stamp}`);
     const poll = !e.event && e.lines[0].startsWith("Poll: ");
     for (const b of e.lines) {
       // a poll's options come indented to line up under the header; in a quote that

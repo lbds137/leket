@@ -119,7 +119,7 @@ function escapeLineStart(line) {
 }
 
 export function codeSpan(s) {
-  s = s.replace(/[\r\n]+/g, " ");
+  s = String(s ?? "").replace(/[\r\n]+/g, " "); // nothing given is "": the caller's fallback shows
   if (!s) return "";
   const longest = Math.max(0, ...[...s.matchAll(/`+/g)].map((m) => m[0].length));
   const fence = "`".repeat(longest + 1);

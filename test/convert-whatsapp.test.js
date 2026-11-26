@@ -10,12 +10,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { conversationName, parse, plan } from "../src/convert/whatsapp.js";
+import { conversationName, parse, plan, render } from "../src/convert/whatsapp.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -143,4 +143,37 @@ test("cli: usage errors exit 2, an unreadable export exits 1 with nothing writte
   assert.match(r.stderr, /C\.txt: line 1: can't read the date[^]*; nothing written\./);
   assert.deepEqual(readdirSync(out), []);
   assert.equal(existsSync(join(out, "whatsapp-A.md")), false);
+});
+
+test("review lows: bidi marks alone are blank, a bidi-only name makes a notice; a notice's trailing spaces go", () => {
+  const lrm = chr(0x200e);
+  assert.equal(body(one(`1.2.2025, 10:00 - Pat: hi\n${lrm}\n`)), "## 2025-02-01 (Sat)\n\n> -# Pat — Feb 1 2025 10:00 AM\n> hi\n>\n");
+  assert.match(one(`1.2.2025, 10:00 - Pat: hi\n1.2.2025, 10:01 - Subject changed\n${lrm}\nmore   \n`), /: Subject changed more\]$/m);
+  const { entries, messages } = parse(`1.2.2025, 10:00 - Pat: hi\n1.2.2025, 10:01 - ${lrm}: x\n1.2.2025, 10:02 - : y\n`);
+  assert.deepEqual([messages, entries.map((e) => e.who)], [1, ["Pat", null, null]]);
+});
+
+test("review lows: an escaped < stays as it is; a label's < is escaped; no source is (unnamed)", () => {
+  const md = one("1.2.2025, 10:00 - Pat <work>: \\<b> and <i>\n");
+  assert.match(md, /^> -# Pat \\<work> — /m);
+  assert.match(md, /^> \\<b> and \\<i>$/m);
+  const parsed = parse("1.2.2025, 10:00 - Pat: hi\n");
+  assert.doesNotThrow(() => assert.match(render(parsed, { title: "T" }), /^Source: \(unnamed\), /m));
+});
+
+test("the range counts messages only; month 0 is refused; senders named like Object's properties are counted", () => {
+  const md = one("1.1.2020, 10:00 - Encrypted\n1.2.2025, 10:00 - Pat: hi\n1.3.2026, 10:00 - Pat left\n");
+  assert.match(md, /^1 messages, 2025-02-01 to 2025-02-01\./m);
+  assert.throws(() => parse("1.0.2025, 10:00 - Pat: x\n"), /line 1: can't read the date/);
+  const { stats } = plan([{ file: "a.txt", text: "1.2.2025, 10:00 - __proto__: a\n1.2.2025, 10:01 - constructor: b\n1.2.2025, 10:02 - constructor: c\n" }]);
+  assert.deepEqual({ ...stats.senders }, { ["__proto__"]: 1, constructor: 2 });
+});
+
+test("cli: a folder holding only a link to an export reads it; a broken link is passed over", () => {
+  const src = tmp(), out = tmp();
+  symlinkSync(FIXTURE, join(src, "chat.txt"));
+  symlinkSync(join(src, "gone.txt"), join(src, "broken.txt"));
+  const r = leket(["convert", "whatsapp", src, "--out", out]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readdirSync(out), ["whatsapp-chat.md"]);
 });

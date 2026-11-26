@@ -72,7 +72,7 @@ export function parse(text) {
     const m = HEAD.exec(line);
     if (!m) {
       const e = entries.at(-1); // a line before the first header has no entry to go in
-      if (e && (e.who !== null || !blank(line))) e.lines.push(line);
+      if (e && (e.who !== null || !blank(unbidi(line)))) e.lines.push(line);
       continue;
     }
     const { d, mo, y, hh, mm, rest } = m.groups;
@@ -83,8 +83,9 @@ export function parse(text) {
     }
     const ms = t.getTime();
     const sep = rest.indexOf(": ");
-    if (sep > 0) {
-      entries.push({ ms, who: unbidi(rest.slice(0, sep)), lines: [rest.slice(sep + 2)] });
+    const who = sep > 0 ? unbidi(rest.slice(0, sep)) : "";
+    if (!blank(who)) { // a name of bidi marks or spaces alone is no name: the line is a notice
+      entries.push({ ms, who, lines: [rest.slice(sep + 2)] });
       messages++;
     } else {
       entries.push({ ms, who: null, lines: [rest] });
@@ -95,7 +96,7 @@ export function parse(text) {
 }
 
 // A sender's label: the one names gives it (a plain object, own keys only), else the name
-const labelOf = (names) => (who) => (Object.hasOwn(names, who) && names[who]) || who.trim() || "(no name)";
+const labelOf = (names) => (who) => escapeTag((Object.hasOwn(names, who) && names[who]) || who.trim());
 const shownLine = (s) => escapeTag(unbidi(s));
 
 // One conversation → Markdown.
@@ -116,11 +117,11 @@ export function render({ entries, messages, notices }, { source, title, names = 
       if (L.at(-1) === ">") L[L.length - 1] = "";
       L.push(`## ${t.date} (${t.weekday})`, "");
     }
-    if (e.who === null) L.push(`> [WhatsApp, ${t.stamp}: ${shownLine(e.lines.join(" "))}]`.replace(RSTRIP, ""));
+    if (e.who === null) L.push(`> [WhatsApp, ${t.stamp}: ${shownLine(e.lines.join(" ")).replace(RSTRIP, "")}]`);
     else {
       L.push(`> -# ${label(e.who)} — ${t.stamp}`);
       let end = e.lines.length; // blank lines closing a message would only double the ">" after it
-      while (end > 1 && blank(e.lines[end - 1])) end--;
+      while (end > 1 && blank(unbidi(e.lines[end - 1]))) end--;
       for (const b of e.lines.slice(0, end)) L.push(`> ${shownLine(b)}`.replace(RSTRIP, ""));
     }
     L.push(">");
