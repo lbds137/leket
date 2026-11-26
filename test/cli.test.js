@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ytDlpArgs, ytDlpCommand, reportedTotal, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair } from "../bin/leket.js";
+import { ytDlpArgs, ytDlpCommand, reportedTotal, lineKeeper, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair } from "../bin/leket.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -91,7 +91,23 @@ test("fetchTranscript: a json3 body becomes rows with the track's kind", async (
   const r = await fetchTranscript(infoWithAuto, "en", {
     fetch: async (url) => { assert.equal(url, "https://y.test/c?lang=en"); return reply(200, JSON.stringify({ events: [{ tStartMs: 5000, segs: [{ utf8: "hi" }] }] })); },
   });
-  assert.deepEqual(r, { transcript: [{ time: "0:05", text: "hi" }], kind: "auto", note: "", failed: false });
+  assert.deepEqual(r, { transcript: [{ time: "0:05", text: "hi" }], kind: "auto", language: "en", note: "", failed: false });
+  // a failed fetch still names the track it tried
+  const failed = await fetchTranscript(infoWithAuto, "en", { fetch: async () => reply(429, "") });
+  assert.deepEqual([failed.kind, failed.language, failed.failed], ["auto", "en", true]);
+});
+
+test("lineKeeper keeps only matching lines, across chunk splits and \\r endings", () => {
+  const k = lineKeeper();
+  k.push("[youtube] Downloading webpage\n[youtube] Downloading ~1,");
+  k.push("097 comments\r[download] page 1\n");
+  k.push("yt-dlp: error: no such option: --js-runtimes");
+  assert.equal(k.end(), "[youtube] Downloading ~1,097 comments\nyt-dlp: error: no such option: --js-runtimes\n");
+  // a line that never ends is cut to its tail rather than growing without bound
+  const long = lineKeeper(/x/);
+  long.push("y".repeat(70_000));
+  long.push("x\n");
+  assert.equal(long.end(), `${"y".repeat(1024)}x\n`);
 });
 
 test("extractFromInfo assembles v1 with the CLI's metadata and notes", async () => {
@@ -122,6 +138,9 @@ test("extractFromInfo: a nonzero yt-dlp exit is partial, with a note, even when 
   const { extract, partial } = await extractFromInfo({ comments: [] }, { ytDlpExit: 1, fetch: () => assert.fail("no track, no fetch") });
   assert.equal(partial, true);
   assert.match(extract.metadata.comments_note, /^yt-dlp exited 1 after writing the video info/);
+  const killed = await extractFromInfo({ comments: [] }, { ytDlpExit: 1, ytDlpSignal: "SIGTERM" });
+  assert.equal(killed.partial, true);
+  assert.match(killed.extract.metadata.comments_note, /^yt-dlp was stopped \(SIGTERM\) after writing the video info/);
   const ok = await extractFromInfo({ comments: [] }, {});
   assert.equal(ok.partial, false);
 });
@@ -147,6 +166,37 @@ test("leket youtube saves the json and md and exits 0 when the video has no capt
     assert.match(x.metadata.transcript_note, /no captions in "en"/);
     assert.match(readFileSync(join(out, `${STEM}.md`), "utf8"), /Comments captured:\*\* 2 top-level \+ 1 replies/);
     assert.match(r.stderr, /0 transcript segments, 2 comments \+ 1 replies \(YouTube reports ~5\)/);
+    // yt-dlp's stdout progress is shown on stderr; stdout holds only the saved paths
+    assert.match(r.stderr, /\[youtube\] Downloading ~5 comments/);
+    assert.doesNotMatch(r.stdout, /Downloading/);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube without --max-comments asks yt-dlp for every comment, newest first", () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const argsFile = join(out, "args.json");
+    const r = runBin(["youtube", VIDEO, "--out", join(out, "save")], { FAKE_YTDLP_ARGS: argsFile });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(readFileSync(argsFile, "utf8"));
+    assert.equal(a[a.indexOf("--extractor-args") + 1], "youtube:comment_sort=new");
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test("leket youtube: an --out that names a file is a one-line error, exit 1, before yt-dlp runs", () => {
+  const out = mkdtempSync(join(tmpdir(), "leket-cli-test-"));
+  try {
+    const file = join(out, "a-file");
+    writeFileSync(file, "x");
+    const argsFile = join(out, "args.json");
+    const r = runBin(["youtube", VIDEO, "--out", file], { FAKE_YTDLP_ARGS: argsFile });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr, `leket: can't save into ${file} (a file is in the way); nothing saved.\n`);
+    assert.deepEqual(readdirSync(out).sort(), ["a-file"]); // yt-dlp never ran
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
@@ -212,7 +262,7 @@ test("leket youtube: yt-dlp missing, too old, killed, or handing back a playlist
     // a signal is a stop, not a clean finish: saved, but exit 3
     const killed = runBin(["youtube", VIDEO, "--out", out], { FAKE_YTDLP_MODE: "kill" });
     assert.equal(killed.status, 3, killed.stderr);
-    assert.match(killed.stderr, /comments: yt-dlp exited 1 after writing the video info/);
+    assert.match(killed.stderr, /comments: yt-dlp was stopped \(SIGTERM\) after writing the video info/);
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

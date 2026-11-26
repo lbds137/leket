@@ -58,9 +58,12 @@ export function pickCaptionTrack(info, lang) {
   const json3 = (list) => (Array.isArray(list) ? list.find((f) => f && f.ext === "json3" && f.url) : null);
   const manual = json3(info && info.subtitles && info.subtitles[lang]);
   if (manual) return { url: manual.url, kind: "manual", language: lang };
-  // a human track keyed by region (en-US, pt-BR) beats any auto track in the language
+  // a human track keyed by region (en-US, pt-BR) beats any auto track in the language:
+  // the video's own region first (yt-dlp's info.language, when it names one), then by key
   const subs = (info && info.subtitles) || {};
+  const own = String((info && info.language) || "").toLowerCase();
   const regional = Object.keys(subs).sort()
+    .sort((a, b) => (b.toLowerCase() === own) - (a.toLowerCase() === own))
     .filter((k) => k.toLowerCase().startsWith(`${lang.toLowerCase()}-`))
     .map((k) => [k, json3(subs[k])]).find(([, f]) => f);
   if (regional) return { url: regional[1].url, kind: "manual", language: regional[0] };

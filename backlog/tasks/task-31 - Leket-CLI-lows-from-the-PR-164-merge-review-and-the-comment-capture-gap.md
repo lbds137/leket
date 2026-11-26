@@ -1,10 +1,10 @@
 ---
 id: TASK-31
 title: 'Leket CLI: lows from the PR #164 merge review, and the comment-capture gap'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-25T19:39:00Z'
-updated_date: '2026-11-25T20:23:00Z'
+updated_date: '2026-11-26T01:02:00Z'
 labels: []
 dependencies: []
 priority: low
@@ -30,4 +30,6 @@ Ruled out: a caption-host check (URL comes from the yt-dlp the user runs; raised
 <!-- SECTION:NOTES:BEGIN -->
 Item 6 DONE (PR #168, merged 11-25): the gap was YouTube's top order, not hidden comments or paging. Live 11-25 on nwHtAdyEAtQ: comment_sort=top extracted 85, comment_sort=new 97 (= reported ~97); the 12 missing were all 0-like, 1-3 days old (7 roots, 5 replies); shared 85 identical in text/likes/author/reply order. Fix: uncapped saves use comment_sort=new (file is sorted by likes anyway); --max-comments keeps top so a capped save keeps YouTube's top selection. CLI rerun: 66 + 31 = 97, exit 0. Scope: one video measured.
 Ruled out (from the #168 review): pinning the order of equal-like comments. Ties keep fetch order (now newest first), which the ytDlpArgs comment states; a fixed tie order would mean recording YouTube's rank per comment for no reader-visible gain.
+
+Items 1-5, 7 DONE (branch task-31-cli-lows): (1) a signal-stopped yt-dlp says "was stopped (SIGTERM)" (extractFromInfo ytDlpSignal; kill test updated); (2) fetchTranscript returns language beside kind, extractFromInfo no longer re-picks the track (json3-rows deepEqual widened by language: an existing-assertion change); (3) regional fallback prefers the region of info.language, case-insensitive, else key order; (4) --out is made before yt-dlp runs, a failure is one line "leket: cannot save into DIR (...)", exit 1; (5) yt-dlp stdout is echoed to stderr, run() keeps only the estimate and too-old lines (lineKeeper; the fake now logs its estimate on stdout like to_screen); (7) uncapped end-to-end run checks comment_sort=new. Red-first: 5 new/changed tests fail on origin/main code; item 7 test reddened by defaulting maxComments to 500.
 <!-- SECTION:NOTES:END -->
