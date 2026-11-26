@@ -152,8 +152,12 @@ const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
 // them — and ytd-comments holds a header count, three threads and a top-level
 // continuation that loads two more threads once it scrolls into view. One thread's
 // "2 replies" (bidi-wrapped like count on its top comment) adds one reply plus a nested
-// continuation button that adds the second. Every name is invented.
+// continuation button that adds the second. Every name is invented. The same page at
+// YOUTUBE_WATCH_OLD serves the older A/B instead: ytd-transcript-segment-renderer
+// segments, and replies with no lc= link whose continuation re-renders the first reply
+// beside the second, so the reply dedup falls back to author+text.
 const YOUTUBE_WATCH = "https://www.youtube.com/watch?v=SmokeVid001";
+const YOUTUBE_WATCH_OLD = "https://www.youtube.com/watch?v=SmokeVid002";
 const youtubePage = `<!doctype html><html lang="en"><head><title>Smoke test video - YouTube</title></head><body>
 <ytd-watch-metadata><h1>Smoke test video</h1><ytd-channel-name><a href="/@example">Example Channel</a></ytd-channel-name></ytd-watch-metadata>
 <div id="description-inline-expander"><button id="expand">...more</button>
@@ -185,6 +189,7 @@ on two lines</span>
 </ytd-comments>
 <script>
 (() => {
+  const OLD = new URLSearchParams(location.search).get("v") === "SmokeVid002";
   const el = (name, attrs, text) => {
     const e = document.createElement(name);
     if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -194,7 +199,9 @@ on two lines</span>
   const commentView = (lc, handle, name, text, time, likes) => {
     const vm = el("ytd-comment-view-model");
     const t = el("span", { id: "published-time-text" });
-    t.appendChild(el("a", { href: "/watch?v=SmokeVid001&lc=" + lc }, time));
+    // the older A/B's replies: no link, so no lc= id to dedup on
+    if (OLD && lc.includes(".")) t.textContent = time;
+    else t.appendChild(el("a", { href: "/watch?v=SmokeVid001&lc=" + lc }, time));
     vm.appendChild(el("a", { id: "author-text", href: "/" + handle }, name));
     vm.appendChild(el("span", { id: "content-text" }, text));
     vm.appendChild(t);
@@ -211,6 +218,12 @@ on two lines</span>
   document.querySelector("ytd-video-description-transcript-section-renderer button").addEventListener("click", () => {
     const panel = el("div", { id: "leket-smoke-transcript-panel" });
     const seg = (t, text) => {
+      if (OLD) {
+        const s = el("ytd-transcript-segment-renderer");
+        s.appendChild(el("div", { "class": "segment-timestamp" }, t));
+        s.appendChild(el("yt-formatted-string", { "class": "segment-text" }, text));
+        return s;
+      }
       const s = el("transcript-segment-view-model");
       s.appendChild(el("div", { "class": "ytwTranscriptSegmentViewModelTimestamp" }, t));
       s.appendChild(el("div", { "class": "ytwTranscriptSegmentViewModelTimestampA11yLabel" }, "0 seconds"));
@@ -243,6 +256,7 @@ on two lines</span>
     const nested = el("ytd-continuation-item-renderer");
     const b = el("button", null, "Show more replies");
     b.addEventListener("click", () => {
+      if (OLD) box.appendChild(commentView("ugxT1.1", "@bo", "@Bo Example", "the first reply", "1 day ago", "3"));
       box.appendChild(commentView("ugxT1.2", "@cyd", "@Cyd Example", "the second reply", "22 hours ago", "0"));
       nested.remove();
     });
@@ -385,6 +399,7 @@ const WEB = new Map([
   ["https://www.messenger.com/e2ee/t/123", { type: "text/html", body: html("a messenger thread") }],
   [MESSENGER_COLLECTOR_URL, { type: "text/html", body: messengerCollectorPage }],
   [YOUTUBE_WATCH, { type: "text/html", body: youtubePage }],
+  [YOUTUBE_WATCH_OLD, { type: "text/html", body: youtubePage }],
   [REPLIKA_HOME, { type: "text/html", body: replikaPage }],
   // the diary: the list (newest first), the empty page after the oldest date, then each
   // day; the older day carries one picture, whose sign call is the fake below
@@ -1109,7 +1124,7 @@ async function scenarios(cdp, downloads) {
   // with its JSON alongside ----
   await scenario("youtube", async () => {
     console.log("smoke: youtube save");
-    await open(YOUTUBE_WATCH);
+    const video = await open(YOUTUBE_WATCH);
     await clickPopup("Save transcript and comments");
     const yp = (await target((s) => s.type === "page" && /\/src\/modules\/youtube\/page\.html\?tab=\d+$/.test(s.url), "the youtube page (with its tab id)")).sessionId;
     await wired(yp, "run", "youtube");
@@ -1118,6 +1133,15 @@ async function scenarios(cdp, downloads) {
       return !p.hidden && (p.textContent.startsWith("Saved ") || p.className === "warn") && p.textContent; })()`),
     "the youtube page's end line", 30000).catch(soft((e) => e.message));
     check(end.startsWith("Saved "), `youtube: the page saves both files (it said: ${end})`);
+    // the driver's corner panel on the video tab: its transcript line ends on the
+    // result, and the panel fades out once the run is done
+    const lines = await evalIn(video.sessionId, `(() => { const p = document.getElementById("leket-youtube-panel");
+      return p ? [...p.children].map((c) => c.textContent) : null; })()`);
+    check(!!lines && lines[0] === "Transcript: 3 lines." && /^Done: /.test(lines[lines.length - 1]),
+      `youtube: the overlay's transcript line reports its result and the run ends on Done (${JSON.stringify(lines)})`);
+    const gone = await waitFor(() => evalIn(video.sessionId, `!document.getElementById("leket-youtube-panel")`),
+      "the overlay to fade out", 15000).catch(soft(() => false));
+    check(gone === true, "youtube: the overlay fades out after the run");
     const base = baseName("Smoke test video", "SmokeVid001");
     const mine = landed().filter((f) => f.startsWith(base));
     check(JSON.stringify(mine) === JSON.stringify([`${base}.json`, `${base}.md`]),
@@ -1140,6 +1164,31 @@ async function scenarios(cdp, downloads) {
     const bidi = saved.comments.find((c) => c.likes_numeric === 1200);
     check(!!bidi && bidi.replies.length === 2 && bidi.replies[0].text === "the first reply" && bidi.replies[1].text === "the second reply",
       `youtube: the bidi-likes thread parses 1200 likes and keeps its 2 replies (${bidi ? `${bidi.likes_numeric} likes, ${bidi.replies.length} replies` : "thread not found"})`);
+  });
+
+  // ---- youtube, the older A/B: ytd-transcript-segment-renderer segments, and replies
+  // without an lc= link, one re-rendered, deduped on author+text ----
+  await scenario("youtube-old", async () => {
+    console.log("smoke: youtube save, older page");
+    await open(YOUTUBE_WATCH_OLD);
+    await clickPopup("Save transcript and comments");
+    const yp = (await target((s) => s.type === "page" && /\/src\/modules\/youtube\/page\.html\?tab=\d+$/.test(s.url), "the youtube page (with its tab id)")).sessionId;
+    await wired(yp, "run", "youtube-old");
+    const end = await waitFor(() => evalIn(yp, `(() => { const p = document.getElementById("status");
+      return !p.hidden && (p.textContent.startsWith("Saved ") || p.className === "warn") && p.textContent; })()`),
+    "the youtube page's end line", 30000).catch(soft((e) => e.message));
+    check(end.startsWith("Saved "), `youtube-old: the page saves both files (it said: ${end})`);
+    const file = join(downloads, `${baseName("Smoke test video", "SmokeVid002")}.json`);
+    if (!existsSync(file)) {
+      check(false, "youtube-old: the json is on disk (missing)");
+      return;
+    }
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    check(saved.transcript.length === 3 && saved.transcript[1].time === "0:04" && saved.transcript[1].text === "second line after the chapter heading",
+      `youtube-old: the older renderer's 3 transcript rows, stamps kept (${JSON.stringify(saved.transcript)})`);
+    const thread = saved.comments.find((c) => c.likes_numeric === 1200);
+    check(!!thread && JSON.stringify(thread.replies.map((r) => r.text)) === JSON.stringify(["the first reply", "the second reply"]),
+      `youtube-old: a re-rendered reply without an lc= id is kept once (${thread ? JSON.stringify(thread.replies.map((r) => r.text)) : "thread not found"})`);
   });
 
   // ---- replika: popup -> the module's page -> the localStorage probe on the matched tab,
