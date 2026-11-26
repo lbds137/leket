@@ -84,7 +84,7 @@ export function parse(html) {
 const ALNUM = /[\p{L}\p{N}]/u;
 
 // Text as Markdown that shows it as written: every character that could start markup is escaped
-function escapeText(s) {
+export function escapeText(s) {
   let out = "";
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
@@ -119,6 +119,9 @@ function textOf(n) {
   return typeof n === "string" ? n : n.children.map(textOf).join("");
 }
 
+// http, https, mailto, or no scheme at all (a relative path, #fragment or ?query)
+const LINKABLE = /^(?:https?:|mailto:|[^:/?#]*(?:[/?#]|$))/i;
+
 function linkDest(href) {
   return /[\s()<>]/.test(href) ? `<${href.replace(/[<>\n]/g, (c) => encodeURIComponent(c))}>` : href;
 }
@@ -147,7 +150,9 @@ function inline(nodes, ctx) {
       case "a": {
         const href = n.attrs.href || "";
         const label = inline(n.children, ctx);
-        if (!href || /^\s*javascript:/i.test(href)) { add(label); break; }
+        // a link only to the web, mail or a relative path; any other scheme (javascript:,
+        // data:, vbscript:…) keeps just its label
+        if (!href || !LINKABLE.test(href.trim())) { add(label); break; }
         if (textOf(n) === href && /^https?:\/\/[^\s<>]+$/.test(href)) { add(`<${href}>`); break; }
         // spaces and breaks at the label's ends go outside the brackets, as for **…**
         const lead = label.match(/^[ \u0000]*/)[0], trail = label.slice(lead.length).match(/[ \u0000]*$/)[0];
@@ -198,8 +203,10 @@ function table(n, ctx) {
   if (!cells.length) return "";
   const width = Math.max(...cells.map((r) => r.length));
   if (!width) return "";
-  // every pipe not already escaped is escaped, code spans included (GFM splits cells first)
-  const cell = (c) => (c ? blocks(c.children, ctx, " ", true).replace(/\n/g, " ") : "").replace(/(?<!\\)((?:\\\\)*)\|/g, "$1\\|");
+  // every pipe gets one more backslash, code spans included: GFM splits the row at bare
+  // pipes, then drops one backslash before each pipe, so an escaped one (\| in text, or a
+  // code span's own \|) needs \\| to come through as written
+  const cell = (c) => (c ? blocks(c.children, ctx, " ", true).replace(/\n/g, " ") : "").replace(/\|/g, "\\|");
   const row = (r) => `| ${Array.from({ length: width }, (_, i) => cell(r[i])).join(" | ")} |`;
   const align = (c) => ({ left: ":---", center: ":---:", right: "---:" })[(c?.attrs.align || "").toLowerCase()] || "---";
   return [row(cells[0]), `|${Array.from({ length: width }, (_, i) => align(cells[0][i])).join("|")}|`, ...cells.slice(1).map(row)].join("\n");
@@ -220,10 +227,12 @@ function block(n, ctx) {
       return s ? s.split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n") : "";
     }
     case "pre": {
-      const s = textOf(n).replace(/^\n/, "").replace(/\s+$/, "");
+      // a NUL in the text would read as KEEP below; the HTML parser shows it as U+FFFD too
+      const s = textOf(n).replace(/\u0000/g, "\uFFFD").replace(/^\n/, "").replace(/\s+$/, "");
       if (!s) return "";
       const fence = "`".repeat(Math.max(3, ...[...s.matchAll(/^ {0,3}(`{3,})/gm)].map((m) => m[1].length + 1)));
-      return `${fence}\n${s}\n${fence}`;
+      // code keeps its trailing spaces: KEEP shields them from htmlToMarkdown's strip
+      return `${fence}\n${s.split("\n").map((l) => (/[ \t]$/.test(l) ? l + KEEP : l)).join("\n")}\n${fence}`;
     }
     case "hr": return "---";
     case "table": return table(n, ctx);
@@ -260,9 +269,12 @@ function blocks(nodes, ctx, sep = "\n\n", flat = false) {
   return out.join(sep);
 }
 
-// html → { md, unknown: { tag: count } }
+// html → { md, unknown: { tag: count } }. Trailing spaces go from every line but a code
+// block's (marked KEEP).
+const KEEP = "\u0000";
 export function htmlToMarkdown(html) {
   const ctx = { unknown: Object.create(null) };
-  const md = blocks(parse(html).children, ctx).split("\n").map((l) => l.replace(/[ \t]+$/, "")).join("\n").trim();
+  const md = blocks(parse(html).children, ctx).split("\n")
+    .map((l) => (l.endsWith(KEEP) ? l.slice(0, -1) : l.replace(/[ \t]+$/, ""))).join("\n").trim();
   return { md, unknown: ctx.unknown };
 }
