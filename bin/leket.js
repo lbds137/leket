@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // leket — the extension's saves from a shell, for when there is no toolbar to click.
-// One backend so far: `leket youtube <url>` saves a video's captions and its comments
-// (replies included) through yt-dlp, as the same youtube-extract/v1 JSON and Markdown
-// the extension writes (src/modules/youtube/extract.js builds both).
+// `leket youtube <url>` saves a video's captions and its comments (replies included)
+// through yt-dlp, as the same youtube-extract/v1 JSON and Markdown the extension writes
+// (src/modules/youtube/extract.js builds both). `leket convert discord <save>…` turns
+// Discord saves into Markdown transcripts (src/modules/discord/convert.js renders them;
+// CONVERT_USAGE below). The rest of this header is about `leket youtube`.
 //
 // The run is two independent fetches, so one failing never discards the other:
 //   1. yt-dlp writes the video's info.json with its comments (no media download);
@@ -16,13 +18,16 @@ import { spawn, spawnSync } from "node:child_process";
 import { constants, realpathSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import {
   buildExtract, renderMarkdown, baseName, json3ToTranscript, pickCaptionTrack, threadsFromYtDlp,
 } from "../src/modules/youtube/extract.js";
+import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
+import { MANIFEST } from "../src/lib/files.js";
+import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
 
 const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max-comments N]
 
@@ -38,6 +43,27 @@ const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max
   release that knows --js-runtimes.
   Exit: 0 saved; 1 nothing saved; 2 usage; 3 saved but incomplete (captions refused,
   yt-dlp stopped partway, or only the .json written; the notes say which).`;
+
+const CONVERT_USAGE = `usage: leket convert discord <save>... [--out DIR] [--by none|year|month] [--base NAME]
+         [--title TEXT] [--tz ZONE] [--name USERNAME=LABEL]... [--embeds] [--voice FILE]
+
+  Turns saves of one Discord conversation into Markdown. A save is Leket's Discord zip
+  (its first part, which holds the messages) or the JSON inside it. Several saves of the
+  same conversation are merged by message id.
+  Writes into DIR (default: the current directory), replacing earlier files of that name:
+    NAME.md, or NAME-YYYY.md / NAME-YYYY-MM.md with --by year / month
+    a server channel also gets NAME-participants.md and NAME-index.md
+  --by          default: none for a DM, month for a server channel
+  --base NAME   the files' name (default: the save's, e.g. discord-general-123)
+  --title TEXT  the heading (default: the channel's name in the save)
+  --tz ZONE     the zone times are shown in, e.g. Europe/Paris (default: this machine's)
+  --name U=L    show the account with username U as L (repeatable)
+  --embeds      add each message's embeds as [embed: title] at the end of its last line
+  --voice FILE  machine transcripts of voice messages: JSON mapping "<message id>_<n>"
+                (the n-th attachment; "<id>_f<k>_<n>" inside the k-th forward) to
+                {"duration": seconds, "text": "..."}
+  Exit: 0 written; 1 a save couldn't be read (nothing written) or a write failed (the
+  message says how many files were written); 2 usage.`;
 
 // How to run yt-dlp: an explicit path, one on PATH, or uvx (with curl_cffi, which
 // YouTube's extractor asks for to impersonate a browser).
@@ -326,10 +352,99 @@ async function saveInto(dir, url, { lang, maxComments }) {
   }
 }
 
+// One Discord save: the JSON itself, or Leket's zip, whose top-level .json beside the
+// attachments manifest is the save. Only that entry is read, never the whole zip.
+// Returns { save, name } (name: the save's file name without .json).
+export async function readDiscordSave(path) {
+  if (!/\.zip$/i.test(path)) {
+    return { save: JSON.parse(await readFile(path, "utf8")), name: basename(path).replace(/\.json$/i, "") };
+  }
+  const saves = (await zipEntries(path)).filter((e) => /^[^/]+\.json$/.test(e.name) && e.name !== MANIFEST);
+  if (!saves.length) throw new Error(`${path} holds no Discord save (in a save split into parts, the messages are in part 1)`);
+  if (saves.length > 1) throw new Error(`${path} holds ${saves.length} .json files (${saves.map((e) => e.name).join(", ")}); give the one to convert`);
+  return { save: JSON.parse((await readZipEntry(path, saves[0])).toString("utf8")), name: saves[0].name.replace(/\.json$/, "") };
+}
+
+export async function convertDiscord(paths, { out = ".", by, base, title, tz, names = {}, embeds = false, voice: voicePath } = {}) {
+  let read, voice = {};
+  try {
+    read = [];
+    for (const p of paths) read.push(await readDiscordSave(p));
+    if (voicePath) voice = JSON.parse(await readFile(voicePath, "utf8"));
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  let files, conv;
+  const timeZone = tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  try {
+    conv = mergeSaves(read.map((r) => r.save));
+    // every file is rendered before any is written, so a render error writes nothing
+    files = renderDiscord(conv, { base: base || read[0].name, by, title, timeZone, names, embeds, voice });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  let written = 0;
+  try {
+    await mkdir(out, { recursive: true });
+    for (const f of files) {
+      const p = join(out, f.name);
+      await writeFile(p, f.text);
+      process.stdout.write(`${p}\n`);
+      written++;
+    }
+  } catch (e) {
+    process.stderr.write(`leket: couldn't write ${join(out, files[written].name)} (${e.message}); ${written} of ${files.length} files written.\n`);
+    return 1;
+  }
+  const start = conv.reachedStart ? "from its start" : conv.reachedSince ? `from ${conv.reachedSince}, as asked` : "PARTIAL: the start was not reached";
+  process.stderr.write(`leket: ${conv.messages.length} messages from ${conv.saves} save(s), ${start}; times in ${timeZone}.\n`);
+  return 0;
+}
+
+async function convertMain(rest) {
+  const [kind, ...args] = rest;
+  if (kind === "-h" || kind === "--help") { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        out: { type: "string" }, by: { type: "string" }, base: { type: "string" }, title: { type: "string" },
+        tz: { type: "string" }, name: { type: "string", multiple: true }, embeds: { type: "boolean" },
+        voice: { type: "string" }, help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  if (v.by !== undefined && !["none", "year", "month"].includes(v.by)) return fail("--by takes none, year or month");
+  if (v.base !== undefined && (!v.base || /[/\\]/.test(v.base))) return fail("--base takes a file name, not a path");
+  if (v.tz !== undefined) {
+    try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
+  }
+  const names = {};
+  for (const n of v.name || []) {
+    const i = n.indexOf("=");
+    if (i < 1) return fail(`--name takes USERNAME=LABEL, not ${n}`);
+    names[n.slice(0, i)] = n.slice(i + 1);
+  }
+  return convertDiscord(positionals, { out: v.out, by: v.by, base: v.base, title: v.title, tz: v.tz, names, embeds: !!v.embeds, voice: v.voice });
+}
+
 export async function main(argv) {
   const [sub, ...rest] = argv;
-  if (sub === "-h" || sub === "--help") { process.stdout.write(`${USAGE}\n`); return 0; }
-  if (sub !== "youtube") { process.stderr.write(`${USAGE}\n`); return 2; }
+  if (sub === "-h" || sub === "--help") { process.stdout.write(`${USAGE}\n\n${CONVERT_USAGE}\n`); return 0; }
+  if (sub === "convert") return convertMain(rest);
+  if (sub !== "youtube") { process.stderr.write(`${USAGE}\n\n${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {
     parsed = parseArgs({
