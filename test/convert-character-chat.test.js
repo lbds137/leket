@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { collect, minute, plan, render } from "../src/convert/character-chat.js";
+import { readCharacterChatExport } from "../bin/leket.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -69,9 +70,10 @@ test("a conversation renders with its label, persona, creator, count gap and str
 test("unlabelled conversations are named 'Character YYYY-MM-DD'; --user and --site fill in", () => {
   const files = byName(plan(collect([exportOf()]), { user: "Me", site: "Bots", timeZone: "UTC" }).files);
   const g = files["Gear - Smith 2024-03-06.md"];
-  assert.match(g, /^# Gear \| Smith\n\nBots conversation with \*\*Gear \| Smith\*\*, 2024-03-06 14:03 to 2024-03-06 14:04; 2 messages, as many as the site counts\./);
+  // the pipe escaped, as every name is: it shows as written
+  assert.match(g, /^# Gear \\\| Smith\n\nBots conversation with \*\*Gear \\\| Smith\*\*, 2024-03-06 14:03 to 2024-03-06 14:04; 2 messages, as many as the site counts\./);
   assert.match(g, /## Me · 2024-03-06 14:03\n\nFix this\?\n/);
-  assert.match(g, /## Gear \| Smith · 2024-03-06 14:04\n\nClank clank\.\n/);
+  assert.match(g, /## Gear \\\| Smith · 2024-03-06 14:04\n\nClank clank\.\n/);
   assert.match(files["Ghost Lantern 2024-03-04.md"], /\*\*Ghost Lantern\*\*, .*; 1 messages saved \(the site gives no count\)\./);
   assert.match(files["lamp TALK (2).md"],/^# lamp TALK\n\nBots conversation with \*\*Unknown character\*\*/);
 });
@@ -97,7 +99,8 @@ test("INDEX lists conversations oldest first, pipes escaped; stats count the ski
     "| `lamp TALK (2).md` | Unknown character | 1 | 2024-03-05 | 2024-03-05 |",
     "| `index (2).md` | Moth Keeper | 1 | 2024-03-05 | 2024-03-05 |",
     "| `Why- -maybe- -so- -really-.md` | Moth Keeper | 1 | 2024-03-05 | 2024-03-05 |",
-    "| `Gear - Smith 2024-03-06.md` | Gear \\| Smith | 2 | 2024-03-06 | 2024-03-06 |",
+    // escaped as text (\|), then once more for the table: GFM drops one backslash at the split
+    "| `Gear - Smith 2024-03-06.md` | Gear \\\\| Smith | 2 | 2024-03-06 | 2024-03-06 |",
   ]);
   assert.deepEqual(stats, { conversations: 6, messages: 9, empty: 1, short: 1, cards: 3, missing: 1 });
 });
@@ -105,8 +108,8 @@ test("INDEX lists conversations oldest first, pipes escaped; stats count the ski
 test("CARDS: by name, nameless cards left out, empty fields skipped, no creator no '(by …)'", () => {
   assert.equal(byName(planned().files)["CARDS.md"], [
     "# Character cards as Character chat served them", "",
-    "## Aardvark Oracle (by inventor)", "", "`ch-aard` · ", "",
-    "## Gear | Smith", "", "`ch-gear` · ", "", "**greeting:**", "", "Clank.", "",
+    "## Aardvark Oracle (by inventor)", "", "`ch-aard`", "",
+    "## Gear \\| Smith", "", "`ch-gear`", "", "**greeting:**", "", "Clank.", "",
     "## Moth Keeper (by inventor)", "", "`ch-moth` · keeps moths", "",
     "**persona:**", "", "Quiet. Likes lamps.", "", "**scenario:**", "", "A lighthouse.", "", "**greeting:**", "", "Hello, traveller.", "",
   ].join("\n"));
@@ -117,11 +120,29 @@ test("several exports: the copy with more messages wins, a card beats an error s
   const shorter = exportData();
   shorter.conversations[0].messages = shorter.conversations[0].messages.slice(0, 1);
   shorter.characters["ch-moth"] = { error: "failed" };
-  for (const order of [[fuller, shorter], [shorter, fuller]]) {
+  // more entries, fewer messages: only message objects count, as the rendered file counts them
+  const padded = exportData();
+  padded.conversations[0].messages = [null, ...padded.conversations[0].messages.slice(0, 2), "junk"];
+  for (const order of [[fuller, shorter], [shorter, fuller], [fuller, padded]]) {
     const c = collect(order.map((d, i) => exportOf(d, `e${i}.json`)));
     assert.equal(c.conversations.find((x) => x.id === "conv-1").c.messages.length, 3);
     assert.equal(c.characters["ch-moth"].name, "Moth Keeper");
   }
+});
+
+test("names, labels, creators and titles show as written; a blank creator or title is left out", () => {
+  const d = { characters: { s: { name: "Star*Gazer [beta]", creator_username: "  ", title: "  ", greeting: "Hi" } }, conversations: [
+    { id: "s1", character_id: "s", meta: { label: "#1 _fan_ <3", userPersona: { name: "A`B" } },
+      messages: [msg("a", "user", "hi", T0), msg("b", "bot", "yo", T0 + MIN)] },
+  ] };
+  const f = byName(plan(collect([exportOf(d)])).files);
+  const conv = f["#1 _fan_ -3.md"];
+  assert.match(conv, /^# #1 \\_fan\\_ \\<3\n\nCharacter chat conversation with \*\*Star\\\*Gazer \\\[beta\\\]\*\*, 2024/);
+  assert.ok(!conv.includes("(character by"), conv);
+  assert.match(conv, /\n## A\\`B · 2024-03-05 14:03\n/);
+  assert.match(conv, /\n## Star\\\*Gazer \\\[beta\\\] · 2024-03-05 14:04\n/);
+  assert.match(f["INDEX.md"], /\| Star\\\*Gazer \\\[beta\\\] \| 2 \|/);
+  assert.match(f["CARDS.md"], /\n## Star\\\*Gazer \\\[beta\\\]\n\n`s`\n\n\*\*greeting:\*\*/);
 });
 
 test("a character id '__proto__' is an ordinary key", () => {
@@ -140,7 +161,9 @@ test("a blank name or field counts as missing; a missing or out-of-range time is
   ] };
   const { files, stats } = plan(collect([exportOf(d)]));
   const f = byName(files);
-  assert.match(f["Fallback undated.md"], /with \*\*Fallback\*\*/);
+  // no time reads "undated", in the header and in each heading
+  assert.match(f["Fallback undated.md"], /with \*\*Fallback\*\*, undated; 1 messages/);
+  assert.match(f["Fallback undated.md"], /\n## Fallback · undated\n/);
   assert.equal(f["CARDS.md"], "# Character cards as Character chat served them\n");
   assert.equal(stats.cards, 0);
   assert.equal(stats.missing, 1);
@@ -157,6 +180,19 @@ test("minute: zones, and no time for a missing or bad value", () => {
   assert.equal(minute(undefined), "");
   assert.equal(minute(1e20), "");
   assert.equal(minute("2024"), "");
+});
+
+test("an export too large to read as one text is refused by name", async () => {
+  const read = async () => { throw Object.assign(new Error("Cannot create a string longer than 0x1fffffe8 characters"), { code: "ERR_STRING_TOO_LONG" }); };
+  await assert.rejects(readCharacterChatExport("big.json", { read }), { message: "big.json is too large to read as one text" });
+  await assert.rejects(readCharacterChatExport("x.json", { read: async () => "{" }), /^Error: x\.json isn't JSON/);
+});
+
+test("a conversation with only some times reads 'undated' for the missing end", () => {
+  const d = { characters: {}, conversations: [{ id: "h", character_id: "z", character: { name: "Half" }, meta: {},
+    messages: [msg("h1", "user", "a", T0), msg("h2", "bot", "b", undefined)] }] };
+  const c = collect([exportOf(d)]);
+  assert.match(render(c.conversations[0], c.characters).text, /with \*\*Half\*\*, 2024-03-05 14:03 to undated; /);
 });
 
 test("collect refuses what isn't an export", () => {

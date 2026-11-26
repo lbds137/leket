@@ -28,6 +28,15 @@ test("inline marks, code spans and links", () => {
   // only http(s), mailto and relative links stay links; any other scheme keeps its label
   assert.equal(md('<p><a href="data:text/html,x">d</a> <a href=" VBScript:x">v</a> <a href="java\nscript:x">j</a> <a href="mailto:a@b.c">m</a> <a href="../r.md">r</a> <a href="#f">f</a> <a href="a/b:c">p</a></p>'),
     "d v j [m](mailto:a@b.c) [r](../r.md) [f](#f) [p](a/b:c)");
+  // another scheme keeps its address as text after the label, or as the label when it has none
+  // or the label already is the address; a scripted one still shows only its label
+  assert.equal(md('<p><a href="tel:+1-555">call</a> <a href="ftp://x.org/f_1"> get </a>it <a href="sms:1"></a> <a href="tel:2">tel:2</a> <a href=" file:///etc">f</a> <a href="javascript:x"></a>.</p>'),
+    "call (tel:+1-555) get (ftp://x.org/f_1) it sms:1 tel:2 f .");
+});
+
+test("a NUL in the text is U+FFFD, never a line break", () => {
+  assert.equal(md("<p>a\u0000b <code>c\u0000d</code></p><h2>x\u0000y</h2><pre>p\u0000q  </pre>"),
+    "a\uFFFDb `c\uFFFDd`\n\n## x\uFFFDy\n\n```\np\uFFFDq  \n```");
 });
 
 test("lists: nesting, start numbers, loose items, empty items, two lists in a row", () => {
