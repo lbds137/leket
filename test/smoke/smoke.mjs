@@ -256,6 +256,7 @@ on two lines</span>
 // picture itself, served from a host the manifest has no permission for
 const REPLIKA_HOME = "https://my.replika.com/";
 const REPLIKA_MEM_14 = "https://my.replika.ai/api/mobile/1.4/memory";
+const SMOKE_REPLIKA_IMG = "https://s3-us-west-1.amazonaws.com/replika-content-images/smoke-signed.png";
 const REPLIKA_MEM_15 = "https://my.replika.com/api/mobile/1.5/memory/v3/";
 const replikaPage = `<!doctype html><html><head><title>my replika</title></head><body><p>my replika</p>`
   + `<script>localStorage.setItem("auth", JSON.stringify({ userId: "smoke-user", deviceId: "smoke-device", authToken: "smoke-token" }));`
@@ -399,10 +400,10 @@ const WEB = new Map([
     robot_facts: [{ text: "Echo remembers walks", creation_timestamp: "2026-01-07T00:00:00Z" }],
   }) }],
   ["https://my.replika.ai/api/mobile/1.5/images/signed/actions/get_url",
-    { type: "application/json", body: JSON.stringify({ image_url: "https://images.example.org/smoke-signed.png?sig=smoke-sig" }) }],
-  // served, but the extension page has no permission for this host, so the read of the
-  // response is refused and the picture must come out not captured
-  ["https://images.example.org/smoke-signed.png?sig=smoke-sig", { type: "image/png", body: SMOKE_PNG }],
+    { type: "application/json", body: JSON.stringify({ image_url: SMOKE_REPLIKA_IMG }) }],
+  // the picture bucket the manifest allows: both pictures (chat and diary) land in
+  // media/; without that host permission the read is refused and they come out not captured
+  [SMOKE_REPLIKA_IMG, { type: "image/png", body: SMOKE_PNG }],
 ]);
 
 // ---- a small CDP client over Node's own WebSocket ----
@@ -1164,12 +1165,12 @@ async function scenarios(cdp, downloads) {
       return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,
         fails: [...document.getElementById("replika-problems").children].map((li) => li.textContent) }; })()`),
     "the replika page's end line", 90000).catch(soft((e) => ({ t: e.message, fails: [] })));
-    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 0 pictures and voice clips \(2 item\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
-      `replika: the end line names the file and the counts and warns of the two pictures (chat and diary) not saved (it said: ${end.t} [${end.cls}])`);
-    check(JSON.stringify(end.fails) === JSON.stringify(["2 item(s) not saved: the file host refused or failed",
+    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 2 pictures and voice clips$/.test(end.t) && end.cls !== "warn",
+      `replika: the end line names the file and the counts, both pictures (chat and diary) saved (it said: ${end.t} [${end.cls}])`);
+    check(JSON.stringify(end.fails) === JSON.stringify([
       "Fields Leket didn't save (diary list): diary_entry_id, image_count, read",
       "Fields Leket didn't save (diary): entries[].diary_id, entries[].read, entries[].image_count"]),
-      `replika: the problems list counts the not-captured pictures by their reason (${JSON.stringify(end.fails)})`);
+      `replika: the problems list holds only the unsaved-field lines, no picture failures (${JSON.stringify(end.fails)})`);
     const zipName = landed().find((f) => /^replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip$/.test(f));
     if (check(zipName, `replika: a replika-….zip landed (${landed().filter((f) => f.startsWith("replika-")).join(", ") || "none"})`)) {
       const info = JSON.parse(execFileSync("python3", ["-I", "-c",
@@ -1181,16 +1182,17 @@ async function scenarios(cdp, downloads) {
       check(data.status.chat === "complete" && data.status.diary === "complete" && data.status.memories === "complete",
         `replika: chat, diary and memories are complete (${JSON.stringify(data.status)})`);
       const pic = data.messages.find((m) => m.kind === "images");
-      check(pic && pic.not_captured === "the file host refused or failed" && !pic.media && !pic.text,
-        `replika: the picture is not captured with its reason, its raw link unwritten (${JSON.stringify(pic)})`);
+      const pngIn = (path) => typeof path === "string" && path.startsWith("media/") && info[path] !== undefined && info[path].includes("PNG");
+      check(pic && !pic.not_captured && pngIn(pic.media) && !pic.text,
+        `replika: the chat picture landed in media/ as a PNG, its raw link unwritten (${JSON.stringify(pic)})`);
       const diaryPic = data.diary.flatMap((d) => d.entries.flatMap((e) => e.images))[0];
-      check(diaryPic && diaryPic.not_captured === "the file host refused or failed" && !diaryPic.media && !diaryPic.url
+      check(diaryPic && !diaryPic.not_captured && pngIn(diaryPic.media) && !diaryPic.url
         && data.diary.map((d) => d.date).join() === "2026-02-01,2026-02-02" && data.diary[1].title === "Another day",
-        `replika: the diary's two days are read by date, and its picture is not captured with its reason, its raw link unwritten (${JSON.stringify(data.diary)})`);
+        `replika: the diary's two days are read by date, and its picture landed in media/ as a PNG, its raw link unwritten (${JSON.stringify(data.diary)})`);
       check(info["index.html"].includes("Ada") && info["index.html"].includes("Echo"),
         "replika: index.html names Ada and Echo");
       const blob = JSON.stringify(info);
-      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "smoke-sig", "raw.png", "diary-raw.png"]) {
+      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "replika-content-images", "raw.png", "diary-raw.png"]) {
         check(!blob.includes(secret), `replika: no file in the zip contains ${secret}`);
       }
       const socketUrl = await evalIn(rp, "globalThis.smokeReplikaSocketUrl");
