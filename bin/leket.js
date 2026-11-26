@@ -28,7 +28,6 @@ import { constants, createReadStream, realpathSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile, rename, rm, rmdir, mkdir, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 
@@ -779,6 +778,24 @@ async function convertCharacterChatMain(args) {
   return convertCharacterChat(positionals, { out: v.out, user: v.user, site: v.site, tz: v.tz });
 }
 
+// A JSONL file's lines, read a chunk at a time. Lines end at \n only (a \r before it goes):
+// readline would also end one at U+2028 and U+2029, which JSON writes raw inside a string.
+async function* jsonlLines(path) {
+  let pending = [];
+  for await (const chunk of createReadStream(path, { encoding: "utf8" })) {
+    let start = 0;
+    for (let i = chunk.indexOf("\n"); i !== -1; i = chunk.indexOf("\n", start)) {
+      pending.push(chunk.slice(start, i));
+      const line = pending.join("");
+      pending = [];
+      start = i + 1;
+      yield line.endsWith("\r") ? line.slice(0, -1) : line;
+    }
+    if (start < chunk.length) pending.push(chunk.slice(start));
+  }
+  if (pending.length) yield pending.join("");
+}
+
 // Claude Code transcripts: each a .jsonl file, or a folder whose .jsonl files (directly in
 // it, not in its subfolders, where subagents' transcripts live) are each one → sessions for
 // planClaudeCode, read a line at a time (a transcript can outgrow one string)
@@ -794,8 +811,7 @@ export async function readClaudeCodeSessions(paths) {
   const sessions = [];
   for (const f of files) {
     const t = claudeCodeTurns();
-    const lines = createInterface({ input: createReadStream(f, { encoding: "utf8" }), crlfDelay: Infinity });
-    for await (const line of lines) t.feed(line);
+    for await (const line of jsonlLines(f)) t.feed(line);
     const s = t.end();
     sessions.push({ ...s, id: s.sessionId || basename(f).replace(/\.jsonl$/, ""), source: f });
   }
