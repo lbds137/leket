@@ -266,3 +266,90 @@ test("CLI: converts the fixture folder, reports unknown kinds / non-exports / un
     assert.match(ur.stderr, pattern);
   }
 });
+
+test("bare English kind words: contactOf strips each bare word and plan() renders the right kinds", () => {
+  const inputs = [
+    { file: "Sam Rivera - Text - 2020-01-15T19_30_00Z.html", text: msg("2020-01-15T19:30:00Z", "Sam Rivera", "bare text") },
+    { file: "Sam Rivera - Placed - 2020-01-15T19_31_00Z.html", text: callHtml({ dt: "2020-01-15T19:31:00Z", dur: "10S" }) },
+    { file: "Sam Rivera - Received - 2020-01-15T19_32_00Z.html", text: callHtml({ dt: "2020-01-15T19:32:00Z", dur: "20S" }) },
+    { file: "Sam Rivera - Missed - 2020-01-15T19_33_00Z.html", text: callHtml({ dt: "2020-01-15T19:33:00Z" }) },
+    { file: "Sam Rivera - Voicemail - 2020-01-15T19_34_00Z.html", text: callHtml({ dt: "2020-01-15T19:34:00Z", dur: "15S", vm: "bare vm" }) },
+  ];
+  for (const { file } of inputs) assert.equal(contactOf(file), "Sam Rivera", file);
+  const { files, stats } = plan(inputs, { me: "Jo" });
+  assert.deepEqual(files.map((f) => f.name), ["google-voice-Sam Rivera.md"]);
+  assert.equal(stats.texts, 1);
+  assert.equal(stats.calls, 3);
+  assert.equal(stats.voicemails, 1);
+  assert.equal(body(files[0].text), [
+    "## 2020-01-15 (Wed)", "",
+    "> -# Sam Rivera — Jan 15 2020 7:30 PM",
+    "> bare text", ">",
+    "> -# (call) — Jan 15 2020 7:31 PM",
+    "> call placed by Jo (10s)", ">",
+    "> -# (call) — Jan 15 2020 7:32 PM",
+    "> call answered by Jo (20s)", ">",
+    "> -# (call) — Jan 15 2020 7:33 PM",
+    "> missed call", ">",
+    "> -# (call) — Jan 15 2020 7:34 PM",
+    "> voicemail (15s): bare vm", ">", "",
+  ].join("\n"));
+});
+
+test("tag-link fallback: scans every voice#<tag> link and prefers a specific tag over inbox", () => {
+  const tagsHtml = (...tags) =>
+    `<div class="tags">Labels: ${tags.map((t) => `<a href="https://www.google.com/voice#${t}" rel="tag">${t}</a>`).join(", ")}</div>\n`;
+  const fInboxSms = {
+    file: "Pat - Extra - 2020-01-15T10_00_00Z.html",
+    text: msg("2020-01-15T10:00:00Z", "Pat", "tagged sms") + tagsHtml("inbox", "sms"),
+  };
+  const fUnreadPlaced = {
+    file: "Pat - Extra - 2020-01-15T10_01_00Z.html",
+    text: callHtml({ dt: "2020-01-15T10:01:00Z", dur: "30S" }) + tagsHtml("unread", "placed"),
+  };
+  const fStarredMissed = {
+    file: "Pat - Extra - 2020-01-15T10_02_00Z.html",
+    text: callHtml({ dt: "2020-01-15T10:02:00Z" }) + tagsHtml("starred", "missed"),
+  };
+  const fUnreadOnly = {
+    file: "Pat - Extra - 2020-01-15T10_03_00Z.html",
+    text: callHtml({ dt: "2020-01-15T10:03:00Z" }) + tagsHtml("unread"),
+  };
+  const fInboxOnly = {
+    file: "Pat - Extra - 2020-01-15T10_04_00Z.html",
+    text: callHtml({ dt: "2020-01-15T10:04:00Z", dur: "14S", vm: "last resort" }) + tagsHtml("inbox"),
+  };
+
+  assert.equal(kindOf(fInboxSms.file, fInboxSms.text), "text");
+  assert.equal(kindOf(fUnreadPlaced.file, fUnreadPlaced.text), "placed");
+  assert.equal(kindOf(fStarredMissed.file, fStarredMissed.text), "missed");
+  assert.equal(kindOf(fUnreadOnly.file, fUnreadOnly.text), null);
+  assert.equal(kindOf(fInboxOnly.file, fInboxOnly.text), "voicemail");
+
+  const { files, stats } = plan([fInboxSms, fUnreadPlaced, fStarredMissed, fUnreadOnly, fInboxOnly], { me: "Jo" });
+  assert.deepEqual(stats.unknownKinds, [fUnreadOnly.file]);
+  assert.equal(stats.texts, 1);
+  assert.equal(stats.calls, 2);
+  assert.equal(stats.voicemails, 1);
+  assert.equal(body(files[0].text), [
+    "## 2020-01-15 (Wed)", "",
+    "> -# Pat — Jan 15 2020 10:00 AM",
+    "> tagged sms", ">",
+    "> -# (call) — Jan 15 2020 10:01 AM",
+    "> call placed by Jo (30s)", ">",
+    "> -# (call) — Jan 15 2020 10:02 AM",
+    "> missed call", ">",
+    "> -# (call) — Jan 15 2020 10:04 AM",
+    "> voicemail (14s): last resort", ">", "",
+  ].join("\n"));
+});
+
+test("empty sender cite counts under (unknown) in stats.senders, and the default heading escapes contact tags", () => {
+  const noFn = '<div class="message"><abbr class="dt" title="2020-01-15T10:00:00Z">t</abbr>'
+    + '<cite class="sender vcard"><a class="tel" href="tel:+15550199"></a></cite>: <q>anon</q></div>\n';
+  const { files, stats } = plan([
+    { file: "A <b> & Co - Text - 2020-01-15T10_00_00Z.html", text: noFn },
+  ]);
+  assert.deepEqual({ ...stats.senders }, { "(unknown)": 1 });
+  assert.match(files[0].text, /^# Google Voice with A \\<b> & Co\n/);
+});
