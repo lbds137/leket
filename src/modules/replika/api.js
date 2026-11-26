@@ -161,8 +161,12 @@ export function readReplikaAuth() {
 // The diary: the list of days pages back by date (limit 100, newest first; each page
 // holds the days strictly before `until`, the oldest date of the page before) until an
 // empty array, then each listed day is fetched by its date, oldest first. Only list
-// items whose date is a plain YYYY-MM-DD are kept, each date once, so nothing else is
-// ever put into a request URL. A reply that is not an array is a failure (not the end of
+// items whose date is a plain YYYY-MM-DD are kept, each date once (the first item for a
+// date wins, even within one page), so nothing else is ever put into a request URL.
+// `until` only ever moves back: the next one is the smaller of the current one and the
+// page's oldest fresh date (a page of only newer unseen dates keeps its days but does
+// not page forward). A day reply whose `date` is not the requested date is a failed day
+// call, like a reply without an entries array. A reply that is not an array is a failure (not the end of
 // the list); a failed page after some days keeps their dates and still fetches those
 // days, and a failed day call keeps the days already read — either way the answer
 // carries a fixed partial reason. A page with no fresh valid date (or the maxPages cap)
@@ -190,15 +194,20 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, l
       break;
     }
     if (!page.length) break;
-    const fresh = page.filter((p) => p && typeof p.date === "string" && DIARY_DATE.test(p.date) && !seen.has(p.date));
+    const fresh = [];
+    for (const p of page) {
+      if (!p || typeof p.date !== "string" || !DIARY_DATE.test(p.date) || seen.has(p.date)) continue;
+      seen.add(p.date); // as it is accepted, so a date twice in one page counts once (the first wins)
+      fresh.push(p);
+    }
     if (fresh.length === 0) {
       partial = DIARY_STUCK; // the same page again (or items with no valid date): `until` is being ignored
       break;
     }
-    for (const p of fresh) seen.add(p.date);
     list.push(...fresh);
-    // the list is newest first, so the page's oldest valid date is the smallest one
-    until = fresh.map((p) => p.date).reduce((a, b) => (b < a ? b : a));
+    // the page's oldest valid date is the smallest one; the cursor only ever moves back
+    const oldest = fresh.map((p) => p.date).reduce((a, b) => (b < a ? b : a));
+    until = until != null && until < oldest ? until : oldest;
     if (++pages >= maxPages) {
       partial = DIARY_STUCK;
       break;
@@ -214,7 +223,7 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, l
       if (e instanceof SignedOut) return { days, list, partial: e.message, signedOut: true };
       return { days, list, partial: DIARY_PARTIAL, signedOut: false };
     }
-    if (!day || !Array.isArray(day.entries)) return { days, list, partial: DIARY_PARTIAL, signedOut: false };
+    if (!day || day.date !== date || !Array.isArray(day.entries)) return { days, list, partial: DIARY_PARTIAL, signedOut: false };
     days.push(day);
   }
   return { days, list, partial, signedOut: false };
