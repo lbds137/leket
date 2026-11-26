@@ -4,7 +4,9 @@
 // through yt-dlp, as the same youtube-extract/v1 JSON and Markdown the extension writes
 // (src/modules/youtube/extract.js builds both). `leket convert discord <save>…` turns
 // Discord saves into Markdown transcripts (src/modules/discord/convert.js renders them;
-// CONVERT_USAGE below). The rest of this header is about `leket youtube`.
+// CONVERT_USAGE below). `leket reddit <url>` saves a post as the extension's Markdown
+// (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
+// about `leket youtube`.
 //
 // The run is two independent fetches, so one failing never discards the other:
 //   1. yt-dlp writes the video's info.json with its comments (no media download);
@@ -28,6 +30,8 @@ import {
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
+import { images as redditImages, postOf, render as renderReddit } from "../src/modules/reddit/md.js";
+import { fetchImageData } from "../src/modules/reddit/prepare.js";
 
 const USAGE = `usage: leket youtube <video-url> [--out DIR] [--lang CODE] [--max-comments N]
 
@@ -64,6 +68,23 @@ const CONVERT_USAGE = `usage: leket convert discord <save>... [--out DIR] [--by 
                 {"duration": seconds, "text": "..."}
   Exit: 0 written; 1 a save couldn't be read (nothing written) or a write failed (the
   message says how many files were written); 2 usage.`;
+
+const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
+       leket reddit --from-json FILE [--out DIR] [--file PATH]
+
+  Saves a reddit post and its comment tree as Markdown, the same Markdown the
+  extension's Save writes: reddit-<post id>.md in DIR (default: the current directory),
+  replacing an earlier save of the post. An image post's picture and every gallery
+  image go in reddit-<post id>-images/ beside it (01.jpg, 02.png… in gallery order),
+  linked relatively; one that can't be saved keeps its remote link.
+  <post-url>        a post on reddit.com (www, old, new, np) or redd.it, or a share link
+                    (/r/SUB/s/CODE). Reddit usually refuses a logged-out fetch (HTTP
+                    403): then save the post with the extension and use --from-json.
+  --from-json FILE  the post's .json as the extension saves it (reddit-<id>.json)
+  --file PATH       write the Markdown to PATH instead of into DIR (its images in PATH
+                    minus .md, plus -images); --file - prints it and fetches no images
+  Exit: 0 saved; 1 nothing saved; 2 usage; 3 saved, but some images link out (stderr
+  says which and why).`;
 
 // How to run yt-dlp: an explicit path, one on PATH, or uvx (with curl_cffi, which
 // YouTube's extractor asks for to impersonate a browser).
@@ -440,11 +461,163 @@ async function convertMain(rest) {
   return convertDiscord(positionals, { out: v.out, by: v.by, base: v.base, title: v.title, tz: v.tz, names, embeds: !!v.embeds, voice: v.voice });
 }
 
+// --- leket reddit
+
+const REDDIT_UA = "leket (personal archiving; https://github.com/lbds137/leket)";
+const REDDIT_HOST = /^((www|old|new|np)\.)?reddit\.com$|^redd\.it$/;
+
+// A reddit address over http(s) as a URL, or null: the only hosts this subcommand asks.
+export function redditUrl(s) {
+  let u;
+  try { u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`); } catch { return null; }
+  return /^https?:$/.test(u.protocol) && REDDIT_HOST.test(u.hostname) ? u : null;
+}
+
+// The post id a reddit URL names (/comments/ID/…, redd.it/ID), or null (a share link).
+export function redditPostId(u) {
+  const m = u.hostname === "redd.it" ? /^\/([a-z0-9]+)\/?$/i.exec(u.pathname) : /\/comments\/([a-z0-9]+)/i.exec(u.pathname);
+  return m ? m[1] : null;
+}
+
+// One GET that follows redirects by hand, only while they stay on reddit: the address
+// comes from the command line, but the next hop comes from the server.
+async function redditGet(start, doFetch) {
+  let u = start;
+  for (let hop = 0; hop <= 5; hop++) {
+    let r;
+    try {
+      r = await doFetch(u.href, { redirect: "manual", headers: { "user-agent": REDDIT_UA }, signal: AbortSignal.timeout(60_000) });
+    } catch (e) {
+      throw new Error(`couldn't reach reddit (${(e && e.message) || e})`);
+    }
+    if (r.status < 300 || r.status >= 400) return { r, url: u };
+    if (r.body && typeof r.body.cancel === "function") r.body.cancel().catch(() => {});
+    const loc = r.headers.get("location");
+    const next = loc ? redditUrl(new URL(loc, u).href) : null;
+    if (!next) throw new Error(`${u.href} redirects off reddit${loc ? `, to ${loc}` : ""}`);
+    if (redditPostId(next)) return { url: next };
+    u = next;
+  }
+  throw new Error(`${start.href} redirects more than 5 times`);
+}
+
+// The post's JSON for a reddit address: a share link is resolved first (its redirect
+// names the post), then the .json is asked for logged out.
+export async function fetchRedditPost(address, { fetch: doFetch = fetch } = {}) {
+  const u = redditUrl(address);
+  if (!u) throw new Error(`not a reddit address: ${address}`);
+  let id = redditPostId(u);
+  if (!id) {
+    const got = await redditGet(u, doFetch);
+    id = redditPostId(got.url);
+    if (got.r && got.r.body && typeof got.r.body.cancel === "function") got.r.body.cancel().catch(() => {});
+    if (!id) throw new Error(`${u.href} didn't lead to a post${got.r ? ` (reddit answered ${got.r.status})` : ""}`);
+  }
+  const fromJson = `save the post with the Leket extension (it writes reddit-${id}.json), then run leket reddit --from-json reddit-${id}.json`;
+  const { r } = await redditGet(new URL(`https://www.reddit.com/comments/${id}.json?raw_json=1&limit=500`), doFetch);
+  if (!r) throw new Error(`reddit sent the post's JSON address elsewhere; ${fromJson}`);
+  if (r.status === 403 || r.status === 429) throw new Error(`reddit refused a logged-out fetch (HTTP ${r.status}); ${fromJson}`);
+  if (!r.ok) throw new Error(`reddit answered ${r.status} for post ${id}`);
+  try {
+    return JSON.parse(await r.text());
+  } catch {
+    throw new Error(`reddit answered with a page, not the post's JSON (a login or block page?); ${fromJson}`);
+  }
+}
+
+const STDIO = { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) };
+
+// Writes the post's Markdown (and its images, unless printing) and returns the exit
+// code; `say` takes what it prints (tests pass their own: node's test runner reports
+// over the real stdout). Everything is rendered once before anything is written, so
+// data that isn't a post writes nothing.
+export async function saveRedditPost(data, { out, file, fetch: doFetch = fetch, say = STDIO } = {}) {
+  let p, md;
+  try {
+    p = postOf(data);
+    md = renderReddit(data);
+  } catch (e) {
+    say.err(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  if (file === "-") { say.out(md); return 0; }
+  let dest = file;
+  if (dest === undefined) {
+    // the id becomes a path: a crafted file must not walk out of DIR with it
+    if (typeof p.id !== "string" || !/^[a-z0-9]+$/i.test(p.id)) {
+      say.err(`leket: the post's id (${JSON.stringify(p.id)}) isn't reddit's form; give --file PATH; nothing written.\n`);
+      return 1;
+    }
+    dest = join(out ?? ".", `reddit-${p.id}.md`);
+  }
+  const folder = `${dest.replace(/\.md$/i, "")}-images`;
+  const saved = {};
+  let failed = 0;
+  for (const [n, u, , ext] of redditImages(p)) {
+    if (!u) continue;
+    try {
+      const { blob, name } = await fetchImageData({ n, u, ext }, { fetch: doFetch });
+      await mkdir(folder, { recursive: true });
+      await writeFile(join(folder, name), Buffer.from(await blob.arrayBuffer()));
+      saved[n] = name;
+    } catch (e) {
+      failed++;
+      say.err(`leket: couldn't save image ${n} (${e.message}); the .md links ${u}\n`);
+    }
+  }
+  try {
+    if (Object.keys(saved).length) md = renderReddit(data, saved, basename(folder));
+    await mkdir(dirname(dest), { recursive: true });
+    await writeFile(dest, md);
+  } catch (e) {
+    say.err(`leket: couldn't write ${dest} (${e.message})${Object.keys(saved).length ? `; the images saved in ${folder} stay` : ""}.\n`);
+    return 1;
+  }
+  say.out(`${dest}\n`);
+  return failed ? 3 : 0;
+}
+
+async function redditMain(args, { fetch: doFetch = fetch } = {}) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      allowPositionals: true,
+      options: { out: { type: "string" }, file: { type: "string" }, "from-json": { type: "string" }, help: { type: "boolean", short: "h" } },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${REDDIT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${REDDIT_USAGE}\n`); return 0; }
+  const fromJson = v["from-json"];
+  if ((fromJson === undefined) === (positionals.length === 0) || positionals.length > 1) {
+    process.stderr.write(`${REDDIT_USAGE}\n`);
+    return 2;
+  }
+  const fail = (msg, code) => { process.stderr.write(`leket: ${msg}\n`); return code; };
+  if (v.out !== undefined && v.file !== undefined) return fail("give --out or --file, not both", 2);
+  if (v.file === "") return fail("--file takes a path (or - to print)", 2);
+  if (positionals.length && !redditUrl(positionals[0])) return fail("give a reddit post address (reddit.com/r/…/comments/… or a share link), or --from-json FILE", 2);
+  let data;
+  if (fromJson !== undefined) {
+    let text;
+    try { text = await readFile(fromJson, "utf8"); } catch (e) { return fail(`couldn't read ${fromJson} (${e.message})`, 1); }
+    try { data = JSON.parse(text); } catch { return fail(`${fromJson} isn't JSON`, 1); }
+  } else {
+    try { data = await fetchRedditPost(positionals[0], { fetch: doFetch }); } catch (e) { return fail(e.message, 1); }
+  }
+  return saveRedditPost(data, { out: v.out, file: v.file, fetch: doFetch });
+}
+
 export async function main(argv) {
   const [sub, ...rest] = argv;
-  if (sub === "-h" || sub === "--help") { process.stdout.write(`${USAGE}\n\n${CONVERT_USAGE}\n`); return 0; }
+  const all = `${USAGE}\n\n${REDDIT_USAGE}\n\n${CONVERT_USAGE}\n`;
+  if (sub === "-h" || sub === "--help") { process.stdout.write(all); return 0; }
   if (sub === "convert") return convertMain(rest);
-  if (sub !== "youtube") { process.stderr.write(`${USAGE}\n\n${CONVERT_USAGE}\n`); return 2; }
+  if (sub === "reddit") return redditMain(rest);
+  if (sub !== "youtube") { process.stderr.write(all); return 2; }
   let parsed;
   try {
     parsed = parseArgs({
