@@ -51,8 +51,12 @@ export async function driveYouTube(opts) {
   if (!panel) {
     panel = document.createElement("div");
     panel.id = "leket-youtube-panel";
+    // clicks pass through it (it sits over YouTube's own top-right controls), and a
+    // screen reader hears each phase
+    panel.setAttribute("role", "status");
+    panel.setAttribute("aria-live", "polite");
     panel.style.cssText = "position:fixed;top:8px;right:8px;z-index:2147483647;max-width:360px;"
-      + "padding:8px 12px;border-radius:8px;background:#1e1f22;color:#fff;"
+      + "padding:8px 12px;border-radius:8px;background:#1e1f22;color:#fff;pointer-events:none;"
       + "font:13px/1.5 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.5)";
     document.documentElement.appendChild(panel);
   } else {
@@ -75,15 +79,39 @@ export async function driveYouTube(opts) {
   let title = h1 ? clean(h1.textContent) : "";
   if (!title) title = clean(document.title.replace(/ - YouTube$/, ""));
   const channelEl = document.querySelector("ytd-watch-metadata ytd-channel-name a");
-  const headerCount = document.querySelector("ytd-comments-header-renderer #count");
+  // the header count mounts with the comment section, often only once it is scrolled
+  // to: read again after the comments load, keeping the first non-empty reading
+  const readHeaderCount = () => readText(document, "ytd-comments-header-renderer #count");
   const metadata = {
     title,
     channel: channelEl ? clean(channelEl.textContent) : "",
     url: videoId ? "https://www.youtube.com/watch?v=" + videoId : location.href,
     video_id: videoId,
-    total_comments_reported: headerCount ? clean(headerCount.textContent) : "",
+    total_comments_reported: readHeaderCount(),
     transcript_note: "",
     comments_note: "",
+  };
+
+  // why the run must stop early, or "": the time budget is spent; YouTube navigated
+  // in-site to another video (autoplay, a recommendation clicked), so what loads now
+  // belongs to a different video than the title above; or a newer run ("Save again")
+  // took over this tab. The token lives in the extension's isolated world, which
+  // every injection into this page shares
+  const runToken = String(Math.random());
+  window.__leketYouTubeRun = runToken;
+  let aborted = "";
+  const stopReason = () => {
+    if (window.__leketYouTubeRun !== runToken) return "superseded";
+    let v = "";
+    try { v = new URL(location.href).searchParams.get("v") || ""; } catch { /* keep "" */ }
+    if (v !== videoId) return "video-changed";
+    if (Date.now() >= deadline) return "time";
+    return "";
+  };
+  const stopped = () => {
+    const why = stopReason();
+    if (why && !aborted) aborted = why;
+    return !!why;
   };
 
   // ---- the transcript panel: whichever renderer the A/B served. In a
@@ -110,9 +138,9 @@ export async function driveYouTube(opts) {
   if (transcript.length === 0) {
     const expand = document.querySelector("#description-inline-expander #expand");
     if (expand) expand.click();
-    const buttonEnd = Date.now() + transcriptWaitMs;
+    const buttonEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
     let button = document.querySelector("ytd-video-description-transcript-section-renderer button");
-    while (!button && Date.now() < buttonEnd) {
+    while (!button && Date.now() < buttonEnd && !stopped()) {
       await sleep(stepMs / 2);
       button = document.querySelector("ytd-video-description-transcript-section-renderer button");
     }
@@ -121,8 +149,8 @@ export async function driveYouTube(opts) {
       metadata.transcript_note = "YouTube shows no transcript for this video.";
     } else {
       button.click();
-      const segEnd = Date.now() + transcriptWaitMs;
-      while (Date.now() < segEnd && readTranscript().length === 0) await sleep(stepMs / 2);
+      const segEnd = Math.min(deadline, Date.now() + transcriptWaitMs);
+      while (Date.now() < segEnd && readTranscript().length === 0 && !stopped()) await sleep(stepMs / 2);
       transcript = readTranscript();
       if (transcript.length === 0) {
         metadata.transcript_note = "The transcript panel never showed its segments within "
@@ -159,7 +187,7 @@ export async function driveYouTube(opts) {
       try { commentsBox.scrollIntoView(); } catch { /* nowhere to scroll */ }
       scrolledBox = commentsBox;
     }
-    if (threadCount() > 0 || topContinuation() || Date.now() >= firstEnd) break;
+    if (threadCount() > 0 || topContinuation() || Date.now() >= firstEnd || stopped()) break;
     await sleep(stepMs / 2);
   }
   if (commentsBox) {
@@ -169,7 +197,7 @@ export async function driveYouTube(opts) {
     // YouTube may drop the old continuation a moment before the next batch brings its
     // replacement: the list is only finished once it has stayed gone a few steps
     let goneSteps = 0;
-    while (Date.now() < deadline) {
+    while (!stopped()) {
       const cont = topContinuation();
       if (!cont) {
         if (++goneSteps >= 3) break;
@@ -196,17 +224,24 @@ export async function driveYouTube(opts) {
   // replies-continuation button (up to 3 times each: a click can land before the button
   // is ready, and YouTube may or may not reuse one element per "more replies" page:
   // unprobed, so TASK-29's notes carry it for the live check), visible or not, half a
-  // step apart. Clicks are counted per element in a WeakMap, so a button that never
-  // answers runs out of tries. A round is progress only when replies grew or a button
-  // never clicked before turned up; stallSteps rounds without progress, or maxMs, end
-  // the phase ----
+  // step apart. A #more-replies whose thread still shows no reply after its click gets
+  // one more try, for a click that landed before YouTube wired the button. Clicks are
+  // counted per element in a WeakMap, so a button that never answers runs out of
+  // tries. A round is progress only when replies grew or a button never clicked before
+  // turned up; stallSteps rounds without progress, the time budget, or a stop reason
+  // end the phase ----
   say("Opening replies…");
   const tries = new WeakMap();
+  const threadHasReplies = (b) => {
+    const box = b.closest("ytd-comment-replies-renderer");
+    return !!(box && box.querySelector("ytd-comment-view-model"));
+  };
   let emptyRounds = 0;
-  while (Date.now() < deadline && emptyRounds < stallSteps) {
+  while (!stopped() && emptyRounds < stallSteps) {
     const toClick = new Set();
     for (const b of document.querySelectorAll("ytd-comment-replies-renderer #more-replies button")) {
-      if (!tries.has(b)) toClick.add(b);
+      const n = tries.get(b) || 0;
+      if (n === 0 || (n === 1 && !threadHasReplies(b))) toClick.add(b);
     }
     for (const b of document.querySelectorAll("ytd-comment-replies-renderer ytd-continuation-item-renderer button")) {
       if ((tries.get(b) || 0) < 3) toClick.add(b);
@@ -214,6 +249,7 @@ export async function driveYouTube(opts) {
     let fresh = 0;
     const before = replyCount();
     for (const b of toClick) {
+      if (stopped()) break;
       if (!b.isConnected || b.disabled) continue;
       if (!tries.has(b)) fresh++;
       tries.set(b, (tries.get(b) || 0) + 1);
@@ -270,6 +306,15 @@ export async function driveYouTube(opts) {
     });
   }
 
+  if (!metadata.total_comments_reported) metadata.total_comments_reported = readHeaderCount();
+  if (aborted === "time") {
+    // a save cut short still saves what it read, and says so
+    const left = document.querySelectorAll("ytd-comment-replies-renderer ytd-continuation-item-renderer button").length;
+    metadata.comments_note = (metadata.comments_note ? metadata.comments_note + " " : "")
+      + "Leket stopped at its " + Math.round(maxMs / 60000) + "-minute limit after " + comments.length
+      + " threads" + (topContinuation() ? ", with more comments still to load" : "")
+      + (left ? ", " + left + " reply button(s) left unopened" : "") + ".";
+  }
   if (comments.length === 0 && !metadata.comments_note) {
     // the driver can't tell an empty or switched-off section from one that never loaded
     metadata.comments_note = commentsBox
@@ -277,7 +322,13 @@ export async function driveYouTube(opts) {
       : "No comments were collected: the page never showed a comment section (comments may be turned off).";
   }
   const replyTotal = comments.reduce((n, c) => n + c.replies.length, 0);
+  if (aborted === "video-changed" || aborted === "superseded") {
+    // what was read belongs to another video, or a newer run owns this tab: the page
+    // saves nothing from this run
+    say(aborted === "superseded" ? "Stopped: a newer save took over." : "Stopped: the tab moved to another video.");
+    return { metadata, transcript: [], comments: [], stats: { threads: 0, replies: 0 }, aborted };
+  }
   say("Done: " + comments.length + " comments, " + replyTotal + " replies, " + transcript.length
     + " transcript lines. Leket is saving the files.");
-  return { metadata, transcript, comments, stats: { threads: comments.length, replies: replyTotal } };
+  return { metadata, transcript, comments, stats: { threads: comments.length, replies: replyTotal }, aborted };
 }
