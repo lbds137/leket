@@ -4,7 +4,7 @@ import { WIDE } from "../lib/shown.js";
 
 // Python's str.isspace() set: the original converters' strip() and their "is this part
 // blank" test use it, and it differs from JavaScript's \s (no U+FEFF; adds \x1c-\x1f, \x85)
-const PYSPACE = "\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+export const PYSPACE = "\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
 const PYSTRIP = new RegExp(`^[${PYSPACE}]+|[${PYSPACE}]+$`, "g");
 export const pyStrip = (s) => s.replace(PYSTRIP, "");
 export const blank = (s) => !pyStrip(s);

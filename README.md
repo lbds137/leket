@@ -160,6 +160,12 @@ node bin/leket.js convert character-chat <export.json>... [--out DIR] [--user LA
 
 An export is one JSON file holding the `conversations` (each with its `messages`, `meta` and `character_id`) and the `characters`' cards that a character-chat site's console export gives. It writes one `.md` per conversation, named after its label (or `Character YYYY-MM-DD`), with each message under a `## Speaker · YYYY-MM-DD HH:MM` heading and a line saying how many messages were saved of the number the site counts. It also writes `INDEX.md` (every conversation, oldest first) and `CARDS.md` (each character's card as the site served it). Conversations with no messages are left out, and the summary counts them. With several exports, the copy of a conversation with the most messages wins. `--user` names your side when the conversation has no persona name, `--site` names the site in the headings (default `Character chat`), and `--tz` sets the zone (default UTC). Files from an earlier run that this one doesn't write are not deleted.
 
+```
+node bin/leket.js convert claude-code <transcript>... [--out DIR] [--user LABEL] [--assistant LABEL] [--tz ZONE] [--json]
+```
+
+A transcript is one of Claude Code's session files (`~/.claude/projects/<folder>/<session id>.jsonl`), or a folder of them (subfolders, where subagents' transcripts live, are not read). It writes one `.md` per session, named `YYYY-MM-DD Title` (the session's name in Claude Code, else the start of its first prompt), holding what you typed and what you were shown: your prompts (system reminders taken out), your answers to its questions, and the text of each reply. Tool calls, their output and text written before a tool call are left out. Sessions with no prompt typed by a person, such as scheduled or headless runs, are left out and counted in the summary. `--json` writes each session's turns (time, role, text) instead, for a script of your own to pick from.
+
 ### Reddit posts
 
 ```
@@ -212,7 +218,7 @@ Layout:
 - `src/modules/replika/`: the Replika module. `page.html`, `page.js`: its page; `api.js`: the protocol — the sign-in probe injected into the tab, the REST walkers, the history pager and the signed media links (no extension APIs); `save.js`: the allowlisted record builders, the unknown-field tally, the readable page and the zip (no extension APIs).
 - `src/modules/youtube/extract.js`: the `youtube-extract/v1` JSON and its Markdown (pure), used by the CLI.
 - `bin/leket.js`: the command-line saves (see above).
-- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `common.js`: their times, file names and folder checks.
+- `src/convert/`: converters from other services' exports to Markdown (pure), for the CLI. `chatgpt.js`: `leket convert chatgpt`; `gemini.js`: `leket convert gemini`; `character-chat.js`: `leket convert character-chat`; `claude-code.js`: `leket convert claude-code`; `common.js`: their times, file names and folder checks.
 - `src/lib/`: shared code. `build.js`, `files.js`, `render.js`, `zip.js`, `part.js`, `summary.js`: the Discord export (the attachments' names, the readable page, the zip, its parts and their retries); `unzip.js`: reads one entry out of a zip on disk, for the CLI; `download.js`: one download followed until it ends, used by the reddit, Etsy and claude.ai saves; `paste.js`: reads the paste boxes on the claude.ai pages; `html-md.js`: HTML to GitHub Markdown, for the Gemini converter (its text escapes serve the character-chat one too).
 - `test/fixtures/fake_page.cjs`: a fake Discord page the collector's tests run on. It mimics the shapes the collector expects; only a run on the real site shows they still match.
 - `test/fixtures/messenger_page.cjs`: the same for Messenger.
