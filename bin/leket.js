@@ -12,8 +12,9 @@
 // (src/convert/claude-code.js), and `leket convert sms <backup.xml>` for an SMS Backup &
 // Restore backup (src/convert/sms.js), and `leket convert signal <export.txt>…` for
 // signalbackup-tools' text export (src/convert/signal.js), and `leket convert whatsapp
-// <chat.txt>…` for WhatsApp's Export chat (src/convert/whatsapp.js), and `leket convert aim
-// <logs>…` for AIM chat logs saved as HTML (src/convert/aim.js).
+// <chat.txt>…` for WhatsApp's Export chat (src/convert/whatsapp.js), `leket convert aim
+// <logs>…` for AIM chat logs saved as HTML (src/convert/aim.js), and `leket convert
+// google-voice <calls>…` for Google Voice in Google Takeout (src/convert/google-voice.js).
 // `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
@@ -49,6 +50,7 @@ import { digits as smsDigits, keyOf as smsKey, messages as smsMessages, plan as 
 import { plan as planSignal } from "../src/convert/signal.js";
 import { plan as planWhatsapp } from "../src/convert/whatsapp.js";
 import { plan as planAim, screenKey as aimKey } from "../src/convert/aim.js";
+import { plan as planGoogleVoice } from "../src/convert/google-voice.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -257,7 +259,30 @@ usage: leket convert aim <logs>... [--out DIR] [--me LABEL] [--name SCREENNAME=L
   --base NAME     the file's name (NAME.md)
   Exit: 0 written; 1 a log couldn't be read, has no "Chatlog between" heading or a date
   that doesn't exist, or the logs hold no message (nothing written), or a write failed;
-  2 usage.`;
+  2 usage.
+
+usage: leket convert google-voice <calls>... [--out DIR] [--me LABEL] [--name NAME=LABEL]...
+         [--contact NAME] [--tz ZONE] [--title TEXT] [--base NAME]
+
+  Turns a Google Voice Takeout's calls folder (Voice/Calls: one .html per text-thread
+  chunk, placed / received / missed call and voicemail) into one Markdown file per
+  contact, texts, calls and voicemails together, in the shape convert discord writes.
+  A call is its .html file, or a folder: every .html directly in it. A message or call
+  that appears in more than one file is kept once. Files whose name or tag link names
+  no known kind are skipped and listed on stderr.
+  Writes "google-voice-Name.md" into DIR (default: the current directory), replacing
+  earlier files of that name; two that would share a name get a count added.
+  --me LABEL      the account owner's messages' label (default Me; a Hebrew-locale
+                  export marks them "אני")
+  --name N=LABEL  show the contact or sender name N as LABEL (repeatable; default: the
+                  name as written)
+  --contact NAME  only the conversation with NAME (the name in the file names)
+  --tz ZONE       the zone times are shown in (default UTC; the export writes offsets,
+                  so times are converted)
+  --title TEXT    with --contact: the heading (default "Google Voice with Name")
+  --base NAME     with --contact: the file's name (NAME.md)
+  Exit: 0 written; 1 a folder holds no .html file, no conversation matched --contact,
+  or the input holds no message (nothing written), or a write failed; 2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -1133,15 +1158,28 @@ async function convertTextLogMain(kind, args) {
   return convertTextLog(kind, positionals, { out: v.out, names, tz: v.tz, title: v.title, base: v.base });
 }
 
+// Reads .html inputs for a converter whose Source line names only folders actually given on
+// the command line (folder = p for a folder argument, "" for a loose file).
+async function htmlInputs(paths, what) {
+  const inputs = [], seen = new Set();
+  for (const p of paths) {
+    const folder = (await stat(p)).isDirectory() ? p : "";
+    for (const f of folder ? await inputFiles([p], ".html", what) : [p]) {
+      const real = realpathSync(f);
+      if (!seen.has(real)) {
+        seen.add(real);
+        inputs.push({ folder, file: basename(f), text: await readFile(f, "utf8") });
+      }
+    }
+  }
+  return inputs;
+}
+
 // `convert aim`: every log given → one transcript
 export async function convertAim(paths, { out = ".", me = "", names = {}, tz = "", title, base } = {}) {
   let planned;
   try {
-    const inputs = [];
-    for (const f of await inputFiles(paths, ".html", "AIM log")) {
-      inputs.push({ folder: basename(dirname(resolve(f))), file: basename(f), text: await readFile(f, "utf8") });
-    }
-    planned = planAim(inputs, { title, base, me, names, timeZone: tz });
+    planned = planAim(await htmlInputs(paths, "AIM log"), { title, base, me, names, timeZone: tz });
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
@@ -1149,10 +1187,10 @@ export async function convertAim(paths, { out = ".", me = "", names = {}, tz = "
   if (!(await writeConverted(planned.files, out))) return 1;
   const s = planned.stats;
   const unknown = Object.entries(s.unknown).map(([t, n]) => `<${t}> (${n})`).join(", ");
-  process.stderr.write(`leket: ${s.logs} logs, ${s.messages} messages (${s.autos} auto-response${s.autos === 1 ? "" : "s"}); times as logged${tz ? ` (${tz})` : ""}.\n`
+  process.stderr.write(`leket: ${s.logs} log${s.logs === 1 ? "" : "s"}, ${s.messages} messages (${s.autos} auto-response${s.autos === 1 ? "" : "s"}); times as logged${tz ? ` (${tz})` : ""}.\n`
     + `leket: senders: ${Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ")}.\n`
     + (unknown ? `leket: tags shown as their text: ${unknown}.\n` : "")
-    + (s.stray ? `leket: ${s.stray} logs have text before their first message, not shown.\n` : ""));
+    + (s.stray ? `leket: ${s.stray === 1 ? "1 log has text before its" : `${s.stray} logs have text before their`} first message, not shown.\n` : ""));
   return 0;
 }
 
@@ -1187,6 +1225,72 @@ async function convertAimMain(args) {
     names[key] = label;
   }
   return convertAim(positionals, { out: v.out, me: v.me, names, tz: v.tz, title: v.title, base: v.base });
+}
+
+// `convert google-voice`: Google Voice Takeout Calls/*.html → one transcript per contact
+export async function convertGoogleVoice(paths, { out = ".", me = "Me", names = {}, contact = "", tz = "", title, base } = {}) {
+  const zone = tz || "UTC";
+  let planned;
+  try {
+    const inputs = await htmlInputs(paths, "Google Voice export file");
+    planned = planGoogleVoice(inputs, { title, base, me, names, contact, timeZone: zone });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const senders = Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ");
+  const unk = s.unknownKinds;
+  const unkList = unk.slice(0, 5).map(shown).join(", ") + (unk.length > 5 ? ", …" : "");
+  process.stderr.write([
+    `leket: ${count(s.files, "file")}: ${count(s.texts, "text message")}, ${count(s.calls, "call")} and ${count(s.voicemails, "voicemail")}; times in ${zone}.`,
+    senders ? `leket: senders: ${senders}.` : "",
+    unk.length ? `leket: ${count(unk.length, "file")} of an unknown kind, skipped: ${unkList}` : "",
+    s.notExports ? `leket: ${s.notExports === 1 ? "1 file in the input is not a Google Voice export file" : `${s.notExports} files in the input are not Google Voice export files`}, skipped.` : "",
+    s.undated ? `leket: ${count(s.undated, "row")} had no usable time, skipped.` : "",
+  ].filter(Boolean).join("\n") + "\n");
+  return 0;
+}
+
+async function convertGoogleVoiceMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args, allowPositionals: true,
+      options: {
+        out: { type: "string" }, me: { type: "string" }, name: { type: "string", multiple: true },
+        contact: { type: "string" }, tz: { type: "string" }, title: { type: "string" },
+        base: { type: "string" }, help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  const bad = convertOptionError(v, ["me", "title", "contact"]);
+  if (bad) return fail(bad);
+  for (const k of ["title", "base"]) {
+    if (v[k] !== undefined && v.contact === undefined) {
+      return fail(`--${k} goes with --contact (it names that one conversation's ${k === "title" ? "heading" : "file"})`);
+    }
+  }
+  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  const names = Object.create(null); // no prototype: a contact or sender name can be any word
+  for (const n of v.name || []) {
+    const i = n.indexOf("=");
+    const key = i < 1 ? "" : n.slice(0, i);
+    if (!key.trim() || /[\r\n]/.test(key)) return fail(`--name takes NAME=LABEL, not ${n}`);
+    const label = n.slice(i + 1);
+    if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${key}= takes a one-line label`);
+    names[key] = label;
+  }
+  return convertGoogleVoice(positionals, { out: v.out, me: v.me, names, contact: v.contact, tz: v.tz, title: v.title, base: v.base });
 }
 
 // The checks every convert main makes: each label given is one line (and not blank,
@@ -1234,6 +1338,7 @@ async function convertMain(rest) {
   if (kind === "sms") return convertSmsMain(args);
   if (kind === "signal" || kind === "whatsapp") return convertTextLogMain(kind, args);
   if (kind === "aim") return convertAimMain(args);
+  if (kind === "google-voice") return convertGoogleVoiceMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {

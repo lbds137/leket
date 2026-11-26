@@ -99,7 +99,36 @@ test("cli: folders merge into one transcript; senders on stderr; --tz names the 
   const md = readFileSync(join(out, "aim-pixel42+pixelalt.md"), "utf8");
   assert.match(md, /Times are as logged, in America\/Los_Angeles\./);
   assert.equal(md.replace(/, in America\/Los_Angeles/, " (the logging computer's local time, with no zone)"),
-    readFileSync(join(DIR, "expected.md"), "utf8").replace(/^# .*/, "# AIM with pixel42, pixelalt"));
+    readFileSync(join(DIR, "expected.md"), "utf8")
+      .replace(/^# .*/, "# AIM with pixel42, pixelalt")
+      .replace("`pixel42`, `pixelalt`", `\`${join(DIR, "pixel42")}\`, \`${join(DIR, "pixelalt")}\``));
+});
+
+test("cli: a loose log has no 'from' folder in Source and singularizes 1 log on stderr", () => {
+  const dir = tmp(), out = tmp();
+  const loose = join(dir, "one.html");
+  writeFileSync(loose, `${head()}stray<br/>\n${recv("23:58", "pixel42", "hi")}`);
+  const r = leket(["convert", "aim", loose, "--out", out]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /^leket: 1 log, 1 messages \(0 auto-responses\); times as logged\.\n/);
+  assert.match(r.stderr, /leket: 1 log has text before its first message, not shown\./);
+  const md = readFileSync(join(out, "aim-pixel42.md"), "utf8");
+  assert.match(md, /^Source: 1 AIM chat logs saved as HTML\.$/m);
+});
+
+test("dates before 1970 parse and render; years under 1000 throw; equal start times keep input order; unsafe contact names are escaped and sanitised", () => {
+  const pre70 = one(head("Sunday, July 20, 1969 at 20:17:40") + recv("20:17", "pixel42", "landed"));
+  assert.match(pre70, /1 messages, 1969-07-20 to 1969-07-20\./);
+  assert.match(pre70, /## 1969-07-20 \(Sun\)\n\n> -# pixel42 — Jul 20 1969 8:17 PM\n> landed\n>/);
+  assert.throws(() => parse(head("Sunday, July 20, 0999 at 20:17:40") + recv("20:17", "pixel42", "old")),
+    /can't read the heading's date "July 20, 0999 at 20:17:40"/);
+  const a = head("Thursday, August  2, 2007 at 12:00:00") + recv("12:00", "pixel42", "first");
+  const b = head("Thursday, August  2, 2007 at 12:00:00") + recv("12:00", "pixel42", "second");
+  const sameStart = plan([{ folder: "a", file: "1.html", text: a }, { folder: "b", file: "2.html", text: b }]).files[0].text;
+  assert.ok(sameStart.indexOf("first") < sameStart.indexOf("second"));
+  const unsafe = plan([{ folder: "f", file: "a.html", text: head("Thursday, August  2, 2007 at 12:00:00", "lantern9", "&lt;b&gt;&amp;c;?*") + recv("12:00", "&lt;b&gt;&amp;c;?*", "hi") }]);
+  assert.equal(unsafe.files[0].name, "aim--b-&c;--.md");
+  assert.match(unsafe.files[0].text, /^> -# \\<b>\\&c;\?\* — Aug 2 2007 12:00 PM$/m);
 });
 
 test("cli: usage errors exit 2; an unreadable log exits 1 with nothing written", () => {

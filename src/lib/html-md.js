@@ -46,7 +46,7 @@ function attrsOf(s) {
 // "<a href=/>" one to /)
 function selfClosing(attrs) {
   const s = attrs.trimEnd();
-  return s.endsWith("/") && !/=\s*(?:[^\s"'>][^\s>]*)?$/.test(s.slice(0, -1));
+  return s.endsWith("/") && !/=\s*(?:[^\s"'>][^\s"'>]*)?$/.test(s.slice(0, -1));
 }
 
 // HTML → a tree of { tag, attrs, children } and strings (text, entities decoded)

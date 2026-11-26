@@ -22,7 +22,11 @@
 // and runs to the next entry; its text is HTML (<br>, <b>, <a href>), ending in <br/>.
 // A message carries only HH:MM: its date is the session's start, moved a day on each time
 // the clock goes back (a session that runs past midnight). Times have no zone: shown as
-// written, never converted.
+// written, never converted. A session is assumed under 24h with times moving forward apart
+// from the handled midnight roll (a mid-session clock step back gains a day — the handled
+// case; a session over 24h would misdate), and a message whose own text holds a line shaped
+// like an entry start ("[H:MM] name (auto-response from …)") starts a new entry — the
+// format has no other marker.
 //
 // A port of a private converter, made generic: names and the zone's label are options,
 // and all the logs given make one transcript, as that converter wrote (the logs of one

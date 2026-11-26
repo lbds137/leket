@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { decode, htmlToMarkdown, oneLineText } from "../src/lib/html-md.js";
+import { decode, htmlToMarkdown, oneLineText, parse } from "../src/lib/html-md.js";
 
 const md = (h) => htmlToMarkdown(h).md;
 
@@ -149,4 +149,16 @@ test("an unquoted value runs to a space or the tag's end, = and / inside it its 
   assert.equal(md("<a target=x href=http://v.example/watch?v=1&feature=r>v</a>"), "[v](http://v.example/watch?v=1&feature=r)");
   assert.equal(md("<a href='x'/>t"), "[x](x)t");
   assert.equal(md("<a b/>t"), "t");
+  // a quoted attribute holding "=" before "/>" still self-closes; an unquoted one holding "/" does not
+  const closed = parse('<a title="x=y"/>next').children;
+  assert.equal(closed.length, 2);
+  assert.deepEqual([closed[0].tag, closed[0].attrs.title, closed[0].children, closed[1]], ["a", "x=y", [], "next"]);
+  const unquoted = parse("<a href=x/>next").children;
+  assert.equal(unquoted.length, 1);
+  assert.deepEqual([unquoted[0].tag, unquoted[0].attrs.href, unquoted[0].children], ["a", "x/", ["next"]]);
+  assert.equal(md("<a href=x/>next"), "[next](x/)");
+  const normal = parse('<a title="x=y">t</a>').children;
+  assert.equal(normal.length, 1);
+  assert.deepEqual([normal[0].tag, normal[0].attrs.title, normal[0].children], ["a", "x=y", ["t"]]);
+  assert.equal(md('<a title="x=y">t</a>'), "t");
 });

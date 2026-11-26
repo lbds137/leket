@@ -7,8 +7,8 @@
 // asks; the answer is a WHATWG Response, so fetchImageData reads it like fetch's.
 import dns from "node:dns";
 import { request } from "node:https";
-import { Readable } from "node:stream";
-import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
+import { PassThrough, Readable } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate, createInflateRaw } from "node:zlib";
 
 import { isPrivateHost } from "../modules/reddit/prepare.js";
 
@@ -46,6 +46,23 @@ export const LEKET_UA = "leket (personal archiving; https://github.com/lbds137/l
 // is refused rather than saved as a picture that won't open
 const DECODERS = { gzip: createGunzip, "x-gzip": createGunzip, deflate: createInflate, br: createBrotliDecompress };
 
+// Servers send either zlib-wrapped (0x78) or raw deflate for Content-Encoding: deflate;
+// hold the first chunk to sniff which decoder to pipe through
+function inflate(res) {
+  const out = new PassThrough();
+  let z;
+  res.once("data", (chunk) => {
+    z = (chunk[0] === 0x78 ? createInflate : createInflateRaw)();
+    z.on("error", (e) => out.destroy(e));
+    out.on("close", () => z.destroy());
+    z.pipe(out);
+    z.write(chunk);
+    res.pipe(z);
+  });
+  res.once("end", () => { if (!z) out.end(); });
+  return out;
+}
+
 // fetch(url, { signal, headers }) for one https GET; credentials and redirect options
 // are accepted and need nothing (no cookies here, no redirect is ever followed). `lookup`
 // and `ca` are for tests: a stand-in DNS answer, and a test server's own certificate.
@@ -56,7 +73,7 @@ export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(),
     if (isPrivateHost(host)) {
       return reject(Object.assign(new Error(`not fetched: ${host} is a local or private-network address`), { code: "EPRIVATEADDR" }));
     }
-    const sent = { "user-agent": LEKET_UA, accept: "*/*", "accept-encoding": "identity", ...headers };
+    const sent = { "user-agent": LEKET_UA, accept: "*/*", "accept-encoding": "identity", ...Object.fromEntries(new Headers(headers)) };
     const req = request(url, { method: "GET", headers: sent, signal, lookup, ...(ca ? { ca } : {}) }, (res) => {
       try {
         const h = new Headers();
@@ -68,11 +85,13 @@ export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(),
           if (coding === "identity") body = Readable.toWeb(res);
           // own keys only: "constructor" is no decoder
           else if (Object.hasOwn(DECODERS, coding)) {
-            const decoded = res.pipe(DECODERS[coding]());
-            // a reset upstream fails the read, as a damaged stream does; a reader that
+            const decoded = coding === "deflate" ? inflate(res) : res.pipe(DECODERS[coding]());
+            // a reset upstream fails the read, but as a fresh error, so the corrupt-body
+            // tag below can't stamp a network failure as the decoder's own; a reader that
             // stops early (cancel) closes the connection too, not only the decoder
-            res.on("error", (e) => decoded.destroy(e));
+            res.on("error", (e) => decoded.destroy(Object.assign(new Error(e.message), { via: "upstream", cause: e })));
             decoded.on("close", () => { if (!res.complete) res.destroy(); });
+            decoded.on("error", (e) => { if (!e.via) { e.code = "EDECODE"; e.coding = coding; } });
             body = Readable.toWeb(decoded);
             // the headers now describe the decoded bytes
             h.delete("content-encoding");

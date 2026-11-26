@@ -190,6 +190,9 @@ export async function fetchImageData({ n, u, ext }, { fetch: doFetch = fetch } =
     try {
       step = await reader.read();
     } catch (e) {
+      if (e && e.code === "EDECODE") {
+        throw new Error(`couldn't read it (the server sent it encoded as ${e.coding}, but the body is corrupt: ${e.message})`);
+      }
       throw unreachable(e);
     }
     const { done, value } = step;
