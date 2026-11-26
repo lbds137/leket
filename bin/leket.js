@@ -5,7 +5,8 @@
 // (src/modules/youtube/extract.js builds both). `leket convert discord <save>…` turns
 // Discord saves into Markdown transcripts (src/modules/discord/convert.js renders them;
 // CONVERT_USAGE below); `leket convert chatgpt <export>…` does the same for ChatGPT's data
-// export (src/convert/chatgpt.js). `leket reddit <url>` saves a post as the extension's Markdown
+// export (src/convert/chatgpt.js), and `leket convert gemini <takeout>…` for Google
+// Takeout's Gemini activity (src/convert/gemini.js). `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
 //
@@ -30,7 +31,9 @@ import {
   buildExtract, renderMarkdown, baseName, json3ToTranscript, pickCaptionTrack, threadsFromYtDlp,
 } from "../src/modules/youtube/extract.js";
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
-import { badFolder, collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
+import { collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
+import { badFolder } from "../src/convert/common.js";
+import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -97,7 +100,24 @@ usage: leket convert chatgpt <export>... [--out DIR] [--user LABEL] [--assistant
                      each listed conversation goes into DIR/folder
   --unlisted FOLDER  where conversations --folders doesn't list go (default: DIR)
   Exit: 0 written; 1 an export couldn't be read (nothing written) or a write failed
-  (the message says how many files were written); 2 usage.`;
+  (the message says how many files were written); 2 usage.
+
+usage: leket convert gemini <takeout>... [--out DIR] [--user LABEL] [--assistant LABEL]
+         [--tz ZONE] [--folders FILE] [--unlisted FOLDER] [--titles FILE] [--other FOLDER]
+
+  Turns Google Takeout's Gemini activity ("My Activity" JSON) into one Markdown file per
+  chat, Gemini's replies converted from HTML. A takeout is its folder (searched for the
+  activity JSON), its zip (not zip64) or the JSON file. Several takeouts are merged: a
+  row in more than one is taken from the first given, so give the oldest first and chats
+  deleted since stay. Writes "YYYY-MM-DD Start of the first prompt.md" (the day it
+  started) into DIR, replacing earlier files of that name; other-activity.md (rows of no
+  chat) and canvases/ (Canvas documents) go into DIR too.
+  --user, --assistant, --tz, --folders, --unlisted  as for chatgpt (default labels:
+                     User, Gemini)
+  --titles FILE      a tab-separated file whose header names an id and a title column:
+                     the title shown for each listed chat (Takeout has none)
+  --other FOLDER     where other-activity.md and canvases/ go (default: DIR)
+  Exit: as for chatgpt.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -493,8 +513,10 @@ export async function readChatgptExport(path) {
       if (hits.length > 1) throw new Error(`${path} holds ${hits.length} files named ${want}; unzip it and give the folder of the one to convert`);
       return hits[0];
     };
-    const c = pick(CONVS), n = pick(NAMES);
+    const c = pick(CONVS);
     if (!c) throw new Error(`${path} holds no ${CONVS}: not a ChatGPT export`);
+    // the names file that belongs to it sits in the same folder of the zip
+    const n = entries.find((e) => basename(e.name) === NAMES && dirname(e.name) === dirname(c.name));
     for (const e of [c, n]) if (e && e.size > MAX_STRING_LENGTH) throw new Error(`${path}: its ${shown(e.name)} is ${Math.round(e.size / 1048576)} MB, too large to read as one text`);
     const read = async (e) => (await readZipEntry(path, e)).toString("utf8");
     return { label: path, conversations: parse(await read(c), `${path}: ${CONVS}`), names: n ? parse(await read(n), `${path}: ${NAMES}`) : {} };
@@ -507,25 +529,36 @@ export async function readChatgptExport(path) {
   return { label: file, conversations, names };
 }
 
-// --folders: a tab-separated file with a header row naming an "id" and a "folder" column
-export async function readFolders(path) {
-  const rows = (await readFile(path, "utf8")).split(/\r?\n/);
-  const head = rows.shift().split("\t");
-  const ci = head.indexOf("id"), fi = head.indexOf("folder");
-  if (ci < 0 || fi < 0) throw new Error(`--folders ${path}: its header row has no "id" and "folder" columns (tab-separated)`);
+// A tab-separated file with a header row naming an "id" column and `column` → { id: value }.
+// A byte-order mark is dropped and cells are trimmed; check(value) returns why a value is
+// wrong, or nothing. An id listed twice with different values is an error.
+async function readIdTsv(path, flag, column, check) {
+  const rows = (await readFile(path, "utf8")).replace(/^\uFEFF/, "").split(/\r?\n/);
+  const head = rows.shift().split("\t").map((c) => c.trim());
+  const ci = head.indexOf("id"), vi = head.indexOf(column);
+  if (ci < 0 || vi < 0) throw new Error(`${flag} ${path}: its header row has no "id" and "${column}" columns (tab-separated)`);
   // no prototype: an id "__proto__" is an ordinary key
-  const folders = Object.create(null);
+  const map = Object.create(null), at = Object.create(null);
   // blank lines are skipped in the loop, not filtered out, so k + 2 is the line number
   for (const [k, line] of rows.entries()) {
     if (!line.trim()) continue;
     const cells = line.split("\t");
-    const id = cells[ci], folder = cells[fi];
+    const id = (cells[ci] ?? "").trim(), value = (cells[vi] ?? "").trim();
     if (!id) continue;
-    if (badFolder(folder)) throw new Error(`--folders ${path}: row ${k + 2} names the folder ${shown(JSON.stringify(folder ?? ""))}, which isn't a relative folder (no \\ : . or .. parts)`);
-    folders[id] = folder;
+    const why = check(value);
+    if (why) throw new Error(`${flag} ${path}: row ${k + 2} has ${column} ${shown(JSON.stringify(value))}, ${why}`);
+    if (Object.hasOwn(map, id) && map[id] !== value) throw new Error(`${flag} ${path}: rows ${at[id]} and ${k + 2} give ${shown(id)} different ${column}s`);
+    map[id] = value; at[id] ??= k + 2;
   }
-  return folders;
+  return map;
 }
+
+// --folders: a tab-separated file with a header row naming an "id" and a "folder" column
+export const readFolders = (path) => readIdTsv(path, "--folders", "folder",
+  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : . or .. parts, no control characters)" : ""));
+
+// --titles: a tab-separated file with a header row naming an "id" and a "title" column
+export const readTitles = (path) => readIdTsv(path, "--titles", "title", (t) => (t ? "" : "which is empty"));
 
 export async function convertChatgpt(paths, { out = ".", user, assistant, tz = "UTC", folders: foldersPath, unlisted = "" } = {}) {
   let files;
@@ -539,6 +572,19 @@ export async function convertChatgpt(paths, { out = ".", user, assistant, tz = "
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
   }
+  if (!(await writeConverted(files, out))) return 1;
+  const turns = files.reduce((n, f) => n + f.turns, 0);
+  const empty = files.filter((f) => f.empty).length;
+  const skipped = Object.create(null);
+  for (const f of files) for (const [k, n] of Object.entries(f.skipped)) skipped[k] = (skipped[k] || 0) + n;
+  const notShown = Object.entries(skipped).map(([k, n]) => `${shown(k)} ${n}`).join(", ");
+  process.stderr.write(`leket: ${files.length} conversations${empty ? ` (${empty} with no current message, written with none)` : ""}, ${turns} messages, from ${paths.length} export(s); times in ${tz}.${notShown ? ` Not shown (no text): ${notShown}.` : ""}\n`);
+  return 0;
+}
+
+// Writes planned files ({ folder, name, text }) under out, printing each path; false
+// (after saying how far it got) when one can't be written.
+async function writeConverted(files, out) {
   let written = 0;
   try {
     for (const f of files) {
@@ -546,32 +592,94 @@ export async function convertChatgpt(paths, { out = ".", user, assistant, tz = "
       await mkdir(dir, { recursive: true });
       const p = join(dir, f.name);
       await writeFile(p, f.text);
-      process.stdout.write(`${p}\n`);
+      process.stdout.write(`${shown(p)}\n`);
       written++;
     }
   } catch (e) {
     process.stderr.write(`leket: couldn't write ${shown(files[written].name)} (${e.message}); ${written} of ${files.length} files written.\n`);
+    return false;
+  }
+  return true;
+}
+
+// One Gemini Takeout: its folder (searched for the activity JSON, whatever the language
+// names it), its zip (not zip64) or the JSON file → [{ label, rows }], one per JSON file
+// that is a list of activity rows. Other JSON files (one attached to a chat) are passed over.
+export async function readGeminiExport(path) {
+  const isActivity = (x) => Array.isArray(x) && x.some((e) => e && typeof e === "object" && typeof e.time === "string" && typeof e.title === "string");
+  const found = [];
+  const consider = (label, text) => {
+    let data;
+    try { data = JSON.parse(text); } catch { return; }
+    if (isActivity(data)) found.push({ label, rows: data });
+  };
+  if (/\.zip$/i.test(path)) {
+    for (const e of (await zipEntries(path)).filter((x) => /\.json$/i.test(x.name)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (e.size > MAX_STRING_LENGTH) throw new Error(`${path}: its ${shown(e.name)} is ${Math.round(e.size / 1048576)} MB, too large to read as one text`);
+      consider(`${path}: ${e.name}`, (await readZipEntry(path, e)).toString("utf8"));
+    }
+  } else {
+    let isDir = true;
+    try { await readdir(path); } catch (e) { if (e.code !== "ENOTDIR") throw e; isDir = false; }
+    if (!isDir) {
+      let data;
+      try { data = JSON.parse(await readFile(path, "utf8")); } catch (e) { throw new Error(`${path} isn't JSON (${e.message})`); }
+      if (!isActivity(data)) throw new Error(`${path} isn't a list of Takeout activity rows`);
+      return [{ label: path, rows: data }];
+    }
+    const walk = async (dir) => {
+      for (const d of (await readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        const p = join(dir, d.name);
+        if (d.isDirectory()) await walk(p);
+        else if (d.isFile() && /\.json$/i.test(d.name)) consider(p, await readFile(p, "utf8"));
+      }
+    };
+    await walk(path);
+  }
+  if (!found.length) throw new Error(`${path} holds no Takeout activity JSON (a list of rows with "time" and "title")`);
+  return found;
+}
+
+export async function convertGemini(paths, { out = ".", user, assistant, tz = "UTC", folders: foldersPath, titles: titlesPath, unlisted = "", other = "" } = {}) {
+  let planned;
+  try {
+    const snapshots = [];
+    for (const p of paths) snapshots.push(...await readGeminiExport(p));
+    const folders = foldersPath ? await readFolders(foldersPath) : {};
+    const titles = titlesPath ? await readTitles(titlesPath) : {};
+    const collected = collectGemini(snapshots);
+    if (!collected.rows.length) throw new Error(`no Gemini rows in ${paths.length} export(s)${collected.other ? ` (${collected.other} rows of other Google products)` : ""}`);
+    // every file is rendered before any is written, so a render error writes nothing
+    planned = planGemini(collected, { folders, titles, unlisted, other, user, assistant, timeZone: tz });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
   }
-  const turns = files.reduce((n, f) => n + f.turns, 0);
-  const skipped = Object.create(null);
-  for (const f of files) for (const [k, n] of Object.entries(f.skipped)) skipped[k] = (skipped[k] || 0) + n;
-  const notShown = Object.entries(skipped).map(([k, n]) => `${shown(k)} ${n}`).join(", ");
-  process.stderr.write(`leket: ${files.length} conversations, ${turns} messages, from ${paths.length} export(s); times in ${tz}.${notShown ? ` Not shown (no text): ${notShown}.` : ""}\n`);
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  const unknown = Object.entries(s.unknown).map(([k, n]) => `${shown(k)} ${n}`).join(", ");
+  process.stderr.write([
+    `leket: ${s.chats} chats (${s.prompts} prompts, ${s.replies} replies), ${s.loose} rows outside chats, ${s.canvases} canvases, from ${s.rows} rows in ${paths.length} export(s); times in ${tz}.`,
+    s.cut ? `Replies Takeout removed text from: ${s.cut}, in ${s.cutChats} chats.` : "",
+    s.short ? `Replies whose Markdown has under 98% of the HTML's letters: ${s.short}.` : "",
+    unknown ? `HTML tags kept as text: ${unknown}.` : "",
+    s.otherProducts ? `Rows of other Google products passed over: ${s.otherProducts}.` : "",
+    s.unrecognised ? "No row reads as a prompt (\"Prompted …\"): is the Takeout in another language? Every row went to other-activity.md." : "",
+  ].filter(Boolean).join("\n") + "\n");
   return 0;
 }
 
-async function convertChatgptMain(args) {
+const CONVERT_OPTIONS = {
+  out: { type: "string" }, user: { type: "string" }, assistant: { type: "string" }, tz: { type: "string" },
+  folders: { type: "string" }, unlisted: { type: "string" }, help: { type: "boolean", short: "h" },
+};
+
+// `convert chatgpt` and `convert gemini`: the same options, gemini adding --titles and --other
+async function convertExportMain(kind, args) {
   let parsed;
   try {
-    parsed = parseArgs({
-      args,
-      allowPositionals: true,
-      options: {
-        out: { type: "string" }, user: { type: "string" }, assistant: { type: "string" }, tz: { type: "string" },
-        folders: { type: "string" }, unlisted: { type: "string" }, help: { type: "boolean", short: "h" },
-      },
-    });
+    const options = kind === "gemini" ? { ...CONVERT_OPTIONS, titles: { type: "string" }, other: { type: "string" } } : CONVERT_OPTIONS;
+    parsed = parseArgs({ args, allowPositionals: true, options });
   } catch (e) {
     process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
     return 2;
@@ -581,17 +689,18 @@ async function convertChatgptMain(args) {
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   for (const k of ["user", "assistant"]) if (v[k] !== undefined && /[\r\n]/.test(v[k])) return fail(`--${k} takes a one-line label`);
-  if (v.unlisted !== undefined && badFolder(v.unlisted)) return fail("--unlisted takes a relative folder (no \\ : . or .. parts)");
+  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : . or .. parts)`);
   if (v.tz !== undefined) {
     try { new Intl.DateTimeFormat("en-US", { timeZone: v.tz }); } catch { return fail(`--tz: unknown time zone ${v.tz} (give one such as Europe/Paris or UTC)`); }
   }
-  return convertChatgpt(positionals, { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, folders: v.folders, unlisted: v.unlisted });
+  const opts = { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, folders: v.folders, unlisted: v.unlisted };
+  return kind === "gemini" ? convertGemini(positionals, { ...opts, titles: v.titles, other: v.other }) : convertChatgpt(positionals, opts);
 }
 
 async function convertMain(rest) {
   const [kind, ...args] = rest;
   if (kind === "-h" || kind === "--help") { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
-  if (kind === "chatgpt") return convertChatgptMain(args);
+  if (kind === "chatgpt" || kind === "gemini") return convertExportMain(kind, args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {

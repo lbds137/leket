@@ -3,7 +3,7 @@
 // the cursor, recolour the terminal or fake a line of output; the bidi controls (which
 // can show text in another order than it is) and the Unicode line and paragraph
 // separators become a backslash-u escape of four hex digits.
-const WIDE = [
+export const WIDE = [
   0x061c, 0x200e, 0x200f, // ALM, LRM, RLM
   0x2028, 0x2029, // line and paragraph separators
   0x202a, 0x202b, 0x202c, 0x202d, 0x202e, // LRE, RLE, PDF, LRO, RLO
