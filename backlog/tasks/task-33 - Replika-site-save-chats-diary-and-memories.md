@@ -1,10 +1,10 @@
 ---
 id: TASK-33
 title: 'Replika site: save chats, diary and memories'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-25T19:49:00Z'
-updated_date: '2026-11-26T00:51:00Z'
+updated_date: '2026-11-26T04:20:00Z'
 labels:
   - replika
   - needs-lila
@@ -33,7 +33,7 @@ Step 3, the live run, is hands-off for the account owner: signing in once, in th
 <!-- AC:BEGIN -->
 - [x] #1 Prior-art evaluation (approach, license, gaps) recorded in the task
 - [x] #2 Module saves chats, diary and memories; smoke scenario reddened by its defect
-- [ ] #3 Live run where the owner's only step is signing in; the agent checks that the history still loads and exports everything
+- [x] #3 Live run where the owner's only step is signing in; the agent checks that the history still loads and exports everything
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -98,4 +98,12 @@ Step 2 follow-ups for the live run (Step 3):
 - PR #176 review: (4) of the #175 lows was the stale 1.4 diary endpoint line, fixed in #176. TASK-34 (Done) carried two deferrals, now tracked here for the live-run PR:
   - a per-file media byte cap and a final-host (redirect) check, done with the media host in host_permissions;
   - a test for the multi-part download failure message (page.js), at the next Replika smoke work.
+
+Live run (Step 3) on a real account, agent Chrome via deck-agent-chrome --extensions (DP TASK-387); counts and shapes only here, the export stays outside the repo.
+- Run 1 (a6ac1ee) as the probe, run 2 (5623923) as the delivered export: every step complete; the chat socket served 4 messages, and the web app shows the same 4 after scrolling to the top, so older chat is not served (observed in both; why is unknown). Diary 215 days / 455 entries; memories 49 from v3.
+- Pictures: diary images are path-style S3 on s3-us-west-1.amazonaws.com/replika-content-images; the sign call returns the same unsigned URL. Allowed bucket-scoped, plus luka-user-media.s3.us-west-1.amazonaws.com (one picture there answered 403 even with the permission). 18 of 20 saved; one was on a third-party meme host, ruled out: one permission per stray host is not worth it, the item is marked not captured in place.
+- v1.4 memory answers 404 on my.replika.ai and my.replika.com: a 404 there is now 'no older list', not partial. v3 persons was an empty array: tallied, not built.
+- Saved after run 1's tally: content.originalText, avatarEmotion.name, is_romantic, blurred (messages); entries[].reaction (diary); category_id, is_user_edited (facts). Ruled out as plumbing: reroll_type, uses_advanced_ai, uses_memory, reroll_available, meta.chat_id, meta.bot_id, meta.permitted_actions, meta.customer, meta.client_token, meta.is_manhattan, is_last_in_match, read flags, image_count, diary ids, image_from_any_entry (a thumbnail of an entry picture).
+- #175 lows 1-3 done: diary count is entries, a failed day is skipped (5 in a row stop), a rest between day calls. Smoke: both pictures land in media/ through the bucket permission, reddened by removing it.
+- Not done here, filed as TASK-38: media byte cap + final-host check, the multi-part download failure test, meta.voice_message's shape, fact category names.
 <!-- SECTION:NOTES:END -->
