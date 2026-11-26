@@ -75,6 +75,8 @@ test("pre: tags inside it are dropped, its text kept; the fence outlasts any ins
     "```\nmodel A {\nid String\n}\n-- next & last\n```\n\nafter");
   assert.equal(md("<pre>```\nx\n```</pre>"), "````\n```\nx\n```\n````");
   assert.equal(md("<ol><li>run:\n<pre><code>a\n  b\n</code></pre></li></ol>"), "1. run:\n   ```\n   a\n     b\n   ```");
+  // the last line keeps its trailing spaces too; only final newlines go, and a blank block is dropped
+  assert.equal(md("<pre>a  \nb  \n\n</pre><pre>c  </pre><pre> \n </pre>"), "```\na  \nb  \n```\n\n```\nc  \n```");
   // code keeps its trailing spaces (in a quote too); other lines lose theirs; a NUL in code
   // shows as U+FFFD
   assert.equal(md("<pre>a  \nb\t\nc</pre><p>x  </p><blockquote><pre>q \nr</pre></blockquote><pre>n\u0000</pre>"),

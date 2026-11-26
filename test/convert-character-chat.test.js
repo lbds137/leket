@@ -132,6 +132,25 @@ test("a character id '__proto__' is an ordinary key", () => {
   assert.match(r.text, /\*\*Proto Bot\*\*/);
 });
 
+test("a blank name or field counts as missing; a missing or out-of-range time is undated and sorts last", () => {
+  const d = { characters: { c1: { name: "   ", dialogue: "  " } }, conversations: [
+    { id: "a", character_id: "c1", character: { name: "Fallback" }, meta: {}, messages: [msg("a1", "bot", "hi", undefined)] },
+    { id: "b", character_id: "c1", meta: {}, messages: [msg("b1", "bot", "hi", -1e20)] },
+    { id: "c", character_id: "c1", meta: {}, messages: [msg("c1", "bot", "hi", T0)] },
+  ] };
+  const { files, stats } = plan(collect([exportOf(d)]));
+  const f = byName(files);
+  assert.match(f["Fallback undated.md"], /with \*\*Fallback\*\*/);
+  assert.equal(f["CARDS.md"], "# Character cards as Character chat served them\n");
+  assert.equal(stats.cards, 0);
+  assert.equal(stats.missing, 1);
+  assert.deepEqual(f["INDEX.md"].split("\n").slice(6, -1), [
+    "| `Unknown character 2024-03-05.md` | Unknown character | 1 | 2024-03-05 | 2024-03-05 |",
+    "| `Fallback undated.md` | Fallback | 1 | undated | undated |",
+    "| `Unknown character undated.md` | Unknown character | 1 | undated | undated |",
+  ]);
+});
+
 test("minute: zones, and no time for a missing or bad value", () => {
   assert.equal(minute(T0), "2024-03-05 14:03");
   assert.equal(minute(T0, "Asia/Kolkata"), "2024-03-05 19:33");

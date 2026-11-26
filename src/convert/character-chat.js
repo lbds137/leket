@@ -24,7 +24,10 @@ import { pyStrip, safeTitle } from "./common.js";
 
 const str = (x) => (typeof x === "string" ? x : "");
 const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : null);
-const ms = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+// a time Date can hold: ms since 1970 within ±8.64e15
+const ms = (x) => (typeof x === "number" && Math.abs(x) <= 8.64e15 ? x : null);
+// a name or field as shown: a blank one counts as missing
+const text = (x) => pyStrip(str(x));
 
 // Milliseconds since 1970 → "YYYY-MM-DD HH:MM" in timeZone; "" for no time
 export function minute(t, timeZone = "UTC") {
@@ -55,7 +58,7 @@ export function collect(exports) {
     for (const id of Object.keys(chars)) {
       const ch = obj(chars[id]);
       if (!ch) continue;
-      if (str(ch.name) || !Object.hasOwn(characters, id)) characters[id] = ch;
+      if (text(ch.name) || !Object.hasOwn(characters, id)) characters[id] = ch;
     }
     for (const [k, c] of d.conversations.entries()) {
       const id = obj(c) && (typeof c.id === "string" || typeof c.id === "number") ? String(c.id) : "";
@@ -71,7 +74,7 @@ export function collect(exports) {
 }
 
 const characterOf = (chars, c) => (Object.hasOwn(chars, String(c.character_id)) ? obj(chars[String(c.character_id)]) : null) || {};
-const nameOf = (chars, c) => pyStrip(str(characterOf(chars, c).name) || str(obj(c.character)?.name)) || "Unknown character";
+const nameOf = (chars, c) => text(characterOf(chars, c).name) || text(obj(c.character)?.name) || "Unknown character";
 
 // One conversation → { title, messages, text, short } (short: fewer messages than the
 // site's own count)
@@ -127,7 +130,7 @@ export function plan(collected, { user, site = "Character chat", timeZone = "UTC
     for (let n = 2; taken.has(`${name}.md`.toLowerCase()); n++) name = `${base} (${n})`;
     taken.add(`${name}.md`.toLowerCase());
     files.push({ name: `${name}.md`, text: r.text });
-    rows.push({ at: ms(msgs[0].createdAt) ?? Infinity, name, character: r.name, messages: r.messages, from: day, to: minute(msgs.at(-1).createdAt, timeZone).slice(0, 10) });
+    rows.push({ at: ms(msgs[0].createdAt) ?? Infinity, name, character: r.name, messages: r.messages, from: day, to: minute(msgs.at(-1).createdAt, timeZone).slice(0, 10) || "undated" });
     messages += r.messages;
     if (r.short) short++;
   }
@@ -139,16 +142,16 @@ export function plan(collected, { user, site = "Character chat", timeZone = "UTC
     ...rows.map((r) => `| ${cell(codeSpan(`${r.name}.md`))} | ${cell(r.character)} | ${r.messages} | ${r.from} | ${r.to} |`)];
   files.push({ name: "INDEX.md", text: `${index.join("\n")}\n` });
   const cards = [`# Character cards as ${site} served them`, ""];
-  const chars = Object.entries(collected.characters).filter(([, ch]) => str(ch.name));
-  chars.sort(([, a], [, b]) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const [cid, ch] of chars) {
+  const chars = Object.entries(collected.characters).map(([cid, ch]) => [cid, ch, text(ch.name)]).filter(([, , name]) => name);
+  chars.sort(([, , a], [, , b]) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const [cid, ch, name] of chars) {
     const creator = str(ch.creator_username);
-    cards.push(`## ${pyStrip(ch.name)}${creator ? ` (by ${creator})` : ""}`, "", `${codeSpan(cid)} · ${str(ch.title)}`, "");
+    cards.push(`## ${name}${creator ? ` (by ${creator})` : ""}`, "", `${codeSpan(cid)} · ${str(ch.title)}`, "");
     for (const field of ["persona", "scenario", "greeting", "dialogue"]) {
-      if (str(ch[field])) cards.push(`**${field}:**`, "", pyStrip(ch[field]), "");
+      if (text(ch[field])) cards.push(`**${field}:**`, "", text(ch[field]), "");
     }
   }
   files.push({ name: "CARDS.md", text: cards.join("\n") });
-  const missing = Object.values(collected.characters).filter((ch) => !str(ch.name)).length;
+  const missing = Object.values(collected.characters).filter((ch) => !text(ch.name)).length;
   return { files, stats: { conversations: rows.length, messages, empty, short, cards: chars.length, missing } };
 }

@@ -228,8 +228,8 @@ function block(n, ctx) {
     }
     case "pre": {
       // a NUL in the text would read as KEEP below; the HTML parser shows it as U+FFFD too
-      const s = textOf(n).replace(/\u0000/g, "\uFFFD").replace(/^\n/, "").replace(/\s+$/, "");
-      if (!s) return "";
+      const s = textOf(n).replace(/\u0000/g, "\uFFFD").replace(/^\n/, "").replace(/\n+$/, "");
+      if (!s.trim()) return ""; // only final newlines go: the last line keeps its trailing spaces too
       const fence = "`".repeat(Math.max(3, ...[...s.matchAll(/^ {0,3}(`{3,})/gm)].map((m) => m[1].length + 1)));
       // code keeps its trailing spaces: KEEP shields them from htmlToMarkdown's strip
       return `${fence}\n${s.split("\n").map((l) => (/[ \t]$/.test(l) ? l + KEEP : l)).join("\n")}\n${fence}`;

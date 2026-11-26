@@ -198,6 +198,12 @@ test("a JSON file too large to read is passed over and named, in a zip or a fold
   }
   // nothing else there: the error says what was passed over
   await assert.rejects(readGeminiExport(join(dir, "t"), { limit: 10 }), /holds no Takeout activity JSON.*passed over as too large: .*MyActivity\.json/);
+  // ...naming only its own export's files, not those an earlier export passed over
+  const shared = [];
+  await readGeminiExport(join(dir, "t"), { skipped: shared, limit });
+  mkdirSync(join(dir, "empty"));
+  await assert.rejects(readGeminiExport(join(dir, "empty"), { skipped: shared, limit }), (e) => !/Records|passed over/.test(e.message));
+  assert.equal(shared.length, 1);
 });
 
 test("CLI: no activity, a bad file, usage errors", () => {

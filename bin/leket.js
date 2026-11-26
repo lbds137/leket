@@ -634,7 +634,8 @@ export async function readGeminiExport(path, { skipped = [], limit = MAX_STRING_
     try { data = JSON.parse(text); } catch { return; }
     if (isActivity(data)) found.push({ label, rows: data });
   };
-  const tooLarge = (label, size) => { skipped.push(`${label} (${Math.round(size / 1048576)} MB)`); };
+  const mine = []; // this export's own, for its error: `skipped` may hold earlier exports' too
+  const tooLarge = (label, size) => { const s = `${label} (${Math.round(size / 1048576)} MB)`; mine.push(s); skipped.push(s); };
   if (/\.zip$/i.test(path)) {
     for (const e of (await zipEntries(path)).filter((x) => /\.json$/i.test(x.name)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
       if (e.size > limit) { tooLarge(`${path}: ${e.name}`, e.size); continue; }
@@ -665,7 +666,7 @@ export async function readGeminiExport(path, { skipped = [], limit = MAX_STRING_
     };
     await walk(path);
   }
-  if (!found.length) throw new Error(`${path} holds no Takeout activity JSON (a list of rows with "time" and "title")${skipped.length ? `; passed over as too large: ${skipped.map(shown).join(", ")}` : ""}`);
+  if (!found.length) throw new Error(`${path} holds no Takeout activity JSON (a list of rows with "time" and "title")${mine.length ? `; passed over as too large: ${mine.map(shown).join(", ")}` : ""}`);
   return found;
 }
 
