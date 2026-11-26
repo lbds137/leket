@@ -1,9 +1,10 @@
 ---
 id: TASK-32.13
 title: 'convert gemini: a chat mapped to the canvas folder can overwrite a canvas file'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-26T15:48:00Z'
+updated_date: '2026-11-26T16:22:00Z'
 labels: []
 dependencies: []
 parent_task_id: TASK-32
@@ -15,3 +16,9 @@ ordinal: 52000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 From #202 claude-review (low, filed because it loses data silently). In src/convert/gemini.js plan(), chat names (taken) and canvas names (takenCanvas) are de-duplicated separately. With --folders mapping a chat to 'canvases' (or <other>/canvases), a chat whose first prompt matches a same-day canvas title gets the same folder/name, and writeConverted writes the canvas over the chat. Reviewer reproduced it with folders {abc: canvases}. Fix: one taken set across both kinds keyed by folder/name, or refuse a --folders value equal to the canvas folder; add a test.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in 2746903 on branch next-after-202 (0.11.0 PR), with a test.
+<!-- SECTION:NOTES:END -->
