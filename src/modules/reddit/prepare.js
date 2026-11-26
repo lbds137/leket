@@ -9,8 +9,8 @@
 // its old.reddit advice stays advice in the error text — never an auto-retry.
 import { POST_PATHNAME } from "../registry.js";
 import { render, notFetched, postOf, images, imageFileName } from "./md.js";
+import { MEDIA_CAP_MB, MAX_MEDIA_BYTES } from "../../lib/limits.js";
 
-const MAX_IMAGE_BYTES = 50 * 1048576;
 // the manifest's image host_permissions
 const REDDIT_IMAGE_HOSTS = new Set(["i.redd.it", "preview.redd.it", "external-preview.redd.it"]);
 
@@ -162,7 +162,7 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
     throw refuse(`the server sent ${ctype || "no content type"}, not an image`);
   }
   const cl = Number(r.headers && typeof r.headers.get === "function" && r.headers.get("content-length"));
-  if (cl > MAX_IMAGE_BYTES) throw refuse("over 50 MB");
+  if (cl > MAX_MEDIA_BYTES) throw refuse(`over ${MEDIA_CAP_MB} MB`);
   if (!r.body) throw new Error("the server sent no image data");
   const chunks = [];
   let total = 0;
@@ -177,9 +177,9 @@ export async function fetchImage({ n, u, ext }, { fetch: doFetch = fetch } = {})
     const { done, value } = step;
     if (done) break;
     total += value.byteLength ?? value.length;
-    if (total > MAX_IMAGE_BYTES) {
+    if (total > MAX_MEDIA_BYTES) {
       try { await reader.cancel(); } catch { /* already closed */ }
-      throw new Error("over 50 MB");
+      throw new Error(`over ${MEDIA_CAP_MB} MB`);
     }
     chunks.push(value);
   }

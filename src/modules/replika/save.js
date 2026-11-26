@@ -568,8 +568,13 @@ export function render(data) {
   for (const m of (data && data.messages) || []) {
     const when = stamp(m.at);
     const who = speaker(m.from);
-    let body = `<div class="head"><span class="name">${esc(who)}</span><span class="time">${esc(when)}</span></div>`;
+    let body = `<div class="head"><span class="name">${esc(who)}</span><span class="time">${esc(when)}</span>${typeof m.emotion === "string" ? `<span class="tag">emotion: ${esc(m.emotion)}</span>` : ""}</div>`;
     if (m.text != null) body += `<div class="text">${esc(m.text)}</div>`;
+    // the text before Replika changed it, only beside a text it differs from (a picture
+    // message has none to compare with)
+    if (typeof m.original_text === "string" && typeof m.text === "string" && m.original_text !== m.text) {
+      body += `<div class="original"><span class="label">Before Replika changed it:</span> ${esc(m.original_text)}</div>`;
+    }
     if (Array.isArray(m.reactions) && m.reactions.length) {
       body += `<div class="reactions">${m.reactions.map((r) => `<span class="reaction">${esc(r)}</span>`).join("")}</div>`;
     }
@@ -597,6 +602,7 @@ export function render(data) {
     let body = `<div class="head"><span class="name">${esc(d.title || "diary entry")}</span><span class="time">${esc(d.date == null ? "unknown date" : d.date)}</span></div>`;
     for (const e of d.entries || []) {
       if (e.text != null) body += `<div class="text">${esc(e.text)}</div>`;
+      if (e.reaction != null && e.reaction !== "") body += `<div class="reactions"><span class="reaction">reaction: ${esc(e.reaction)}</span></div>`;
       for (const img of e.images || []) {
         const alt = `picture from the diary, ${esc(d.date == null ? "unknown date" : d.date)}`;
         if (img.media) body += `<div class="media"><img loading="lazy" src="${esc(img.media)}" alt="${alt}"></div>`;
@@ -637,6 +643,8 @@ h2{font-size:17px;margin:0 0 6px}h3{font-size:14px;margin:14px 0 4px;color:var(-
 audio{margin-top:4px}.medialabel{font-size:13px;color:var(--muted)}
 .missing{color:var(--warn);font-size:13px;margin-top:2px}
 .reactions{margin-top:2px}.reaction{display:inline-block;background:var(--card);border-radius:10px;padding:0 8px;margin-right:4px;font-size:13px}
+.head .tag{font-size:12px;color:var(--muted);background:var(--card);border-radius:10px;padding:0 8px;margin-left:8px}
+.original{font-size:13px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:2px}.original .label{font-weight:600}
 .empty{color:var(--muted);font-style:italic}
 ul{margin:4px 0;padding-left:20px}li{margin:2px 0}
 </style></head><body><main>

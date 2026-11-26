@@ -6,6 +6,7 @@
 //     could carry credentials), and
 //   - nothing is ever console.log'd.
 import { md5 } from "../../lib/md5.js";
+import { MEDIA_CAP_MB, MAX_MEDIA_BYTES } from "../../lib/limits.js";
 
 export const HISTORY_SOCKET = "wss://ws.replika.com/v17";
 const DIARY_LIST = "https://my.replika.com/api/mobile/1.5/diaries";
@@ -30,11 +31,9 @@ export const MEDIA_LINK_UNUSABLE = "the picture's link was not usable";
 export const MEDIA_VOICE_LINK_UNUSABLE = "the voice clip's link was not usable";
 export const MEDIA_FETCH_FAILED = "the file host refused or failed";
 export const MEDIA_HOST_NOT_REPLIKA = "the picture's link points outside Replika's picture storage";
-// the per-file cap on a picture or voice clip, so one oversized file can't exhaust the
-// memory the zip is built in (the same cap as Reddit's images)
-const MAX_MEDIA_MB = 50;
-export const MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1048576;
-export const MEDIA_TOO_LARGE = `the file is over ${MAX_MEDIA_MB} MB`;
+// the shared per-file cap (lib/limits.js), and the reason a file over it is listed with
+export { MAX_MEDIA_BYTES };
+export const MEDIA_TOO_LARGE = `the file is over ${MEDIA_CAP_MB} MB`;
 
 // an error whose message is one of this module's fixed, secret-free texts
 // (status: the HTTP status when the call got one, else null)
