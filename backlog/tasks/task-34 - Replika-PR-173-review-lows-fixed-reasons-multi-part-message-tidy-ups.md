@@ -4,7 +4,7 @@ title: 'Replika: PR #173 review lows (fixed reasons, multi-part message, tidy-up
 status: To Do
 assignee: []
 created_date: '2026-11-25T23:56:00Z'
-updated_date: '2026-11-26T00:25:00Z'
+updated_date: '2026-11-26T00:34:00Z'
 labels:
   - replika
 dependencies: []
@@ -34,4 +34,7 @@ From the step-3 diary migration (08db06d) and its cross-family review (council c
 - Media fetches have no size cap and follow redirects unchecked. MV3 host_permissions bound what the extension can read, but an oversized file could exhaust memory while the zip is built. Add a per-file byte cap with a fixed not_captured reason; check the final URL against the allowed hosts once the live run names the media host.
 - Dismissed: impossible calendar dates (2026-02-30) pass DIARY_DATE. The regex keeps the request URL safe, and the server answers such a date with an error, which already ends as DIARY_PARTIAL.
 - Dismissed: media path collisions or unsafe ids. safeId plus makeMediaNamer (src/modules/replika/save.js:168-186) sanitize the id and add -2, -3… to repeats.
+
+- Deferred (2026-11-25, TASK-34 unit): the multi-part download-failure message in src/modules/replika/page.js has no test. page.js is not reachable from node tests, and a smoke check needs a multi-part zip plus a refused download. Trigger: the next smoke work on the Replika page, or any report of a multi-part save failing.
+- Deferred to the live run: a per-file media byte cap and a redirect/final-host check. Trigger: the live run names the media host.
 <!-- SECTION:NOTES:END -->
