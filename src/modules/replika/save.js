@@ -15,7 +15,10 @@ export const MSG_ALLOWED = new Set([
   "id", "content.type", "content.text", "content.voice_message_url",
   "meta.nature", "meta.timestamp", "reactions[]", "meta.reactions[]",
 ]);
-export const DIARY_ALLOWED = new Set(["id", "creation_timestamp", "timestamp", "type", "entries[]"]);
+export const DIARY_ALLOWED = new Set([
+  "date", "title", "entries[]", "entries[].id", "entries[].timestamp", "entries[].text",
+  "entries[].images[]", "entries[].images[].url", "entries[].images[].blurred", "entries[].images[].is_romantic",
+]);
 export const FACT_ALLOWED = new Set(["id", "creation_timestamp", "text"]);
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -68,18 +71,39 @@ export function buildMessage(raw) {
   return { record, media: { url } };
 }
 
-// One diary entry. Its texts are the entries' texts, strings only.
-export function buildDiary(raw) {
-  const texts = [];
-  if (raw && Array.isArray(raw.entries)) {
-    for (const e of raw.entries) if (e && typeof e.text === "string") texts.push(e.text);
+// One diary day: its date, the list item's title, and each entry's id, time and text
+// (strings only). Each entry's pictures follow the chat picture's path: the raw link is
+// never written — it travels out of band as a plan (the image record plus its url) to
+// the media step, which sets `media` or `not_captured` on the record. Only `blurred` and
+// `is_romantic` are copied, and only as booleans.
+export function buildDiary(day, listItem) {
+  const plans = [];
+  const entries = [];
+  if (day && Array.isArray(day.entries)) {
+    for (const e of day.entries) {
+      if (!e || typeof e !== "object") continue;
+      const entryId = scalar(e.id);
+      const images = [];
+      if (Array.isArray(e.images)) {
+        e.images.forEach((img, i) => {
+          const record = { kind: "images", id: `${entryId ?? "entry"}-${i}` };
+          if (img && typeof img.blurred === "boolean") record.blurred = img.blurred;
+          if (img && typeof img.is_romantic === "boolean") record.is_romantic = img.is_romantic;
+          const url = img && img.url;
+          if (typeof url !== "string" || !url) record.not_captured = MEDIA_LINK_UNUSABLE;
+          else plans.push({ record, url });
+          images.push(record);
+        });
+      }
+      entries.push({ id: entryId, at: scalar(e.timestamp), text: typeof e.text === "string" ? e.text : null, images });
+    }
   }
-  return {
-    id: scalar(raw && raw.id),
-    at: scalar(raw && (raw.creation_timestamp || raw.timestamp)),
-    type: raw && typeof raw.type === "string" && TYPE_NAME.test(raw.type) ? raw.type : null,
-    texts,
+  const record = {
+    date: scalar(day && day.date),
+    title: listItem && typeof listItem.title === "string" ? listItem.title : null,
+    entries,
   };
+  return { record, plans };
 }
 
 // One memory fact; `about` is "you" or "replika" from the list it came from, null for
@@ -254,18 +278,26 @@ export async function runSave({
   for (const b of built) if (b.media) plans.push({ record: b.record, url: b.media.url });
 
   onStep("diary");
-  let diary = { entries: [], previews: [], partial: null, signedOut: false };
+  let diary = { days: [], list: [], partial: null, signedOut: false };
   if (stopReason) {
     diary.partial = stopReason;
   } else {
     try {
       diary = await readDiary({ auth, fetchFn, sleep });
     } catch (e) {
-      diary = { entries: [], previews: [], partial: (e && e.message) || String(e), signedOut: false };
+      diary = { days: [], list: [], partial: (e && e.message) || String(e), signedOut: false };
     }
   }
   statuses.diary = diary.partial || "complete";
-  const diaryRecords = diary.entries.map(buildDiary);
+  const titleOf = new Map();
+  for (const item of diary.list) if (item && typeof item.date === "string") titleOf.set(item.date, item);
+  const diaryRecords = [];
+  const diaryPlans = [];
+  for (const day of diary.days) {
+    const built = buildDiary(day, titleOf.get(day && day.date));
+    diaryRecords.push(built.record);
+    diaryPlans.push(...built.plans);
+  }
   if (diary.signedOut) stopReason = diary.partial;
 
   onStep("memories");
@@ -287,11 +319,12 @@ export async function runSave({
 
   onStep("media");
   let media = { files: [], stopped: null };
+  const allPlans = [...plans, ...diaryPlans];
   if (stopReason) {
     statuses.media = stopReason;
-    for (const plan of plans) if (!plan.record.not_captured) plan.record.not_captured = stopReason;
+    for (const plan of allPlans) if (!plan.record.not_captured) plan.record.not_captured = stopReason;
   } else {
-    media = await collectMedia(plans, {
+    media = await collectMedia(allPlans, {
       auth, fetchFn, sleep, pause,
       onProgress: (p) => onProgress({ step: "media", count: p.done, total: p.total }),
     });
@@ -311,9 +344,9 @@ export async function runSave({
     },
     unsaved_fields: {
       message: tallyUnknown(chat.messages, MSG_ALLOWED),
-      // the diary's raw objects are both lists Replika answered: the previews and the
-      // detailed entries, so a field on either shows up in the tally
-      diary: tallyUnknown([...(diary.previews || []), ...diary.entries], DIARY_ALLOWED),
+      // the diary's raw objects are both answers Replika gave: the list items and the
+      // days, so a field on either shows up in the tally
+      diary: tallyUnknown([...(diary.list || []), ...diary.days], DIARY_ALLOWED),
       fact: tallyUnknown([...memories.facts, ...memories.customerFacts, ...memories.robotFacts], FACT_ALLOWED),
     },
     messages: records,
@@ -358,6 +391,18 @@ export function downloadOptions(filename) {
   return { filename, conflictAction: "uniquify" };
 }
 
+// every record with a not_captured reason: chat messages and diary pictures
+function notCaptured(data) {
+  const out = [];
+  for (const m of (data && data.messages) || []) if (m && m.not_captured) out.push(m);
+  for (const d of (data && data.diary) || []) {
+    for (const e of (d && d.entries) || []) {
+      for (const img of (e && e.images) || []) if (img && img.not_captured) out.push(img);
+    }
+  }
+  return out;
+}
+
 // the page's problems list: every partial reason, then the not-captured media by reason
 export function problems(data) {
   const lines = [];
@@ -366,9 +411,7 @@ export function problems(data) {
     if (status[key] && status[key] !== "complete") lines.push(`${name}: ${status[key]}`);
   }
   const counts = new Map();
-  for (const m of (data && data.messages) || []) {
-    if (m && m.not_captured) counts.set(m.not_captured, (counts.get(m.not_captured) || 0) + 1);
-  }
+  for (const m of notCaptured(data)) counts.set(m.not_captured, (counts.get(m.not_captured) || 0) + 1);
   for (const [reason, n] of counts) lines.push(`${n} picture(s) or voice clip(s) not saved: ${reason}`);
   // the field paths the builders never read, per kind (paths only, never values)
   const unsaved = (data && data.unsaved_fields) || {};
@@ -389,8 +432,7 @@ export function endLine({ filename, data }) {
     const s = status[key];
     if (s && s !== "complete" && !reasons.includes(s)) reasons.push(s);
   }
-  let missed = 0;
-  for (const m of (data && data.messages) || []) if (m && m.not_captured) missed++;
+  const missed = notCaptured(data).length;
   const line = `Saved ${filename}: ${c.messages ?? 0} messages, ${c.diary ?? 0} diary entries, ${c.memories ?? 0} memories, ${c.media ?? 0} pictures and voice clips`;
   const unsaved = `${missed} picture(s) or voice clip(s) not saved`;
   if (reasons.length) return { text: `${line} (partial: ${reasons.join("; ")}${missed ? `; ${unsaved}` : ""})`, warn: true };
@@ -458,14 +500,21 @@ export function render(data) {
     chat = `<p class="empty">No messages came back for this save.</p>`;
   }
 
-  const diaryEntries = (data && data.diary) || [];
+  const diaryDays = (data && data.diary) || [];
   let diary = "";
-  for (const d of diaryEntries) {
-    let body = `<div class="head"><span class="name">${esc(d.type || "diary entry")}</span><span class="time">${esc(stamp(d.at))}</span></div>`;
-    for (const t of d.texts || []) body += `<div class="text">${esc(t)}</div>`;
+  for (const d of diaryDays) {
+    let body = `<div class="head"><span class="name">${esc(d.title || "diary entry")}</span><span class="time">${esc(d.date == null ? "unknown date" : d.date)}</span></div>`;
+    for (const e of d.entries || []) {
+      if (e.text != null) body += `<div class="text">${esc(e.text)}</div>`;
+      for (const img of e.images || []) {
+        const alt = `picture from the diary, ${esc(d.date == null ? "unknown date" : d.date)}`;
+        if (img.media) body += `<div class="media"><img loading="lazy" src="${esc(img.media)}" alt="${alt}"></div>`;
+        if (img.not_captured) body += `<div class="missing">picture not saved: ${esc(img.not_captured)}</div>`;
+      }
+    }
     diary += `<div class="msg">${body}</div>`;
   }
-  if (!diaryEntries.length) diary = `<p class="empty">No diary entries came back for this save.</p>`;
+  if (!diaryDays.length) diary = `<p class="empty">No diary entries came back for this save.</p>`;
 
   const factsBlock = (list, label) => {
     let out = `<h3>${esc(label)}</h3>`;

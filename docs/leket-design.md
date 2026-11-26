@@ -95,8 +95,9 @@ evidence.
   the page reads the sign-in from the matched tab's localStorage (readReplikaAuth via
   chrome.scripting), pages the chat history backwards over Replika's `wss://ws.replika.com/v17`
   socket (cursor = the oldest timestamp in each batch, a stuck or empty-moving batch
-  stops it), then the diary (previews by offset, details by id chunks of 50) and the
-  memories (both endpoints), then signs and fetches each picture and voice clip one at
+  stops it), then the diary (the day list paged back by `until` date, then each day by
+  its date, pictures included) and the memories (both endpoints), then signs and fetches
+  each picture (chat and diary) and voice clip one at
   a time. Everything lands in one `replika-<date>-<time>.zip` (data.json + index.html +
   media/). Every output field is allowlisted; raw API objects are never written, and
   what the builders don't read is counted per kind under `unsaved_fields` so a live run
