@@ -15,6 +15,7 @@ const IMAGE_SIGNED = "https://my.replika.ai/api/mobile/1.5/images/signed/actions
 
 // fixed, secret-free reasons the save shows when a step stopped partway
 export const DIARY_PARTIAL = "Replika stopped answering the diary partway; the entries read so far are kept";
+export const DIARY_DAYS_SKIPPED = "some diary days didn't come back; every other day is kept";
 export const DIARY_STUCK = "the diary list stopped moving back in time; the entries read so far are kept";
 export const DIARY_PAGE_CAP = "the diary has more pages than one save reads; the entries read so far are kept";
 export const MEMORY_V14_PARTIAL = "Replika's older memory list (v1.4) didn't come back; the other memories are kept";
@@ -172,12 +173,16 @@ export function readReplikaAuth() {
 // not page forward). A day reply whose `date` is not the requested date is a failed day
 // call, like a reply without an entries array. A reply that is not an array is a failure (not the end of
 // the list); a failed page after some days keeps their dates and still fetches those
-// days, and a failed day call keeps the days already read — either way the answer
-// carries a fixed partial reason. A page with no fresh valid date (or the maxPages cap)
+// days. A failed day call skips that day and the next days are still read (partial:
+// DIARY_DAYS_SKIPPED), until DAY_FAIL_RUN failures in a row, which stop the day calls
+// as DIARY_PARTIAL — either way the answer carries a fixed partial reason. `pause` rests
+// between day calls, so a long diary isn't read as fast as Replika answers. A page with no fresh valid date (or the maxPages cap)
 // is stuck. A 401/403 keeps what was read, with signedOut set so the save stops its
 // remaining steps. The list items ride along too: the save's tally reports the fields
 // they carry that Leket never reads.
-export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, limit = 100, maxPages = 1000 } = {}) {
+const DAY_FAIL_RUN = 5;
+const restBetweenDays = () => defaultSleep(300 + Math.random() * 400);
+export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, pause = restBetweenDays, limit = 100, maxPages = 1000 } = {}) {
   const list = [];
   const seen = new Set();
   let pages = 0;
@@ -219,15 +224,23 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, l
   }
   const days = [];
   const dates = list.map((p) => p.date).sort(); // oldest first
-  for (const date of dates) {
-    let day;
+  let failRun = 0;
+  for (let i = 0; i < dates.length; i++) {
+    const date = dates[i];
+    if (i > 0) await pause();
+    let day = null;
     try {
       day = await call(`${DIARY_LIST}/${date}`, { auth, fetchFn, sleep });
     } catch (e) {
       if (e instanceof SignedOut) return { days, list, partial: e.message, signedOut: true };
-      return { days, list, partial: DIARY_PARTIAL, signedOut: false };
     }
-    if (!day || day.date !== date || !Array.isArray(day.entries)) return { days, list, partial: DIARY_PARTIAL, signedOut: false };
+    if (!day || day.date !== date || !Array.isArray(day.entries)) {
+      // a list failure (DIARY_PARTIAL/STUCK/PAGE_CAP) already set outranks a skipped day
+      if (++failRun >= DAY_FAIL_RUN) return { days, list, partial: DIARY_PARTIAL, signedOut: false };
+      if (!partial) partial = DIARY_DAYS_SKIPPED;
+      continue;
+    }
+    failRun = 0;
     days.push(day);
   }
   return { days, list, partial, signedOut: false };
@@ -236,7 +249,9 @@ export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, l
 // The memories, from both endpoints. A reply missing its array is a failure (not an
 // empty list): the part that failed is named in partial and the other part's facts kept.
 export async function readMemories({ auth, fetchFn = fetch, sleep = defaultSleep } = {}) {
-  const out = { facts: [], customerFacts: [], robotFacts: [], partial: null, signedOut: false };
+  // persons: the people the v3 list carries beside the facts; optional (an answer
+  // without it is not a failure)
+  const out = { facts: [], customerFacts: [], robotFacts: [], persons: [], partial: null, signedOut: false };
   let v14 = false, v15 = false;
   try {
     const reply = await call(MEMORY_V14, { auth, fetchFn, sleep });
@@ -253,6 +268,7 @@ export async function readMemories({ auth, fetchFn = fetch, sleep = defaultSleep
     }
     out.customerFacts = reply.customer_facts;
     out.robotFacts = reply.robot_facts;
+    if (Array.isArray(reply.persons)) out.persons = reply.persons;
   } catch (e) {
     if (e instanceof SignedOut) return { ...out, partial: e.message, signedOut: true };
     v15 = true;

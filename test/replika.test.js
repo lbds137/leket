@@ -14,7 +14,7 @@ import {
   SignedOut, headers, call, readReplikaAuth, readDiary, readMemories,
   createHistoryPager, readHistory, signedImageUrl, usableMediaUrl,
   HISTORY_SOCKET, HISTORY_NO_LIST, HISTORY_NO_DATE, HISTORY_STUCK, HISTORY_CLOSED,
-  HISTORY_SILENT, DIARY_PARTIAL, DIARY_STUCK, DIARY_PAGE_CAP, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
+  HISTORY_SILENT, DIARY_PARTIAL, DIARY_DAYS_SKIPPED, DIARY_STUCK, DIARY_PAGE_CAP, MEMORY_V14_PARTIAL, MEMORY_V15_PARTIAL,
   MEDIA_LINK_UNUSABLE, MEDIA_VOICE_LINK_UNUSABLE, MEDIA_FETCH_FAILED,
 } from "../src/modules/replika/api.js";
 import {
@@ -275,7 +275,7 @@ test("readDiary pages the list back by date until an empty array, then fetches e
     { "": [li("2026-02-03", "Third"), li("2026-02-02")], "2026-02-02": [li("2026-02-01", "First")], "2026-02-01": [] },
     { "2026-02-01": dayOf("2026-02-01"), "2026-02-02": dayOf("2026-02-02"), "2026-02-03": dayOf("2026-02-03") },
   ));
-  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, null);
   assert.equal(signedOut, false);
   assert.deepEqual(list.map((i) => i.date), ["2026-02-03", "2026-02-02", "2026-02-01"]);
@@ -293,7 +293,7 @@ test("readDiary: `until` is the oldest date of the previous page, URL-encoded", 
     { "": [li("2026-03-05"), li("2026-03-01"), li("2026-03-03")], "2026-03-01": [] },
     { "2026-03-01": dayOf("2026-03-01"), "2026-03-03": dayOf("2026-03-03"), "2026-03-05": dayOf("2026-03-05") },
   ));
-  await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   const listCalls = fn.calls.map((c) => c.url).filter((u) => u.includes("?limit="));
   assert.deepEqual(listCalls, [`${DIARY_LIST_URL}?limit=100`, `${DIARY_LIST_URL}?limit=100&until=${encodeURIComponent("2026-03-01")}`]);
 });
@@ -303,7 +303,7 @@ test("readDiary: a list item whose date is not YYYY-MM-DD is never requested", a
     { "": [li("2026-02-02"), li("../../etc/passwd"), li("2026-2-1"), { title: "no date" }, li(20260201), null], "2026-02-02": [] },
     { "2026-02-02": dayOf("2026-02-02") },
   ));
-  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, null);
   assert.deepEqual(list.map((i) => i.date), ["2026-02-02"]);
   assert.deepEqual(days.map((d) => d.date), ["2026-02-02"]);
@@ -313,7 +313,7 @@ test("readDiary: a list item whose date is not YYYY-MM-DD is never requested", a
 
 test("readDiary: a non-array list reply is a partial failure with nothing read, not a throw", async () => {
   const fn = fakeFetch(() => reply({ nope: true }));
-  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, DIARY_PARTIAL);
   assert.equal(signedOut, false);
   assert.equal(list.length, 0);
@@ -328,7 +328,7 @@ test("readDiary: a non-array list reply after some pages keeps their dates and f
     if (url === DAY_URL("2026-02-02")) return reply(dayOf("2026-02-02"));
     throw new Error(`unexpected ${url}`);
   });
-  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, DIARY_PARTIAL);
   assert.equal(list.length, 2);
   assert.deepEqual(days.map((d) => d.date), ["2026-02-01", "2026-02-02"]);
@@ -342,7 +342,7 @@ test("readDiary: a failed list page after some pages keeps what was read and nam
     if (url === DAY_URL("2026-02-02")) return reply(dayOf("2026-02-02"));
     throw new Error(`unexpected ${url}`);
   });
-  const { days, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, DIARY_PARTIAL);
   assert.equal(signedOut, false);
   assert.equal(days.length, 2); // the days of the first page were kept
@@ -355,7 +355,7 @@ test("readDiary: a list that repeats the same page stops as stuck, with no dupli
     if (url === DAY_URL("2026-02-02")) return reply(dayOf("2026-02-02"));
     throw new Error(`unexpected ${url}`);
   });
-  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, DIARY_STUCK);
   assert.equal(signedOut, false);
   assert.equal(list.length, 2);
@@ -373,34 +373,76 @@ test("readDiary: a list that never ends stops at maxPages with its own reason an
     }
     return reply(dayOf(url.slice(url.lastIndexOf("/") + 1)));
   });
-  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, maxPages: 3 });
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant, maxPages: 3 });
   assert.equal(partial, DIARY_PAGE_CAP);
   assert.equal(list.length, 3);
   assert.equal(days.length, 3);
 });
 
-test("readDiary: a failed day call stops with what was read kept, not a throw", async () => {
+test("readDiary: a failed day call skips that day, still reads the newer days, and is not a throw", async () => {
   const fn = fakeFetch((url) => {
-    if (url === LIST_URL()) return reply([li("2026-02-02"), li("2026-02-01")]);
+    if (url === LIST_URL()) return reply([li("2026-02-03"), li("2026-02-02"), li("2026-02-01")]);
     if (url === LIST_URL("2026-02-01")) return reply([]);
     if (url === DAY_URL("2026-02-01")) return reply(dayOf("2026-02-01"));
     if (url === DAY_URL("2026-02-02")) return reply({ detail: "fake-token-1234" }, 500);
+    if (url === DAY_URL("2026-02-03")) return reply(dayOf("2026-02-03"));
     throw new Error(`unexpected ${url}`);
   });
-  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
-  assert.equal(partial, DIARY_PARTIAL);
-  assert.equal(list.length, 2);
-  assert.deepEqual(days.map((d) => d.date), ["2026-02-01"]); // the older day was read before the failure
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(partial, DIARY_DAYS_SKIPPED);
+  assert.equal(list.length, 3);
+  assert.deepEqual(days.map((d) => d.date), ["2026-02-01", "2026-02-03"]); // the day after the failure is still read
 });
 
-test("readDiary: a day reply without an entries array counts as a failed day", async () => {
+test("readDiary: five failed days in a row stop the day calls as a partial diary", async () => {
+  const dates = ["2026-02-07", "2026-02-06", "2026-02-05", "2026-02-04", "2026-02-03", "2026-02-02", "2026-02-01"];
+  const asked = [];
+  const fn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply(dates.map((d) => li(d)));
+    if (url === LIST_URL("2026-02-01")) return reply([]);
+    asked.push(url);
+    if (url === DAY_URL("2026-02-01")) return reply(dayOf("2026-02-01"));
+    return reply({}, 500);
+  });
+  const { days, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(partial, DIARY_PARTIAL);
+  assert.deepEqual(days.map((d) => d.date), ["2026-02-01"]);
+  assert.equal(new Set(asked).size, 6); // the good day, then five failed days (each retried); 2026-02-07 is never asked
+});
+
+test("readDiary: a failed list page outranks a skipped day in the partial reason", async () => {
+  const fn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply([li("2026-02-02"), li("2026-02-01")]);
+    if (url === LIST_URL("2026-02-01")) return reply({}, 500);
+    if (url === DAY_URL("2026-02-01")) return reply({}, 500);
+    if (url === DAY_URL("2026-02-02")) return reply(dayOf("2026-02-02"));
+    throw new Error(`unexpected ${url}`);
+  });
+  const { days, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(partial, DIARY_PARTIAL);
+  assert.deepEqual(days.map((d) => d.date), ["2026-02-02"]);
+});
+
+test("readDiary: rests between day calls, not before the first", async () => {
+  const log = [];
+  const fn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply([li("2026-02-02"), li("2026-02-01")]);
+    if (url === LIST_URL("2026-02-01")) return reply([]);
+    log.push(url.slice(-10));
+    return reply(dayOf(url.slice(-10)));
+  });
+  await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: async () => { log.push("pause"); } });
+  assert.deepEqual(log, ["2026-02-01", "pause", "2026-02-02"]);
+});
+
+test("readDiary: a day reply without an entries array counts as a skipped day", async () => {
   const fn = fakeFetch((url) => {
     if (url === LIST_URL()) return reply([li("2026-02-01")]);
     if (url === LIST_URL("2026-02-01")) return reply([]);
     return reply("not a day");
   });
-  const { days, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
-  assert.equal(partial, DIARY_PARTIAL);
+  const { days, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(partial, DIARY_DAYS_SKIPPED);
   assert.equal(days.length, 0);
 });
 
@@ -409,7 +451,7 @@ test("readDiary: the same date twice in one page is listed, requested and record
     { "": [li("2026-02-02", "First copy"), li("2026-02-02", "Second copy"), li("2026-02-01")], "2026-02-01": [] },
     { "2026-02-01": dayOf("2026-02-01"), "2026-02-02": dayOf("2026-02-02") },
   ));
-  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, null);
   assert.deepEqual(list.map((i) => i.date), ["2026-02-02", "2026-02-01"]);
   assert.equal(list[0].title, "First copy"); // the first item for a date wins
@@ -425,14 +467,14 @@ test("readDiary: a page of only newer unseen dates keeps its days but never move
     if (url.startsWith(`${DIARY_LIST_URL}/`)) return reply(dayOf(url.slice(url.lastIndexOf("/") + 1)));
     throw new Error(`unexpected ${url}`);
   });
-  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(partial, null);
   assert.deepEqual(fn.calls.map((c) => c.url).filter((u) => u.includes("?limit=")), [LIST_URL(), LIST_URL("2026-03-04"), LIST_URL("2026-03-04")]);
   assert.deepEqual(list.map((i) => i.date), ["2026-03-05", "2026-03-04", "2026-03-10"]); // the newer day is real: kept
   assert.deepEqual(days.map((d) => d.date), ["2026-03-04", "2026-03-05", "2026-03-10"]);
 });
 
-test("readDiary: a day reply for another date counts as a failed day and keeps the days already read", async () => {
+test("readDiary: a day reply for another date counts as a skipped day and keeps the days already read", async () => {
   const fn = fakeFetch((url) => {
     if (url === LIST_URL()) return reply([li("2026-02-02"), li("2026-02-01")]);
     if (url === LIST_URL("2026-02-01")) return reply([]);
@@ -440,8 +482,8 @@ test("readDiary: a day reply for another date counts as a failed day and keeps t
     if (url === DAY_URL("2026-02-02")) return reply(dayOf("2026-02-09")); // answers a different day
     throw new Error(`unexpected ${url}`);
   });
-  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
-  assert.equal(partial, DIARY_PARTIAL);
+  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
+  assert.equal(partial, DIARY_DAYS_SKIPPED);
   assert.equal(signedOut, false);
   assert.equal(list.length, 2);
   assert.deepEqual(days.map((d) => d.date), ["2026-02-01"]);
@@ -449,7 +491,7 @@ test("readDiary: a day reply for another date counts as a failed day and keeps t
 
 test("readDiary: a 401 on the list keeps nothing but names the sign-in reason and marks the step signed out", async () => {
   const fn = fakeFetch(() => reply({}, 401));
-  const { days, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(signedOut, true);
   assert.equal(partial, "Replika answered 401/403: sign in again on Replika and rerun");
   assert.equal(days.length, 0);
@@ -462,7 +504,7 @@ test("readDiary: a 401 on a day keeps the days already read and marks the step s
     if (url === DAY_URL("2026-02-01")) return reply(dayOf("2026-02-01"));
     return reply({}, 401);
   });
-  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant });
+  const { days, list, partial, signedOut } = await readDiary({ auth: AUTH, fetchFn: fn, sleep: instant, pause: instant });
   assert.equal(signedOut, true);
   assert.equal(partial, "Replika answered 401/403: sign in again on Replika and rerun");
   assert.equal(list.length, 2);
@@ -1605,4 +1647,25 @@ test("problems labels the diary list's unsaved fields apart from the days'", () 
     "Fields Leket didn't save (diary list): read",
     "Fields Leket didn't save (diary): entries[].diary_id",
   ]);
+});
+
+test("runSave: counts diary entries, not days, and tallies the v3 memory list's persons", async () => {
+  const fetchFn = fakeFetch((url) => {
+    if (url === LIST_URL()) return reply([li("2026-02-01")]);
+    if (url === LIST_URL("2026-02-01")) return reply([]);
+    if (url === DAY_URL("2026-02-01")) {
+      return reply({ date: "2026-02-01", entries: [{ id: "e1", timestamp: "t", text: "a", images: [] }, { id: "e2", timestamp: "t", text: "b", images: [] }] });
+    }
+    if (url === MEMORY_14) return reply({ facts: [] });
+    if (url === MEMORY_15) return reply({ customer_facts: [], robot_facts: [], persons: [{ id: "p1", name: "Someone" }] });
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  const { data } = await runSave({
+    auth: AUTH, now: new Date(2026, 10, 25, 14, 30, 5), fetchFn, sleep: instant,
+    WebSocketCtor: fakeSocketClass([[]]), timeoutMs: 1000, pause: instant,
+  });
+  assert.equal(data.diary.length, 1);
+  assert.equal(data.counts.diary, 2);
+  assert.deepEqual(data.unsaved_fields.person, { id: 1, name: 1 });
+  assert.equal(JSON.stringify(data).includes("Someone"), false, "a person's fields are tallied by name only");
 });

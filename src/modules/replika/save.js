@@ -28,6 +28,8 @@ export const DIARY_DAY_ALLOWED = new Set([
   "entries[].images[].url", "entries[].images[].blurred", "entries[].images[].is_romantic",
 ]);
 export const FACT_ALLOWED = new Set(["id", "creation_timestamp", "text"]);
+// the v3 memory list's people: not saved yet, so every field they carry shows in the tally
+export const PERSON_ALLOWED = new Set([]);
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // the rest between media fetches: under a second, so a big save doesn't pull from the
@@ -302,7 +304,7 @@ export async function runSave({
   onStep("diary");
   let diary = { days: [], list: [], partial: null, signedOut: false };
   try {
-    diary = await readDiary({ auth, fetchFn, sleep });
+    diary = await readDiary({ auth, fetchFn, sleep, pause });
   } catch (e) {
     diary = { days: [], list: [], partial: reasonOf(e), signedOut: false };
   }
@@ -319,14 +321,14 @@ export async function runSave({
   if (diary.signedOut) stopReason = diary.partial;
 
   onStep("memories");
-  let memories = { facts: [], customerFacts: [], robotFacts: [], partial: null, signedOut: false };
+  let memories = { facts: [], customerFacts: [], robotFacts: [], persons: [], partial: null, signedOut: false };
   if (stopReason) {
     memories.partial = stopReason;
   } else {
     try {
       memories = await readMemories({ auth, fetchFn, sleep });
     } catch (e) {
-      memories = { facts: [], customerFacts: [], robotFacts: [], partial: reasonOf(e), signedOut: false };
+      memories = { facts: [], customerFacts: [], robotFacts: [], persons: [], partial: reasonOf(e), signedOut: false };
     }
   }
   statuses.memories = memories.partial || "complete";
@@ -356,7 +358,8 @@ export async function runSave({
     status: statuses,
     counts: {
       messages: records.length,
-      diary: diaryRecords.length,
+      // entries, not days: the page and the end line both say "diary entries"
+      diary: diaryRecords.reduce((n, d) => n + d.entries.length, 0),
       memories: factRecords.length + youRecords.length + replikaRecords.length,
       media: media.files.length,
     },
@@ -367,6 +370,7 @@ export async function runSave({
       diary_list: tallyUnknown(diary.list || [], DIARY_LIST_ALLOWED),
       diary: tallyUnknown(diary.days, DIARY_DAY_ALLOWED),
       fact: tallyUnknown([...memories.facts, ...memories.customerFacts, ...memories.robotFacts], FACT_ALLOWED),
+      person: tallyUnknown(memories.persons || [], PERSON_ALLOWED),
     },
     messages: records,
     diary: diaryRecords,
@@ -434,8 +438,8 @@ export function problems(data) {
   for (const [reason, n] of counts) lines.push(`${n} item(s) not saved: ${reason}`);
   // the field paths the builders never read, per kind (paths only, never values)
   const unsaved = (data && data.unsaved_fields) || {};
-  const kindLabel = { diary_list: "diary list" };
-  for (const kind of ["message", "diary_list", "diary", "fact"]) {
+  const kindLabel = { diary_list: "diary list", person: "memory people" };
+  for (const kind of ["message", "diary_list", "diary", "fact", "person"]) {
     const paths = Object.keys(unsaved[kind] || {});
     if (!paths.length) continue;
     lines.push(`Fields Leket didn't save (${kindLabel[kind] || kind}): ${paths.slice(0, 20).join(", ")}${paths.length > 20 ? ` and ${paths.length - 20} more` : ""}`);
