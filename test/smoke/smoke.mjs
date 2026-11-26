@@ -144,6 +144,7 @@ const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
 // picture itself, served from a host the manifest has no permission for
 const REPLIKA_HOME = "https://my.replika.com/";
 const REPLIKA_MEM_14 = "https://my.replika.ai/api/mobile/1.4/memory";
+const REPLIKA_MEM_15 = "https://my.replika.com/api/mobile/1.5/memory/v3/";
 const replikaPage = `<!doctype html><html><head><title>my replika</title></head><body><p>my replika</p>`
   + `<script>localStorage.setItem("auth", JSON.stringify({ userId: "smoke-user", deviceId: "smoke-device", authToken: "smoke-token" }));`
   + `localStorage.setItem("ws", JSON.stringify({ chatId: "smoke-chat" }));`
@@ -261,18 +262,26 @@ const WEB = new Map([
   ["https://www.messenger.com/e2ee/t/123", { type: "text/html", body: html("a messenger thread") }],
   [MESSENGER_COLLECTOR_URL, { type: "text/html", body: messengerCollectorPage }],
   [REPLIKA_HOME, { type: "text/html", body: replikaPage }],
-  ["https://my.replika.com/api/mobile/1.4/saved_chat_items/previews?t=diary&offset=0&limit=100",
-    { type: "application/json", body: JSON.stringify([{ id: "sd1" }, { id: "sd2" }]) }],
-  ["https://my.replika.com/api/mobile/1.4/saved_chat_items/previews?t=diary&offset=2&limit=100",
+  // the diary: the list (newest first), the empty page after the oldest date, then each
+  // day; the older day carries one picture, whose sign call is the fake below
+  ["https://my.replika.com/api/mobile/1.5/diaries?limit=100",
+    { type: "application/json", body: JSON.stringify([
+      { date: "2026-02-02", diary_entry_id: "sx2", image_count: 0, read: true, title: "Another day" },
+      { date: "2026-02-01", diary_entry_id: "sx1", image_count: 1, read: true, title: null },
+    ]) }],
+  ["https://my.replika.com/api/mobile/1.5/diaries?limit=100&until=2026-02-01",
     { type: "application/json", body: "[]" }],
-  ["https://my.replika.com/api/mobile/1.4/saved_chat_items/actions/get_by_ids", { type: "application/json", body: JSON.stringify([
-    { id: "sd1", type: "diary", creation_timestamp: "2026-02-01T09:00:00Z", entries: [{ text: "a diary day" }] },
-    { id: "sd2", type: "moment", timestamp: "2026-02-02T09:00:00Z", entries: [{ text: "another day" }] },
-  ]) }],
+  ["https://my.replika.com/api/mobile/1.5/diaries/2026-02-01", { type: "application/json", body: JSON.stringify({ date: "2026-02-01", entries: [
+    { id: "se1", diary_id: "sd1", text: "a diary day", timestamp: "2026-02-01T09:00:00Z", read: true, image_count: 1,
+      images: [{ url: "https://images.example.org/diary-raw.png", blurred: false, is_romantic: false }] },
+  ] }) }],
+  ["https://my.replika.com/api/mobile/1.5/diaries/2026-02-02", { type: "application/json", body: JSON.stringify({ date: "2026-02-02", entries: [
+    { id: "se2", diary_id: "sd2", text: "another day", timestamp: "2026-02-02T09:00:00Z", read: true, image_count: 0, images: [] },
+  ] }) }],
   [REPLIKA_MEM_14, { type: "application/json", body: JSON.stringify({ facts: [
     { text: "likes tea", creation_timestamp: "2026-01-05T00:00:00Z" },
   ] }) }],
-  ["https://my.replika.ai/api/mobile/1.5/memory/v3/", { type: "application/json", body: JSON.stringify({
+  ["https://my.replika.com/api/mobile/1.5/memory/v3/", { type: "application/json", body: JSON.stringify({
     customer_facts: [{ text: "has a sister", creation_timestamp: "2026-01-06T00:00:00Z" }],
     robot_facts: [{ text: "Echo remembers walks", creation_timestamp: "2026-01-07T00:00:00Z" }],
   }) }],
@@ -1003,10 +1012,11 @@ async function scenarios(cdp, downloads) {
       return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,
         fails: [...document.getElementById("replika-problems").children].map((li) => li.textContent) }; })()`),
     "the replika page's end line", 90000).catch(soft((e) => ({ t: e.message, fails: [] })));
-    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 0 pictures and voice clips \(1 picture\(s\) or voice clip\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
-      `replika: the end line names the file and the counts and warns of the picture not saved (it said: ${end.t} [${end.cls}])`);
-    check(JSON.stringify(end.fails) === JSON.stringify(["1 picture(s) or voice clip(s) not saved: the file host refused or failed"]),
-      `replika: the problems list counts the not-captured picture by its reason (${JSON.stringify(end.fails)})`);
+    check(/^Saved replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip: 4 messages, 2 diary entries, 3 memories, 0 pictures and voice clips \(2 picture\(s\) or voice clip\(s\) not saved\)$/.test(end.t) && end.cls === "warn",
+      `replika: the end line names the file and the counts and warns of the two pictures (chat and diary) not saved (it said: ${end.t} [${end.cls}])`);
+    check(JSON.stringify(end.fails) === JSON.stringify(["2 picture(s) or voice clip(s) not saved: the file host refused or failed",
+      "Fields Leket didn't save (diary): diary_entry_id, image_count, read"]),
+      `replika: the problems list counts the not-captured pictures by their reason (${JSON.stringify(end.fails)})`);
     const zipName = landed().find((f) => /^replika-\d{4}-\d{2}-\d{2}-\d{6}\.zip$/.test(f));
     if (check(zipName, `replika: a replika-….zip landed (${landed().filter((f) => f.startsWith("replika-")).join(", ") || "none"})`)) {
       const info = JSON.parse(execFileSync("python3", ["-I", "-c",
@@ -1020,16 +1030,22 @@ async function scenarios(cdp, downloads) {
       const pic = data.messages.find((m) => m.kind === "images");
       check(pic && pic.not_captured === "the file host refused or failed" && !pic.media && !pic.text,
         `replika: the picture is not captured with its reason, its raw link unwritten (${JSON.stringify(pic)})`);
+      const diaryPic = data.diary.flatMap((d) => d.entries.flatMap((e) => e.images))[0];
+      check(diaryPic && diaryPic.not_captured === "the file host refused or failed" && !diaryPic.media && !diaryPic.url
+        && data.diary.map((d) => d.date).join() === "2026-02-01,2026-02-02" && data.diary[1].title === "Another day",
+        `replika: the diary's two days are read by date, and its picture is not captured with its reason, its raw link unwritten (${JSON.stringify(data.diary)})`);
       check(info["index.html"].includes("Ada") && info["index.html"].includes("Echo"),
         "replika: index.html names Ada and Echo");
       const blob = JSON.stringify(info);
-      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "smoke-sig", "raw.png"]) {
+      for (const secret of ["smoke-token", "smoke-device", "smoke-user", "smoke-sig", "raw.png", "diary-raw.png"]) {
         check(!blob.includes(secret), `replika: no file in the zip contains ${secret}`);
       }
       const socketUrl = await evalIn(rp, "globalThis.smokeReplikaSocketUrl");
       check(socketUrl === "wss://ws.replika.com/v17", `replika: the fake socket was opened on the history URL (${socketUrl})`);
       check(requested.includes(REPLIKA_MEM_14),
         "replika: the my.replika.ai memory endpoint was requested (the second host's permission works)");
+      check(requested.includes(REPLIKA_MEM_15) && requested.includes("https://my.replika.com/api/mobile/1.5/diaries/2026-02-01"),
+        "replika: the v1.5 memory and a diary day were requested on my.replika.com");
     }
   });
 

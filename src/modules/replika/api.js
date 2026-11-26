@@ -8,10 +8,9 @@
 import { md5 } from "../../lib/md5.js";
 
 export const HISTORY_SOCKET = "wss://ws.replika.com/v17";
-const DIARY_PREVIEWS = "https://my.replika.com/api/mobile/1.4/saved_chat_items/previews";
-const DIARY_BY_IDS = "https://my.replika.com/api/mobile/1.4/saved_chat_items/actions/get_by_ids";
+const DIARY_LIST = "https://my.replika.com/api/mobile/1.5/diaries";
 const MEMORY_V14 = "https://my.replika.ai/api/mobile/1.4/memory";
-const MEMORY_V15 = "https://my.replika.ai/api/mobile/1.5/memory/v3/";
+const MEMORY_V15 = "https://my.replika.com/api/mobile/1.5/memory/v3/";
 const IMAGE_SIGNED = "https://my.replika.ai/api/mobile/1.5/images/signed/actions/get_url";
 
 // fixed, secret-free reasons the save shows when a step stopped partway
@@ -36,6 +35,7 @@ export class SignedOut extends Error {
   }
 }
 
+const DIARY_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The four REST headers, from the premise notes: the hash is the lowercase hex MD5 of a
@@ -158,58 +158,66 @@ export function readReplikaAuth() {
   };
 }
 
-// The diary: previews page by offset (limit 100) until an empty array, then the entries
-// are fetched by id in chunks of 50. A reply that is not an array is a failure
-// (not the end of the list); a failed page after some previews keeps their ids and
-// still fetches their details, and a failed detail call keeps the details already read —
-// either way the answer carries a fixed partial reason. A 401/403 keeps what was read,
-// with signedOut set so the save stops its remaining steps. The previews ride along too:
-// the save's tally reports the fields they carry that Leket never reads.
-export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, limit = 100, chunk = 50, maxPages = 1000 } = {}) {
-  const previews = [];
+// The diary: the list of days pages back by date (limit 100, newest first; each page
+// holds the days strictly before `until`, the oldest date of the page before) until an
+// empty array, then each listed day is fetched by its date, oldest first. Only list
+// items whose date is a plain YYYY-MM-DD are kept, each date once, so nothing else is
+// ever put into a request URL. A reply that is not an array is a failure (not the end of
+// the list); a failed page after some days keeps their dates and still fetches those
+// days, and a failed day call keeps the days already read — either way the answer
+// carries a fixed partial reason. A page with no fresh valid date (or the maxPages cap)
+// is stuck. A 401/403 keeps what was read, with signedOut set so the save stops its
+// remaining steps. The list items ride along too: the save's tally reports the fields
+// they carry that Leket never reads.
+export async function readDiary({ auth, fetchFn = fetch, sleep = defaultSleep, limit = 100, maxPages = 1000 } = {}) {
+  const list = [];
   const seen = new Set();
   let pages = 0;
   let partial = null;
+  let until = null;
   for (;;) {
+    const url = until == null ? `${DIARY_LIST}?limit=${limit}` : `${DIARY_LIST}?limit=${limit}&until=${encodeURIComponent(until)}`;
     let page;
     try {
-      page = await call(`${DIARY_PREVIEWS}?t=diary&offset=${previews.length}&limit=${limit}`, { auth, fetchFn, sleep });
+      page = await call(url, { auth, fetchFn, sleep });
     } catch (e) {
-      if (e instanceof SignedOut) return { entries: [], previews, partial: e.message, signedOut: true };
-      partial = DIARY_PARTIAL; // the ids read so far still get their details
+      if (e instanceof SignedOut) return { days: [], list, partial: e.message, signedOut: true };
+      partial = DIARY_PARTIAL; // the days listed so far still get fetched
       break;
     }
     if (!Array.isArray(page)) {
-      partial = DIARY_PARTIAL; // not a list: the ids read so far still get their details
+      partial = DIARY_PARTIAL; // not a list: the days listed so far still get fetched
       break;
     }
     if (!page.length) break;
-    const fresh = page.filter((p) => p && p.id != null && !seen.has(p.id));
+    const fresh = page.filter((p) => p && typeof p.date === "string" && DIARY_DATE.test(p.date) && !seen.has(p.date));
     if (fresh.length === 0) {
-      partial = DIARY_STUCK; // the same page again (or items with no id): the offset is being ignored
+      partial = DIARY_STUCK; // the same page again (or items with no valid date): `until` is being ignored
       break;
     }
-    for (const p of fresh) seen.add(p.id);
-    previews.push(...fresh);
+    for (const p of fresh) seen.add(p.date);
+    list.push(...fresh);
+    // the list is newest first, so the page's oldest valid date is the smallest one
+    until = fresh.map((p) => p.date).reduce((a, b) => (b < a ? b : a));
     if (++pages >= maxPages) {
       partial = DIARY_STUCK;
       break;
     }
   }
-  const entries = [];
-  const ids = previews.map((p) => p && p.id).filter((id) => id != null);
-  for (let i = 0; i < ids.length; i += chunk) {
-    let part;
+  const days = [];
+  const dates = list.map((p) => p.date).sort(); // oldest first
+  for (const date of dates) {
+    let day;
     try {
-      part = await call(DIARY_BY_IDS, { method: "POST", body: { ids: ids.slice(i, i + chunk) }, auth, fetchFn, sleep });
+      day = await call(`${DIARY_LIST}/${date}`, { auth, fetchFn, sleep });
     } catch (e) {
-      if (e instanceof SignedOut) return { entries, previews, partial: e.message, signedOut: true };
-      return { entries, previews, partial: DIARY_PARTIAL, signedOut: false };
+      if (e instanceof SignedOut) return { days, list, partial: e.message, signedOut: true };
+      return { days, list, partial: DIARY_PARTIAL, signedOut: false };
     }
-    if (!Array.isArray(part)) return { entries, previews, partial: DIARY_PARTIAL, signedOut: false };
-    entries.push(...part);
+    if (!day || !Array.isArray(day.entries)) return { days, list, partial: DIARY_PARTIAL, signedOut: false };
+    days.push(day);
   }
-  return { entries, previews, partial, signedOut: false };
+  return { days, list, partial, signedOut: false };
 }
 
 // The memories, from both endpoints. A reply missing its array is a failure (not an
