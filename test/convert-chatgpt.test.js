@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { badFolder, collect, plan, render, safeTitle, stamp } from "../src/convert/chatgpt.js";
 import { ZipWriter } from "../src/lib/zip.js";
+import { readFolders } from "../bin/leket.js";
 import { chatgptExports } from "./fixtures/chatgpt-export.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +40,7 @@ test("the current branch, in order, matches the golden file", () => {
   // what stays out: the abandoned answer, system, tool, hidden, blank
   for (const gone of ["before the edit", "tool output", "a hidden note", "### ChatGPT · \n \n"]) assert.ok(!f.text.includes(gone), gone);
   assert.equal(f.turns, 5);
-  assert.deepEqual(f.skipped, { code: 1 });
+  assert.deepEqual({ ...f.skipped }, { code: 1 });
 });
 
 test("a later export's copy of a conversation replaces the earlier one, in the later place", () => {
@@ -59,7 +60,30 @@ test("file names: no title, no start time, a shared name, padding", () => {
 test("a shared name is also caught case-blind and past a first suffix", () => {
   const c = (id, title) => ({ conversation_id: id, title, create_time: 1709651220, mapping: {}, current_node: null });
   const out = plan(collect([{ conversations: [c("aaaaaaaa-1", "Same"), c("aaaaaaaa-2", "same"), c("aaaaaaaa-3", "SAME")], names: {} }]));
-  assert.deepEqual(out.map((f) => f.name), ["2024-03-05 Same.md", "2024-03-05 same (aaaaaaaa).md", "2024-03-05 SAME (aaaaaaaa-3 2).md"]);
+  assert.deepEqual(out.map((f) => f.name), ["2024-03-05 Same.md", "2024-03-05 same (aaaaaaaa).md", "2024-03-05 SAME (aaaaaaaa 2).md"]);
+  // a 200-byte title with a numbered suffix still fits a 255-byte file name
+  const long = "a".repeat(300), ids = ["12345678-1111-1111-1111-111111111111", "12345678-2222-2222-2222-222222222222", "12345678-3333-3333-3333-333333333333"];
+  const named = plan(collect([{ conversations: ids.map((id) => c(id, long)) }])).map((f) => f.name);
+  assert.equal(new Set(named).size, 3);
+  for (const n of named) assert.ok(new TextEncoder().encode(n).length <= 255, `${n.length}`);
+});
+
+test("export keys named like Object.prototype's stay ordinary data", () => {
+  const conv = { conversation_id: "p1", title: "t", create_time: 1709651220, current_node: "m", mapping: {
+    m: { message: { author: { role: "assistant" }, content: { content_type: "toString" } }, parent: "u" },
+    u: { message: { author: { role: "user" }, create_time: 1709651220, content: { parts: [{ content_type: "image_asset_pointer", asset_pointer: "x://__proto__" }] } } },
+  } };
+  const names = JSON.parse('{"__proto__.dat": "pic.png"}');
+  const [f] = plan(collect([{ conversations: [conv], names }]));
+  assert.deepEqual({ ...f.skipped }, { toString: 1 });
+  assert.match(f.text, /\[image: pic\.png\]/);
+});
+
+test("safeTitle cuts a huge title quickly", () => {
+  const t = Date.now();
+  // re-encoding the whole title per dropped character took seconds at this size
+  assert.equal(safeTitle("a".repeat(50_000)), "a".repeat(200));
+  assert.ok(Date.now() - t < 500, `${Date.now() - t} ms`);
 });
 
 test("labels and the time zone are flags", () => {
@@ -144,10 +168,15 @@ test("CLI: the export's zip, its files inside a folder", async () => {
 test("CLI: an unreadable export or a bad --folders row writes nothing", async () => {
   const dir = tmp(), out = join(dir, "out");
   const [one] = exportDirs(dir);
-  writeFileSync(join(dir, "bad.tsv"), "id\tfolder\nc-pad-0005\t../escape\n");
+  // the blank line still counts: the bad row is line 3 of the file
+  writeFileSync(join(dir, "bad.tsv"), "id\tfolder\n\nc-pad-0005\t../escape\n");
   let r = leket(["convert", "chatgpt", one, "--out", out, "--folders", join(dir, "bad.tsv")]);
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /row 2 names the folder "\.\.\/escape", which isn't a relative folder.*nothing written/);
+  assert.match(r.stderr, /row 3 names the folder "\.\.\/escape", which isn't a relative folder.*nothing written/);
+  writeFileSync(join(dir, "proto.tsv"), "id\tfolder\n__proto__\ttopic\n");
+  const proto = await readFolders(join(dir, "proto.tsv"));
+  assert.ok(Object.hasOwn(proto, "__proto__"));
+  assert.equal(proto.__proto__, "topic");
   writeFileSync(join(dir, "nohead.tsv"), "c-pad-0005\ttopic\n");
   r = leket(["convert", "chatgpt", one, "--out", out, "--folders", join(dir, "nohead.tsv")]);
   assert.match(r.stderr, /its header row has no "id" and "folder" columns/);
