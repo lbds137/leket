@@ -152,6 +152,30 @@ export const MODULES = [
     blurb: "Save your Etsy conversations as one dated JSON.",
     commands: [{ id: "messages", label: "Save conversations" }],
   },
+  {
+    id: "youtube",
+    // a www.youtube.com/watch?v=<id> page. Like claude-chat's, the command opens the
+    // module's own page (src/modules/youtube/page.html): scrolling a long comment
+    // section open, and every thread's replies with it, is a slow run, and a popup
+    // dies when it loses focus. The page opens INACTIVE — the YouTube tab must stay in
+    // front, because Chrome throttles timers in a background tab and the loading is
+    // scroll-driven — and it injects driveYouTube into the tab the popup matched
+    // (chrome.scripting), so the open carries that tab's id as a query.
+    matches: (url) => {
+      try {
+        const u = new URL(url);
+        // https only: the manifest's host permission is https
+        if (u.protocol !== "https:") return false;
+        return u.hostname === "www.youtube.com" && u.pathname === "/watch"
+          && !!(u.searchParams.get("v") || "");
+      } catch {
+        return false;
+      }
+    },
+    title: "YouTube",
+    blurb: "Save this video's transcript and comments, replies included, as Markdown with JSON alongside.",
+    commands: [{ id: "save", label: "Save transcript and comments" }],
+  },
 ];
 
 // the module whose tab this is, or null when the popup has nothing to offer

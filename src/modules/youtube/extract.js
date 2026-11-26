@@ -10,11 +10,15 @@
 
 export const SCHEMA = "youtube-extract/v1";
 
+// YouTube can wrap a like count in bidi marks (U+202A..U+202E, U+200E/U+200F,
+// U+2066..U+2069) — the DOM path reads them off the page; they come off before parsing.
+const BIDI_MARKS = /[\u202a-\u202e\u200e\u200f\u2066-\u2069]/g;
+
 // "1.2K" / "3.4M" / "1,234" / "" → a number; the console script's parseLikes, verbatim
 // in behaviour (an empty or unreadable count is 0).
 export function parseLikes(s) {
   if (s === null || s === undefined) return 0;
-  s = String(s).replace(/,/g, "").trim();
+  s = String(s).replace(BIDI_MARKS, "").replace(/,/g, "").trim();
   if (!s) return 0;
   let m = 1;
   if (/K$/i.test(s)) { m = 1e3; s = s.replace(/K/i, ""); }

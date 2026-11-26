@@ -185,6 +185,71 @@ test("hosts that only look like Replika's, and http, do not match the replika mo
   }
 });
 
+test("a www.youtube.com watch page with a video id matches the youtube module", () => {
+  const m = match("https://www.youtube.com/watch?v=abc");
+  assert.ok(m, "no match for a watch page");
+  assert.equal(m.id, "youtube");
+});
+
+test("youtube pages without a video id, and other hosts or schemes, do not match the youtube module", () => {
+  for (const url of [
+    "https://www.youtube.com/", // the home page
+    "https://www.youtube.com/watch", // /watch with no v
+    "https://www.youtube.com/watch?v=", // an empty v is no v
+    "http://www.youtube.com/watch?v=abc", // https only: the host permission is https
+    "https://m.youtube.com/watch?v=abc", // the mobile host is nobody's territory here
+    "https://www.youtube.com/shorts/abc", // a short is not a watch page
+  ]) {
+    assert.equal(match(url), null, `unexpected match for ${url}`);
+  }
+});
+
+test("the youtube save command opens the module's own page inactive, with the tab id, and says so", async () => {
+  // like the chat outputs page, the page runs against the tab the popup matched
+  // (driveYouTube is injected there via chrome.scripting), so the open carries its id
+  // as a query — but the new tab is inactive: the YouTube tab must stay in front,
+  // because Chrome throttles timers in a background tab and the comment loading is
+  // scroll-driven.
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const m = match("https://www.youtube.com/watch?v=abc");
+    assert.ok(m && m.id === "youtube");
+    assert.deepEqual(m.commands.map((c) => c.id), ["save"]);
+    assert.equal(m.commands[0].label, "Save transcript and comments");
+    const said = await COMMANDS.youtube.save({ id: 7 }, { tabs });
+    assert.equal(said, "Opened the YouTube page.");
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/youtube/page.html?tab=7", active: false },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
+  }
+});
+
+test("the youtube save command without a tab opens the bare page and says so", async () => {
+  // a tabless open (the tests — the popup always passes its matched tab) still opens
+  // the page — it explains itself there — with no ?tab= query at all, and inactive all
+  // the same.
+  const created = [];
+  globalThis.chrome = {
+    runtime: { getURL: (p) => `chrome-extension://test-extension-id/${p}` },
+  };
+  const tabs = { create: async (o) => { created.push(o); return { id: 9 }; } };
+  try {
+    const said = await COMMANDS.youtube.save(undefined, { tabs });
+    assert.equal(said, "Opened the YouTube page.");
+    assert.deepEqual(created, [
+      { url: "chrome-extension://test-extension-id/src/modules/youtube/page.html", active: false },
+    ]);
+  } finally {
+    delete globalThis.chrome; // the stub never leaks past this test
+  }
+});
+
 test("anything else is no match at all", () => {
   for (const url of [
     "https://discord.com/",

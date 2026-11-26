@@ -19,6 +19,13 @@ test("parseLikes reads the counts YouTube displays, and blank or junk as 0", () 
   assert.equal(parseLikes("Infinity"), 0);
 });
 
+test("parseLikes strips the bidi marks YouTube wraps its like counts in", () => {
+  // U+202B/U+202C around "11", U+2068/U+2069 around "1.2K": the marks the DOM read
+  // carries, per the 11-25 probes
+  assert.equal(parseLikes("‫11‬"), 11);
+  assert.equal(parseLikes("⁨1.2K⁩"), 1200);
+});
+
 test("formatTimestamp writes the transcript panel's stamps", () => {
   assert.equal(formatTimestamp(0), "0:00");
   assert.equal(formatTimestamp(14_900), "0:14");
