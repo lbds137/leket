@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { mergeSaves, render } from "../src/modules/discord/convert.js";
+import { RESERVED_STEM } from "../src/convert/common.js";
 import { build } from "../src/lib/build.js";
 import { ZipWriter } from "../src/lib/zip.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -309,7 +310,7 @@ test("CLI: a save entry named with a colon (an NTFS stream or a drive) is refuse
 });
 
 test("CLI: usage errors exit 2", () => {
-  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ : \* \? " < > \| or control characters\), not ending in a dot or space, and not a Windows reserved name like con, nul, conin\$ or conout\$\n$/;
   for (const [args, msg] of [
     [["convert", "discord", "x.json", "--by", "week"], /--by takes none, year or month/],
     [["convert", "discord", "x.json", "--tz", "Mars/Olympus"], /unknown time zone Mars\/Olympus/],
@@ -448,4 +449,16 @@ test("CLI: a voice entry with a negative duration is refused", () => {
   const r = leket(["convert", "discord", save, "--out", join(dir, "o"), "--voice", v]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /105_0 has no duration in seconds \(a number, 0 or more\)/);
+});
+
+test("base 'nul-' with --by year yields 'nul--2025.md' (not a reserved stem), and channel titles escape break-class in page, participants and index headings", () => {
+  const utc = render(mergeSaves(dmSaves()), { base: "nul-", by: "year", timeZone: "UTC" });
+  assert.deepEqual(utc.map((f) => f.name), ["nul--2025.md"]);
+  assert.equal(RESERVED_STEM.test("nul--2025"), false);
+
+  const [a] = channelSaves();
+  const files = fileMap(render(mergeSaves([a]), { base: "c", title: "Q & <b> &amp; ` #", timeZone: "UTC" }));
+  assert.equal(files["c-2025-01.md"].split("\n")[0], "# Q & \\<b> \\&amp; \\` \\#, 2025-01");
+  assert.equal(files["c-participants.md"].split("\n")[0], "# Q & \\<b> \\&amp; \\` \\#: participants");
+  assert.equal(files["c-index.md"].split("\n")[0], "# Q & \\<b> \\&amp; \\` \\#");
 });

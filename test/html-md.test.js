@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { decode, htmlToMarkdown, oneLineText, parse } from "../src/lib/html-md.js";
+import { decode, escapeHeading, htmlToMarkdown, oneLineText, parse } from "../src/lib/html-md.js";
 
 const md = (h) => htmlToMarkdown(h).md;
 
@@ -54,6 +54,22 @@ test("oneLineText: line breaks become spaces, a trailing # run is kept from Comm
   assert.equal(oneLineText("#"), "\\#");
   assert.equal(oneLineText("C#"), "C#"); // no space before it: not a closing sequence
   assert.equal(oneLineText("a #1 b"), "a #1 b");
+});
+
+test("escapeHeading: escapes only the break-class (trailing #, odd backticks, <tag and &entity;), with escapeTag before the backtick sweep", () => {
+  assert.equal(escapeHeading("Issue #"), "Issue \\#");
+  assert.equal(escapeHeading("Issue ##"), "Issue \\##");
+  assert.equal(escapeHeading("Issue ## \t "), "Issue \\##");
+  assert.equal(escapeHeading("###"), "\\###");
+  assert.equal(escapeHeading("<b> </i> <?x <!x <https://e.com>"), "\\<b> \\</i> \\<?x \\<!x \\<https://e.com>");
+  assert.equal(escapeHeading("&amp; &#65; &#x41;"), "\\&amp; \\&#65; \\&#x41;");
+  assert.equal(escapeHeading("a ` b"), "a \\` b");
+  assert.equal(escapeHeading("`a` `b"), "\\`a\\` \\`b");
+  assert.equal(escapeHeading("`a`"), "`a`");
+  assert.equal(escapeHeading("`a` `b`"), "`a` `b`");
+  assert.equal(escapeHeading("`<b>"), "\\`\\<b>");
+  assert.equal(escapeHeading("*bold* _em_ [x](y) a #1 b #lead"), "*bold* _em_ [x](y) a #1 b #lead");
+  assert.equal(escapeHeading("two\nlines"), "two\nlines");
 });
 
 test("a leading non-ASCII space doesn't unmask a scripted scheme", () => {

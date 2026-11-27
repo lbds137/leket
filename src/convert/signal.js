@@ -45,7 +45,7 @@
 //
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
-import { codeSpan } from "../lib/html-md.js";
+import { codeSpan, escapeHeading } from "../lib/html-md.js";
 import { PYSPACE, escapeTag, safeTitle, span } from "./common.js";
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -114,7 +114,7 @@ export function render({ entries, messages, events }, { source, title, names = {
   // not (a pasted line shaped like a header can be); of the events when there is none
   const dated = messages ? entries.filter((e) => !e.event) : entries;
   const [first, last] = span(dated.map((e) => e.ms));
-  const L = [`# ${title}`, "",
+  const L = [`# ${escapeHeading(title)}`, "",
     `Source: ${codeSpan(source) || "(unnamed)"}, a conversation exported as text by signalbackup-tools.`,
     `${messages} messages, ${local(first).date} to ${local(last).date}. `
     + `Times are as exported${zone}. Reactions appear in parentheses after the message they were added to; `

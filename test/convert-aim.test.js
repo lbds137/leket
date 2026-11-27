@@ -153,3 +153,8 @@ test("review lows: an auto-response name holding ')'; \\r\\n; text before the fi
   assert.deepEqual({ ...r.stats.unknown }, { font: 1 });
   assert.match(r.files[0].text, /^> -# __proto__ — .*\n> \\-# not a header\\\n> \\# nor thisx$/m);
 });
+
+test("heading escapes the break-class in AIM titles", () => {
+  const md = one(head() + recv("23:58", "pixel42", "hi"), { title: "A &amp; <b> ` #" });
+  assert.equal(md.split("\n")[0], "# A \\&amp; \\<b> \\` \\#");
+});

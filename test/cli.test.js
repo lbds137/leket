@@ -443,7 +443,8 @@ test("usage errors exit 2; --help exits 0 on stdout", () => {
 test("convert --base: refuses Windows-reserved stems and trailing dot or ASCII space across every --base subcommand, and routes discord's default base through safeTitle", async () => {
   const [s1, s2] = [0xb9, 0xb2].map((c) => String.fromCharCode(c));
   const nbsp = String.fromCharCode(0xa0);
-  const msg = /--base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul/;
+  const bidi = String.fromCharCode(0x202e);
+  const msg = /--base takes a file name, not a path \(no \/ \\ : \* \? " < > \| or control characters\), not ending in a dot or space, and not a Windows reserved name like con, nul, conin\$ or conout\$/;
   const cmds = [
     ["convert", "discord", "x.json"],
     ["convert", "sms", "x.xml", "--number", "5550100001"],
@@ -454,7 +455,11 @@ test("convert --base: refuses Windows-reserved stems and trailing dot or ASCII s
   ];
   const origWrite = process.stderr.write;
   for (const prefix of cmds) {
-    for (const bad of ["nul", "CON", "NUL.backup", "com0", "LPT9", `com${s1}`, `LPT${s2}.x`, "a.", "a ", ".", " ", "", "a/b", "a\\b", "a:b"]) {
+    for (const bad of [
+      "nul", "CON", "NUL.backup", "conin$", "CONOUT$.txt", "con .x", "com0", "LPT9", `com${s1}`, `LPT${s2}.x`,
+      "a.", "a ", ".", " ", "", "a/b", "a\\b", "a:b",
+      "a*b", "a?b", 'a"b', "a<b", "a>b", "a|b", "a\x07b", `a${bidi}b`,
+    ]) {
       let err = "";
       process.stderr.write = (chunk) => { err += chunk; return true; };
       let code;
@@ -463,7 +468,7 @@ test("convert --base: refuses Windows-reserved stems and trailing dot or ASCII s
       assert.match(err, msg);
     }
   }
-  for (const bad of ["nul", "a.", "a "]) {
+  for (const bad of ["nul", "a.", "a ", "a*b", 'a"b', "a<b"]) {
     const r = runBin(["convert", "discord", "x.json", "--base", bad]);
     assert.equal(r.status, 2, bad);
     assert.match(r.stderr, msg);
@@ -480,7 +485,7 @@ test("convert --base: refuses Windows-reserved stems and trailing dot or ASCII s
     assert.equal(def.status, 0, def.stderr);
     assert.deepEqual(readdirSync(outDefault), ["nul-.md"]);
 
-    for (const okBase of ["fox", "nul-", "con file", "a.b", `a${nbsp}`]) {
+    for (const okBase of ["fox", "nul-", "con file", "a.b", "a#b", `a${nbsp}`]) {
       const outOk = join(dir, `out-${okBase}`);
       const code = await main(["convert", "discord", nulSave, "--out", outOk, "--tz", "UTC", "--base", okBase]);
       assert.equal(code, 0, okBase);

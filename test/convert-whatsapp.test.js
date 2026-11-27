@@ -127,7 +127,7 @@ test("cli: usage errors exit 2, an unreadable export exits 1 with nothing writte
   const out = tmp(), two = tmp();
   writeFileSync(join(two, "A.txt"), "1.2.2025, 10:00 - A: hi\n");
   writeFileSync(join(two, "B.txt"), "1.2.2025, 10:00 - B: hey\n");
-  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ : \* \? " < > \| or control characters\), not ending in a dot or space, and not a Windows reserved name like con, nul, conin\$ or conout\$\n$/;
   for (const [args, msg] of [
     [[two, "--title", "x"], /--title goes with one export .*; 2 were given/],
     [[FIXTURE, "--base", "a/b"], BAD_BASE],
@@ -177,4 +177,8 @@ test("cli: a folder holding only a link to an export reads it; a broken link is 
   const r = leket(["convert", "whatsapp", src, "--out", out]);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(readdirSync(out), ["whatsapp-chat.md"]);
+});
+
+test("heading escapes the break-class in WhatsApp titles", () => {
+  assert.equal(one("1.2.2025, 10:00 - Pat: hi\n", { title: "A &amp; <b> ` #" }).split("\n")[0], "# A \\&amp; \\<b> \\` \\#");
 });

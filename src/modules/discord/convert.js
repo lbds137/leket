@@ -14,6 +14,7 @@
 // "<message id>_f<k>_<n>" inside a forward → {duration: seconds, text}) puts machine
 // transcripts under their attachment lines.
 // Pure: no file access. bin/leket.js reads the saves and writes what render() returns.
+import { escapeHeading } from "../../lib/html-md.js";
 import { shown } from "../../lib/shown.js";
 
 // a snowflake id is past 2^53: compared as BigInt, never as a Number
@@ -135,6 +136,7 @@ const gapEnds = (g) => {
 // folder, each starting with `base`. by: "none" (one file), "year" or "month".
 export function render(conv, { base, by = conv.isDm ? "none" : "month", title = conv.title || conv.channel,
   timeZone, names = {}, embeds = false, voice = {} }) {
+  title = escapeHeading(title);
   const msgs = conv.messages;
   if (!msgs.length) throw new Error("the save(s) hold no messages");
   const local = clock(timeZone);

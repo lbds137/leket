@@ -46,7 +46,7 @@
 // what plan() returns.
 import { clock } from "../modules/discord/convert.js";
 import { reader } from "../lib/xml.js";
-import { codeSpan } from "../lib/html-md.js";
+import { codeSpan, escapeHeading } from "../lib/html-md.js";
 import { PYSPACE, escapeTag, safeTitle } from "./common.js";
 
 export const digits = (s) => String(s ?? "").replace(/\D/g, "").slice(-10);
@@ -169,7 +169,7 @@ export function render(c, { source, title, me = "Me", label, timeZone = "UTC" })
   const msgs = c.messages;
   const with_ = c.group ? `the group of ${c.members.map(last4).join(", ")}`
     : isNumber(c.key) ? `the number ending ${c.key.slice(-4)}` : c.key ? codeSpan(c.key) : "no address";
-  const L = [`# ${title || `Texts with ${other}`}`, "",
+  const L = [`# ${escapeHeading(title || `Texts with ${other}`)}`, "",
     `Source: ${codeSpan(source) || "(unnamed)"}, made with the SMS Backup & Restore app; only the conversation with ${with_}.`,
     `${msgs.length} messages (SMS and MMS), ${local(msgs[0].ms).date} to ${local(msgs.at(-1).ms).date}. `
     + `Times are ${timeZone}. Attachments appear as \`[attachment: filename]\`.`

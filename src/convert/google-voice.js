@@ -56,7 +56,7 @@
 //
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
-import { codeSpan, decode, htmlToMarkdown } from "../lib/html-md.js";
+import { codeSpan, decode, escapeHeading, htmlToMarkdown } from "../lib/html-md.js";
 import { escapeTag, safeTitle, span, word } from "./common.js";
 
 const STAMP = /^\d{4}-\d{2}-\d{2}T[\d_]+(?:Z|[+-][\d_]+)?\.html$/i;
@@ -152,7 +152,7 @@ function render(c, { title, me = "Me", names = {}, timeZone = "UTC" }) {
     ? `, from ${folders.map((f) => codeSpan(f)).join(", ")}${loose ? `, ${word(loose, "loose file")}` : ""}`
     : "";
   const L = [
-    `# ${title || `Google Voice with ${escapeTag(contactLabel)}`}`,
+    `# ${escapeHeading(title || `Google Voice with ${contactLabel}`)}`,
     "",
     `Source: ${word(c.files.length, "Google Voice Takeout file")}${from}.`,
     `${word(texts, "text message")} and ${word(calls, "call/voicemail", "calls/voicemails")}, `

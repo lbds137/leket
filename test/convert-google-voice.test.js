@@ -250,7 +250,7 @@ test("CLI: converts the fixture folder, reports unknown kinds / non-exports / un
   assert.equal(er.status, 1);
   assert.match(er.stderr, /holds no \.html Google Voice export file; nothing written\./);
 
-  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ : \* \? " < > \| or control characters\), not ending in a dot or space, and not a Windows reserved name like con, nul, conin\$ or conout\$\n$/;
   for (const [args, pattern] of [
     [["--bogus"], /usage:/],
     [["--title", "T"], /--title goes with --contact/],
@@ -353,6 +353,10 @@ test("empty sender cite counts under (unknown) in stats.senders, and the default
   ]);
   assert.deepEqual({ ...stats.senders }, { "(unknown)": 1 });
   assert.match(files[0].text, /^# Google Voice with A \\<b> & Co\n/);
+  const titled = plan([
+    { file: "A <b> & Co - Text - 2020-01-15T10_00_00Z.html", text: noFn },
+  ], { contact: "A <b> & Co", title: "A &amp; <b> ` #" });
+  assert.equal(titled.files[0].text.split("\n")[0], "# A \\&amp; \\<b> \\` \\#");
 });
 
 test("MSG containment: a cite-less message div before a normal div does not swallow the first timestamp; alone it yields zero rows", () => {
