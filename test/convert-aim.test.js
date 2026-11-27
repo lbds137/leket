@@ -111,7 +111,7 @@ test("cli: a loose log has no 'from' folder in Source and singularizes 1 log on 
   assert.match(r.stderr, /^leket: 1 log, 1 messages \(0 auto-responses\); times as logged\.\n/);
   assert.match(r.stderr, /leket: 1 log has text before its first message, not shown\./);
   const md = readFileSync(join(out, "aim-pixel42.md"), "utf8");
-  assert.match(md, /^Source: 1 AIM chat logs saved as HTML\.$/m);
+  assert.match(md, /^Source: 1 AIM chat log saved as HTML\.$/m);
 });
 
 test("dates before 1970 parse and render; years under 1000 throw; equal start times keep input order; unsafe contact names are escaped and sanitised", () => {

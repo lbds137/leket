@@ -46,7 +46,7 @@
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
 import { codeSpan, decode, htmlToMarkdown } from "../lib/html-md.js";
-import { escapeTag, safeTitle, span } from "./common.js";
+import { escapeTag, safeTitle, span, word } from "./common.js";
 
 const local = clock("UTC"); // the times have no zone: kept as UTC so they print as written
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -115,7 +115,7 @@ export function render(logs, { title, sources = [], me = "", names = {}, timeZon
   const zone = timeZone ? `, in ${timeZone}` : " (the logging computer's local time, with no zone)";
   const from = sources.map((s) => codeSpan(s)).join(", ");
   const L = [`# ${title}`, "",
-    `Source: ${logs.length} AIM chat logs saved as HTML${from ? `, from ${from}` : ""}.`,
+    `Source: ${word(logs.length, "AIM chat log")} saved as HTML${from ? `, from ${from}` : ""}.`,
     `${entries.length} messages, ${local(first).date} to ${local(last).date}. `
     + `Times are as logged${zone}.`
     + (autos ? ` ${autos === 1 ? "One away-message reply is" : `${autos} away-message replies are`} marked (auto-response).` : ""), ""];

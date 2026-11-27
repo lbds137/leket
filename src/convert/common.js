@@ -71,3 +71,5 @@ export function span(times) {
   for (const t of times) { if (t < lo) lo = t; if (t > hi) hi = t; }
   return [lo, hi];
 }
+
+export const word = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
