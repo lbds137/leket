@@ -1,0 +1,413 @@
+TAP version 13
+# Subtest: messagesIn finds every conversation_message_id carrier, wherever it is nested
+ok 1 - messagesIn finds every conversation_message_id carrier, wherever it is nested
+  ---
+  duration_ms: 1.725085
+  type: 'test'
+  ...
+# Subtest: parseIds splits on spaces, commas and newlines, and drops junk tokens
+ok 2 - parseIds splits on spaces, commas and newlines, and drops junk tokens
+  ---
+  duration_ms: 0.978525
+  type: 'test'
+  ...
+# Subtest: parseIds falls back to the /messages/ pathname, and text beats pathname
+ok 3 - parseIds falls back to the /messages/ pathname, and text beats pathname
+  ---
+  duration_ms: 0.254534
+  type: 'test'
+  ...
+# Subtest: parseIds takes the id out of a pasted conversation link, in any of its forms
+ok 4 - parseIds takes the id out of a pasted conversation link, in any of its forms
+  ---
+  duration_ms: 0.112407
+  type: 'test'
+  ...
+# Subtest: parseIds keeps the first of each id: a repeat (bare or linked) is not exported twice
+ok 5 - parseIds keeps the first of each id: a repeat (bare or linked) is not exported twice
+  ---
+  duration_ms: 0.147281
+  type: 'test'
+  ...
+# Subtest: ignoredTokens names every token that is neither an id nor a conversation link
+ok 6 - ignoredTokens names every token that is neither an id nor a conversation link
+  ---
+  duration_ms: 0.106194
+  type: 'test'
+  ...
+# Subtest: a pasted sentence's wrapping punctuation doesn't hide an id or a link
+ok 7 - a pasted sentence's wrapping punctuation doesn't hide an id or a link
+  ---
+  duration_ms: 0.350907
+  type: 'test'
+  ...
+# Subtest: a comma inside a link doesn't split off a stray id
+ok 8 - a comma inside a link doesn't split off a stray id
+  ---
+  duration_ms: 0.092461
+  type: 'test'
+  ...
+# Subtest: a comma-joined run holding a link still splits when the whole isn't one link
+ok 9 - a comma-joined run holding a link still splits when the whole isn't one link
+  ---
+  duration_ms: 0.336864
+  type: 'test'
+  ...
+# Subtest: only an etsy.com link (or a bare /messages/ path) counts; the host is case-blind
+ok 10 - only an etsy.com link (or a bare /messages/ path) counts; the host is case-blind
+  ---
+  duration_ms: 0.268952
+  type: 'test'
+  ...
+# Subtest: ignoredLine names up to five tokens, then counts the rest
+ok 11 - ignoredLine names up to five tokens, then counts the rest
+  ---
+  duration_ms: 0.188342
+  type: 'test'
+  ...
+# Subtest: two consecutive pages adding nothing stop the walk, and pages counts every page
+ok 12 - two consecutive pages adding nothing stop the walk, and pages counts every page
+  ---
+  duration_ms: 0.841632
+  type: 'test'
+  ...
+# Subtest: ONE stale page followed by a page with new ids keeps the walk going
+ok 13 - ONE stale page followed by a page with new ids keeps the walk going
+  ---
+  duration_ms: 0.326035
+  type: 'test'
+  ...
+# Subtest: an empty page breaks immediately, even right after a fresh one
+ok 14 - an empty page breaks immediately, even right after a fresh one
+  ---
+  duration_ms: 0.408254
+  type: 'test'
+  ...
+# Subtest: page overlap is real: an id repeated across pages is never duplicated
+ok 15 - page overlap is real: an id repeated across pages is never duplicated
+  ---
+  duration_ms: 0.278629
+  type: 'test'
+  ...
+# Subtest: each page attempt carries the cumulative offset on the exact path and query
+ok 16 - each page attempt carries the cumulative offset on the exact path and query
+  ---
+  duration_ms: 0.352652
+  type: 'test'
+  ...
+# Subtest: a fetch that times out records the error on its conversation; the next id still runs
+ok 17 - a fetch that times out records the error on its conversation; the next id still runs
+  ---
+  duration_ms: 0.275752
+  type: 'test'
+  ...
+# Subtest: timeoutMs reaches the abort signal: a fetch that never answers ends as a timeout
+not ok 18 - timeoutMs reaches the abort signal: a fetch that never answers ends as a timeout
+  ---
+  duration_ms: 10.004697
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:207:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a timeout on a later page names that page's offset
+not ok 19 - a timeout on a later page names that page's offset
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:215:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a body read the timeout aborts is a timeout, not a sign-out
+not ok 20 - a body read the timeout aborts is a timeout, not a sign-out
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:225:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: an AbortError the page's timeout caused reads as timed out; any other abort reads as stopped
+not ok 21 - an AbortError the page's timeout caused reads as timed out; any other abort reads as stopped
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:238:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a !ok page marks its conversation with the HTTP error; the next id still runs
+not ok 22 - a !ok page marks its conversation with the HTTP error; the next id still runs
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:259:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a 200 whose json() throws is the signed-out error; the next id still runs
+not ok 23 - a 200 whose json() throws is the signed-out error; the next id still runs
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:271:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: messages sort by create_date asc, ties by message_order asc, missing create_date as 0
+not ok 24 - messages sort by create_date asc, ties by message_order asc, missing create_date as 0
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:290:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the page cap stops the walk with no error, and marks it truncated
+not ok 25 - the page cap stops the walk with no error, and marks it truncated
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:297:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a walk that ends on its own is never truncated, even on the cap's last page
+not ok 26 - a walk that ends on its own is never truncated, even on the cap's last page
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:307:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a cap below one page is refused before any fetch
+not ok 27 - a cap below one page is refused before any fetch
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:317:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: an answer with no messages and no error is marked empty in the file; others carry no empty field
+not ok 28 - an answer with no messages and no error is marked empty in the file; others carry no empty field
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:325:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: sleeps: one per continuing page attempt, none on the break, one trailing per conversation
+not ok 29 - sleeps: one per continuing page attempt, none on the break, one trailing per conversation
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:338:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the trailing sleep fires after every conversation, including the last
+not ok 30 - the trailing sleep fires after every conversation, including the last
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:347:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: serializePayload: the script's payload shape, as Etsy returned the messages
+not ok 31 - serializePayload: the script's payload shape, as Etsy returned the messages
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:362:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: serializePayload: the default extracted_at is a real ISO instant
+not ok 32 - serializePayload: the default extracted_at is a real ISO instant
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:377:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: outputName is the dated filename the script always made
+not ok 33 - outputName is the dated filename the script always made
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:383:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the registry matches etsy.com on any path, and nothing else
+not ok 34 - the registry matches etsy.com on any path, and nothing else
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:389:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the etsy command is wired in the popup
+not ok 35 - the etsy command is wired in the popup
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:396:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the manifest carries the etsy host permission, and no storage permission now that nothing stores a config
+not ok 36 - the manifest carries the etsy host permission, and no storage permission now that nothing stores a config
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:400:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the manifest grants the bare etsy.com host the registry already matches
+not ok 37 - the manifest grants the bare etsy.com host the registry already matches
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:406:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the etsy open carries the matched tab's id as a query; a tabless call opens the page bare
+not ok 38 - the etsy open carries the matched tab's id as a query; a tabless call opens the page bare
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:411:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: finishMessage: ok class only when saved with no errors, empty answers or capped walks; warn otherwise
+not ok 39 - finishMessage: ok class only when saved with no errors, empty answers or capped walks; warn otherwise
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:426:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: finishMessage: the seq === runSeq guard drops a stale run's late finish and keeps the current run's
+not ok 40 - finishMessage: the seq === runSeq guard drops a stale run's late finish and keeps the current run's
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:459:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: page.js wires the pure decisions, and no redact remnant is left on the page
+not ok 41 - page.js wires the pure decisions, and no redact remnant is left on the page
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:472:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: finishMessage + failureLines: an empty answer and a capped walk warn and are listed
+not ok 42 - finishMessage + failureLines: an empty answer and a capped walk warn and are listed
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/etsy.test.js:502:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+1..42
+# tests 42
+# suites 0
+# pass 17
+# fail 0
+# cancelled 25
+# skipped 0
+# todo 0
+# duration_ms 80.982142
+rc=1

@@ -1,0 +1,413 @@
+TAP version 13
+# Subtest: runKey is YYYY-MM-DDTHHMMSS UTC with the colons stripped
+ok 1 - runKey is YYYY-MM-DDTHHMMSS UTC with the colons stripped
+  ---
+  duration_ms: 1.77764
+  type: 'test'
+  ...
+# Subtest: parseKnown round-trips the bare JSON object
+ok 2 - parseKnown round-trips the bare JSON object
+  ---
+  duration_ms: 1.270524
+  type: 'test'
+  ...
+# Subtest: parseKnown round-trips the whole window.CLAUDE_EXPORT_KNOWN line
+ok 3 - parseKnown round-trips the whole window.CLAUDE_EXPORT_KNOWN line
+  ---
+  duration_ms: 0.341108
+  type: 'test'
+  ...
+# Subtest: parseKnown takes the whole generated file pasted as-is: the line, then the script
+ok 4 - parseKnown takes the whole generated file pasted as-is: the line, then the script
+  ---
+  duration_ms: 0.278322
+  type: 'test'
+  ...
+# Subtest: parseKnown keeps refusing a generated file whose known line is junk
+ok 5 - parseKnown keeps refusing a generated file whose known line is junk
+  ---
+  duration_ms: 1.706634
+  type: 'test'
+  ...
+# Subtest: parseKnown takes blank as an empty map
+ok 6 - parseKnown takes blank as an empty map
+  ---
+  duration_ms: 0.142927
+  type: 'test'
+  ...
+# Subtest: parseKnown refuses junk with a message naming the two accepted shapes
+ok 7 - parseKnown refuses junk with a message naming the two accepted shapes
+  ---
+  duration_ms: 0.323142
+  type: 'test'
+  ...
+# Subtest: parseResume takes the bare skip-id array as skip only
+ok 8 - parseResume takes the bare skip-id array as skip only
+  ---
+  duration_ms: 0.478592
+  type: 'test'
+  ...
+# Subtest: parseResume takes the full two-statement line in both orders, semicolons optional
+ok 9 - parseResume takes the full two-statement line in both orders, semicolons optional
+  ---
+  duration_ms: 0.447888
+  type: 'test'
+  ...
+# Subtest: parseResume takes either statement alone
+ok 10 - parseResume takes either statement alone
+  ---
+  duration_ms: 0.459913
+  type: 'test'
+  ...
+# Subtest: parseResume takes blank as nothing to skip and part 0
+ok 11 - parseResume takes blank as nothing to skip and part 0
+  ---
+  duration_ms: 0.215653
+  type: 'test'
+  ...
+# Subtest: parseResume refuses junk, and a bare number is junk — PART_START travels in the line form
+ok 12 - parseResume refuses junk, and a bare number is junk — PART_START travels in the line form
+  ---
+  duration_ms: 0.417456
+  type: 'test'
+  ...
+# Subtest: parseResume refuses junk inside a matched window.CLAUDE_EXPORT_SKIP = [...]
+ok 13 - parseResume refuses junk inside a matched window.CLAUDE_EXPORT_SKIP = [...]
+  ---
+  duration_ms: 0.159804
+  type: 'test'
+  ...
+# Subtest: incremental: activity <= seen skips the session unchanged, and it is not fetched
+ok 14 - incremental: activity <= seen skips the session unchanged, and it is not fetched
+  ---
+  duration_ms: 0.962005
+  type: 'test'
+  ...
+# Subtest: incremental: an id missing from known is fetched and not counted unchanged
+ok 15 - incremental: an id missing from known is fetched and not counted unchanged
+  ---
+  duration_ms: 0.633062
+  type: 'test'
+  ...
+# Subtest: incremental: seen set but no activity field re-fetches and counts noActivityField
+ok 16 - incremental: seen set but no activity field re-fetches and counts noActivityField
+  ---
+  duration_ms: 0.252545
+  type: 'test'
+  ...
+# Subtest: incremental: activity > seen is fetched and not counted unchanged
+ok 17 - incremental: activity > seen is fetched and not counted unchanged
+  ---
+  duration_ms: 0.20894
+  type: 'test'
+  ...
+# Subtest: Invariant 1: three ~200-unit sessions at threshold 300 make two parts, whole sessions, titles first in part 1
+ok 18 - Invariant 1: three ~200-unit sessions at threshold 300 make two parts, whole sessions, titles first in part 1
+  ---
+  duration_ms: 1.192941
+  type: 'test'
+  ...
+# Subtest: Invariant 1: partBytes exactly at threshold is not a flush (strict >)
+ok 19 - Invariant 1: partBytes exactly at threshold is not a flush (strict >)
+  ---
+  duration_ms: 0.531524
+  type: 'test'
+  ...
+# Subtest: Invariant 1: a flush never runs mid-session or on a skipped session's iteration
+ok 20 - Invariant 1: a flush never runs mid-session or on a skipped session's iteration
+  ---
+  duration_ms: 1.874022
+  type: 'test'
+  ...
+# Subtest: Invariant 2: a session whose events page 2 throws lands in failed with zero lines, and the walk continues
+ok 21 - Invariant 2: a session whose events page 2 throws lands in failed with zero lines, and the walk continues
+  ---
+  duration_ms: 0.592506
+  type: 'test'
+  ...
+# Subtest: a hung events page ends as a timeout: the session fails, the run goes on to the marker
+not ok 22 - a hung events page ends as a timeout: the session fails, the run goes on to the marker
+  ---
+  duration_ms: 12.944565
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:297:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: every events page carries its own fresh timeout signal
+not ok 23 - every events page carries its own fresh timeout signal
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:315:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: Invariant 2b: a repeated cursor throws — the session fails naming the guard, zero lines
+not ok 24 - Invariant 2b: a repeated cursor throws — the session fails naming the guard, zero lines
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:329:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: Invariant 2b positive control: distinct cursors walk every page exactly once
+not ok 25 - Invariant 2b positive control: distinct cursors walk every page exactly once
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:344:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: Invariant 3: every onFlush precedes the single onMarker, even when the last session fails
+not ok 26 - Invariant 3: every onFlush precedes the single onMarker, even when the last session fails
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:363:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: Invariant 3 stop path: a throwing onFlush rejects the run and no marker is written
+not ok 27 - Invariant 3 stop path: a throwing onFlush rejects the run and no marker is written
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:382:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: onFlush's third arg carries the state as of before this part: part 2 sees part 1's ids, partStart 1
+not ok 28 - onFlush's third arg carries the state as of before this part: part 2 sees part 1's ids, partStart 1
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:400:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: the return's savedIds lists the sessions whose parts resolved, in flush order
+not ok 29 - the return's savedIds lists the sessions whose parts resolved, in flush order
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:420:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a session whose fetch failed is in no part's ids, no later flush state and not the return's savedIds
+not ok 30 - a session whose fetch failed is in no part's ids, no later flush state and not the return's savedIds
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:428:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: onFlush's ids name a session with no events too: it was fetched whole, like a saved part promotes it
+not ok 31 - onFlush's ids name a session with no events too: it was fetched whole, like a saved part promotes it
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:447:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: an all-skipped run returns savedIds [] — the titles-only part saves, promoting no ids
+not ok 32 - an all-skipped run returns savedIds [] — the titles-only part saves, promoting no ids
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:458:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a resumed run's first flush state is the chain view: the pasted skip seeds savedIds, partStart passes through
+not ok 33 - a resumed run's first flush state is the chain view: the pasted skip seeds savedIds, partStart passes through
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:470:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a resumed run's second flush state seeds the chain view with this run's promotion
+not ok 34 - a resumed run's second flush state seeds the chain view with this run's promotion
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:487:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a resumed run's return stays run-scoped: savedIds never names the seeded skip
+not ok 35 - a resumed run's return stays run-scoped: savedIds never names the seeded skip
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:507:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: marker payload is exact, skipped sessions included in the count; partStart numbers after N
+not ok 36 - marker payload is exact, skipped sessions included in the count; partStart numbers after N
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:519:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: filenames: the first part is part01, zero-padded to two digits
+not ok 37 - filenames: the first part is part01, zero-padded to two digits
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:532:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: filenames: with no run given, the run key is runKey()'s, seconds included
+not ok 38 - filenames: with no run given, the run key is runKey()'s, seconds included
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:540:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: an all-skipped run still writes its titles-only part and the done marker
+not ok 39 - an all-skipped run still writes its titles-only part and the done marker
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:553:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: event lines carry the payload at the top level beside the underscore fields
+not ok 40 - event lines carry the payload at the top level beside the underscore fields
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:565:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: events URLs are absolute claude.ai, limit=500, cursor encoded, credentials included
+not ok 41 - events URLs are absolute claude.ai, limit=500, cursor encoded, credentials included
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:580:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: an empty events page ends the walk, whatever cursor came with it
+not ok 42 - an empty events page ends the walk, whatever cursor came with it
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:596:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: a skipped session is never fetched, still counted in progress and _titles
+not ok 43 - a skipped session is never fetched, still counted in progress and _titles
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:607:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+# Subtest: an events page without a data array fails that session naming the shape, so it is not saved as empty
+not ok 44 - an events page without a data array fails that session naming the shape, so it is not saved as empty
+  ---
+  duration_ms: 0
+  type: 'test'
+  location: '/home/user/leket/test/claude-sessions-export.test.js:620:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:519:28)
+  ...
+1..44
+# tests 44
+# suites 0
+# pass 21
+# fail 0
+# cancelled 23
+# skipped 0
+# todo 0
+# duration_ms 103.452319
+rc=1
