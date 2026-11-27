@@ -70,6 +70,9 @@ $("etsy-run").addEventListener("click", (e) => busy(e.target, async () => {
   try {
     progress(0, ids.length);
     const conversations = await collectConversations(ids, {
+      // the smoke harness seeds a fast pause on its Etsy page; without the seed the
+      // collector's own pacing stands
+      ...(globalThis.__leketSmokePauseMs ? { pauseMs: Number(globalThis.__leketSmokePauseMs) } : {}),
       onProgress: (i, total, id, seenSize) => {
         progress(i - 1, total);
         say(`Conversation ${i}/${total} (${id}): ${counted(seenSize, "message")} — keep this tab open.`);

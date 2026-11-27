@@ -3,7 +3,10 @@
 // data:/blob: photos and videos from React fibers and the DOM, and hands the save
 // and its media Blobs to src/modules/messenger/bridge.js (or downloads JSON alone).
 (() => {
-  const STEP_MS = 900;
+  // a page can hint a faster sweep than the default — the smoke harness serves its
+  // thread page with the hint; a real Messenger page never carries it, and the hint
+  // can only hurry the sweep, never slow it past the default
+  const STEP_MS = Math.min(Number(document.querySelector('meta[name="leket-poll-ms"]')?.content) || Infinity, 900);
   const STEP_FRACTION = 0.85;
   const ROWS_WAIT_MS = 10000;
   const STILL_STEPS = 3;
