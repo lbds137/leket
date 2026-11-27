@@ -44,7 +44,7 @@ import {
 } from "../src/modules/youtube/extract.js";
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
 import { collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
-import { badFolder, word } from "../src/convert/common.js";
+import { RESERVED_STEM, badFolder, safeTitle, word } from "../src/convert/common.js";
 import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
 import { collect as collectCharacterChat, plan as planCharacterChat } from "../src/convert/character-chat.js";
 import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert/claude-code.js";
@@ -669,7 +669,7 @@ export async function convertDiscord(paths, { out = ".", by, base, title, tz, na
   try {
     conv = mergeSaves(read.map((r) => r.save));
     // every file is rendered before any is written, so a render error writes nothing
-    files = renderDiscord(conv, { base: base || read[0].name, by, title, timeZone, names, embeds, voice });
+    files = renderDiscord(conv, { base: base || safeTitle(read[0].name), by, title, timeZone, names, embeds, voice });
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
@@ -752,7 +752,7 @@ async function readIdTsv(path, flag, column, check) {
 
 // --folders: a tab-separated file with a header row naming an "id" and a "folder" column
 export const readFolders = (path) => readIdTsv(path, "--folders", "folder",
-  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : * ? \" < > |, . or .. parts, no control characters)" : ""));
+  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : * ? \" < > |, . or .. parts, no part ending in a dot or space, no Windows reserved name like con or nul, no control characters)" : ""));
 
 // --titles: a tab-separated file with a header row naming an "id" and a "title" column
 export const readTitles = (path) => readIdTsv(path, "--titles", "title", (t) => (t ? "" : "which is empty"));
@@ -1084,7 +1084,7 @@ async function convertSmsMain(args) {
   if (bad) return fail(bad);
   if (v.number !== undefined && !smsDigits(v.number)) return fail("--number takes a phone number");
   for (const k of ["title", "base"]) if (v[k] !== undefined && v.number === undefined) return fail(`--${k} goes with --number (it names that one conversation's file)`);
-  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  if (v.base !== undefined && badBase(v.base)) return fail(BAD_BASE);
   const names = Object.create(null); // no prototype: an address can be any word
   for (const n of v.name || []) {
     const i = n.indexOf("=");
@@ -1178,7 +1178,7 @@ async function convertTextLogMain(kind, args) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   const bad = convertOptionError(v, ["title"]);
   if (bad) return fail(bad);
-  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  if (v.base !== undefined && badBase(v.base)) return fail(BAD_BASE);
   const names = parseNameArgs(v.name, fail); // no prototype: a display name can be any word
   if (!names) return 2;
   return convertTextLog(kind, positionals, { out: v.out, names, tz: v.tz, title: v.title, base: v.base });
@@ -1213,10 +1213,10 @@ export async function convertAim(paths, { out = ".", me = "", names = {}, tz = "
   if (!(await writeConverted(planned.files, out))) return 1;
   const s = planned.stats;
   const unknown = Object.entries(s.unknown).map(([t, n]) => `<${t}> (${n})`).join(", ");
-  process.stderr.write(`leket: ${s.logs} log${s.logs === 1 ? "" : "s"}, ${s.messages} messages (${s.autos} auto-response${s.autos === 1 ? "" : "s"}); times as logged${tz ? ` (${tz})` : ""}.\n`
+  process.stderr.write(`leket: ${word(s.logs, "log")}, ${s.messages} messages (${word(s.autos, "auto-response")}); times as logged${tz ? ` (${tz})` : ""}.\n`
     + `leket: senders: ${Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ")}.\n`
     + (unknown ? `leket: tags shown as their text: ${unknown}.\n` : "")
-    + (s.stray ? `leket: ${s.stray === 1 ? "1 log has text before its" : `${s.stray} logs have text before their`} first message, not shown.\n` : ""));
+    + (s.stray ? `leket: ${word(s.stray, "log has text before its", "logs have text before their")} first message, not shown.\n` : ""));
   return 0;
 }
 
@@ -1240,7 +1240,7 @@ async function convertAimMain(args) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   const bad = convertOptionError(v, ["me", "title"]);
   if (bad) return fail(bad);
-  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  if (v.base !== undefined && badBase(v.base)) return fail(BAD_BASE);
   const names = parseNameArgs(v.name, fail, aimKey, "SCREENNAME");
   if (!names) return 2;
   return convertAim(positionals, { out: v.out, me: v.me, names, tz: v.tz, title: v.title, base: v.base });
@@ -1266,7 +1266,7 @@ export async function convertGoogleVoice(paths, { out = ".", me = "Me", owners =
     `leket: ${word(s.files, "file")}: ${word(s.texts, "text message")}, ${word(s.calls, "call")} and ${word(s.voicemails, "voicemail")}; times in ${zone}.`,
     senders ? `leket: senders: ${senders}.` : "",
     unk.length ? `leket: ${word(unk.length, "file")} of an unknown kind, skipped: ${unkList}.` : "",
-    s.notExports ? `leket: ${s.notExports === 1 ? "1 file in the input is not a Google Voice export file" : `${s.notExports} files in the input are not Google Voice export files`}, skipped.` : "",
+    s.notExports ? `leket: ${word(s.notExports, "file in the input is not a Google Voice export file", "files in the input are not Google Voice export files")}, skipped.` : "",
     s.undated ? `leket: ${word(s.undated, "row")} had no usable time, skipped.` : "",
   ].filter(Boolean).join("\n") + "\n");
   return 0;
@@ -1299,7 +1299,7 @@ async function convertGoogleVoiceMain(args) {
       return fail(`--${k} goes with --contact (it names that one conversation's ${k === "title" ? "heading" : "file"})`);
     }
   }
-  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  if (v.base !== undefined && badBase(v.base)) return fail(BAD_BASE);
   const names = parseNameArgs(v.name, fail, collapse);
   if (!names) return 2;
   return convertGoogleVoice(positionals, { out: v.out, me: v.me, owners: (v.owner || []).map(collapse), names, contact: v.contact && collapse(v.contact), tz: v.tz, title: v.title, base: v.base });
@@ -1379,7 +1379,7 @@ export async function convertGoogleChat(paths, { out = ".", me = "Me", owners = 
     senders ? `leket: senders: ${senders}.` : "",
     s.undated ? `leket: ${word(s.undated, "row")} had no usable date, skipped.` : "",
     s.empty ? `leket: ${word(s.empty, "file")} held no usable messages, skipped.` : "",
-    s.notExports ? `leket: ${word(s.notExports, "input path")} ${s.notExports === 1 ? "isn't" : "aren't"} a Google Chat export (no messages.json — pass a conversation folder, a loose messages.json, or the Google Chat/Groups folder), skipped.` : "",
+    s.notExports ? `leket: ${word(s.notExports, "input path isn't", "input paths aren't")} a Google Chat export (no messages.json — pass a conversation folder, a loose messages.json, or the Google Chat/Groups folder), skipped.` : "",
   ].filter(Boolean).join("\n") + "\n");
   return 0;
 }
@@ -1431,6 +1431,9 @@ function parseNameArgs(list = [], fail, transform = (s) => s, what = "NAME") {
   return names;
 }
 
+export const BAD_BASE = "--base takes a file name, not a path (no / \\ or :), not ending in a dot or space, and not a Windows reserved name like con or nul";
+const badBase = (b) => !b || /[/\\:]|[. ]$/.test(b) || RESERVED_STEM.test(b);
+
 // The checks every convert main makes: each label given is one line (and not blank,
 // unless blankOk), and --tz is a zone Intl knows. → the first failure's message, or "".
 function convertOptionError(v, labels, { blankOk = false } = {}) {
@@ -1462,7 +1465,7 @@ async function convertExportMain(kind, args) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   const bad = convertOptionError(v, ["user", "assistant"], { blankOk: true });
   if (bad) return fail(bad);
-  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : * ? " < > |, . or .. parts, no control characters)`);
+  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : * ? " < > |, . or .. parts, no part ending in a dot or space, no Windows reserved name like con or nul, no control characters)`);
   const opts = { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, folders: v.folders, unlisted: v.unlisted };
   return kind === "gemini" ? convertGemini(positionals, { ...opts, titles: v.titles, other: v.other }) : convertChatgpt(positionals, opts);
 }
@@ -1499,7 +1502,7 @@ async function convertMain(rest) {
   const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   if (v.by !== undefined && !["none", "year", "month"].includes(v.by)) return fail("--by takes none, year or month");
-  if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
+  if (v.base !== undefined && badBase(v.base)) return fail(BAD_BASE);
   const bad = convertOptionError(v, []);
   if (bad) return fail(bad);
   const names = parseNameArgs(v.name, fail, undefined, "USERNAME");

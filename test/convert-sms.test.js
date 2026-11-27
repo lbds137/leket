@@ -304,12 +304,13 @@ test("CLI: no match, a cut-off backup or a missing file exits 1 with no transcri
 });
 
 test("CLI: usage errors exit 2", () => {
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
   const bad = [
     [[FIXTURE, FIXTURE], /give one backup/],
     [[FIXTURE, "--title", "T"], /--title goes with --number/],
     [[FIXTURE, "--base", "b"], /--base goes with --number/],
     [[FIXTURE, "--number", "abc"], /--number takes a phone number/],
-    [[FIXTURE, "--number", "5550100001", "--base", "a/b"], /--base takes a file name/],
+    [[FIXTURE, "--number", "5550100001", "--base", "a/b"], BAD_BASE],
     [[FIXTURE, "--name", "Sam"], /--name takes NUMBER=LABEL/],
     [[FIXTURE, "--name", "5550100001= "], /takes a one-line label/],
     [[FIXTURE, "--me", "a\nb"], /--me takes a one-line label/],

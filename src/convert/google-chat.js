@@ -161,9 +161,9 @@ export function plan(inputs, { title, me = "Me", owners = [], names = {}, timeZo
     // an English-locale (or any non-Hebrew) export fails every date: say so, not just "no messages";
     // the count is plan's expanded inputs, so say "read", not "given"
     const hint = stats.undated
-      ? `; ${stats.undated === 1 ? "1 row was skipped" : `${stats.undated} rows were skipped`} — a date that doesn't match the Hebrew-locale Takeout format (only Hebrew-locale exports are read) or no date at all`
+      ? `; ${word(stats.undated, "row was skipped", "rows were skipped")} — a date that doesn't match the Hebrew-locale Takeout format (only Hebrew-locale exports are read) or no date at all`
       : "";
-    throw new Error(`the ${word(inputs.length, "input path")} read hold${inputs.length === 1 ? "s" : ""} no Google Chat messages${hint}`);
+    throw new Error(`the ${word(inputs.length, "input path read holds", "input paths read hold")} no Google Chat messages${hint}`);
   }
   const files = [], taken = new Set();
   for (const c of convs) {

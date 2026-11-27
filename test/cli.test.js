@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ytDlpArgs, ytDlpCommand, reportedTotal, lineKeeper, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair, run } from "../bin/leket.js";
+import { ytDlpArgs, ytDlpCommand, reportedTotal, lineKeeper, fetchTranscript, extractFromInfo, isYouTubeUrl, writePair, run, main } from "../bin/leket.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, "..", "bin", "leket.js");
@@ -438,4 +438,55 @@ test("usage errors exit 2; --help exits 0 on stdout", () => {
   const h = runBin(["--help"]);
   assert.equal(h.status, 0);
   assert.match(h.stdout, /^usage: leket youtube/);
+});
+
+test("convert --base: refuses Windows-reserved stems and trailing dot or ASCII space across every --base subcommand, and routes discord's default base through safeTitle", async () => {
+  const [s1, s2] = [0xb9, 0xb2].map((c) => String.fromCharCode(c));
+  const nbsp = String.fromCharCode(0xa0);
+  const msg = /--base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul/;
+  const cmds = [
+    ["convert", "discord", "x.json"],
+    ["convert", "sms", "x.xml", "--number", "5550100001"],
+    ["convert", "signal", "x.txt"],
+    ["convert", "whatsapp", "x.txt"],
+    ["convert", "aim", "x.html"],
+    ["convert", "google-voice", "x.html", "--contact", "Pat"],
+  ];
+  const origWrite = process.stderr.write;
+  for (const prefix of cmds) {
+    for (const bad of ["nul", "CON", "NUL.backup", "com0", "LPT9", `com${s1}`, `LPT${s2}.x`, "a.", "a ", ".", " ", "", "a/b", "a\\b", "a:b"]) {
+      let err = "";
+      process.stderr.write = (chunk) => { err += chunk; return true; };
+      let code;
+      try { code = await main([...prefix, "--base", bad]); } finally { process.stderr.write = origWrite; }
+      assert.equal(code, 2, `${prefix.join(" ")} --base ${JSON.stringify(bad)}: ${err}`);
+      assert.match(err, msg);
+    }
+  }
+  for (const bad of ["nul", "a.", "a "]) {
+    const r = runBin(["convert", "discord", "x.json", "--base", bad]);
+    assert.equal(r.status, 2, bad);
+    assert.match(r.stderr, msg);
+  }
+  const dir = mkdtempSync(join(tmpdir(), "leket-cli-base-"));
+  try {
+    const nulSave = join(dir, "nul.json");
+    writeFileSync(nulSave, JSON.stringify({
+      channel_id: "100", channel: "general", reached_start: true,
+      messages: [{ id: "1", author_id: "2", author: "Pat", datetime: "2025-01-01T00:00:00Z", text: "hi" }],
+    }));
+    const outDefault = join(dir, "out-default");
+    const def = runBin(["convert", "discord", nulSave, "--out", outDefault, "--tz", "UTC"]);
+    assert.equal(def.status, 0, def.stderr);
+    assert.deepEqual(readdirSync(outDefault), ["nul-.md"]);
+
+    for (const okBase of ["fox", "nul-", "con file", "a.b", `a${nbsp}`]) {
+      const outOk = join(dir, `out-${okBase}`);
+      const code = await main(["convert", "discord", nulSave, "--out", outOk, "--tz", "UTC", "--base", okBase]);
+      assert.equal(code, 0, okBase);
+      assert.deepEqual(readdirSync(outOk), [`${okBase}.md`]);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

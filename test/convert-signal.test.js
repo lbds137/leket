@@ -136,10 +136,11 @@ test("cli: usage errors exit 2, an unreadable export exits 1 with nothing writte
   const two = tmp();
   writeFileSync(join(two, "A (_id1).txt"), "[Jan 02, 2025 10:00:00] <A> hi\n");
   writeFileSync(join(two, "B (_id2).txt"), "[Jan 02, 2025 10:00:00] <B> hey\n");
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
   for (const [args, msg] of [
     [[two, "--title", "x"], /--title goes with one export .*; 2 were given/],
     [[two, "--base", "x"], /--base goes with one export/],
-    [[FIXTURE, "--base", "a/b"], /--base takes a file name/],
+    [[FIXTURE, "--base", "a/b"], BAD_BASE],
     [[FIXTURE, "--name", "Sam"], /--name takes NAME=LABEL/],
     [[FIXTURE, "--name", "Sam= "], /takes a one-line label/],
     [[FIXTURE, "--tz", "Mars/Base"], /unknown time zone/],
