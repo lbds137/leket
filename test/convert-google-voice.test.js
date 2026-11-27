@@ -250,11 +250,12 @@ test("CLI: converts the fixture folder, reports unknown kinds / non-exports / un
   assert.equal(er.status, 1);
   assert.match(er.stderr, /holds no \.html Google Voice export file; nothing written\./);
 
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
   for (const [args, pattern] of [
     [["--bogus"], /usage:/],
     [["--title", "T"], /--title goes with --contact/],
     [["--base", "b"], /--base goes with --contact/],
-    [["--contact", "Sam Rivera", "--base", "a/b"], /--base takes a file name/],
+    [["--contact", "Sam Rivera", "--base", "a/b"], BAD_BASE],
     [["--name", "Sam"], /--name takes NAME=LABEL/],
     [["--name", "Sam= "], /takes a one-line label/],
     [["--me", " "], /--me takes a one-line label/],

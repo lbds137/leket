@@ -309,12 +309,13 @@ test("CLI: a save entry named with a colon (an NTFS stream or a drive) is refuse
 });
 
 test("CLI: usage errors exit 2", () => {
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
   for (const [args, msg] of [
     [["convert", "discord", "x.json", "--by", "week"], /--by takes none, year or month/],
     [["convert", "discord", "x.json", "--tz", "Mars/Olympus"], /unknown time zone Mars\/Olympus/],
     [["convert", "discord", "x.json", "--name", "=F"], /--name takes USERNAME=LABEL/],
-    [["convert", "discord", "x.json", "--base", "a/b"], /--base takes a file name/],
-    [["convert", "discord", "x.json", "--base", "a:b"], /--base takes a file name, not a path \(no \/ \\ or :\)/],
+    [["convert", "discord", "x.json", "--base", "a/b"], BAD_BASE],
+    [["convert", "discord", "x.json", "--base", "a:b"], BAD_BASE],
     [["convert", "discord"], /usage: leket convert discord/],
     [["convert", "slack", "x.json"], /usage: leket convert discord/],
   ]) {
