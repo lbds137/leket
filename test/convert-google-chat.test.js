@@ -187,6 +187,12 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
     () => plan([inputs[3], inputs[5]]),
     /^Error: the 2 input paths given hold no Google Chat messages$/,
   );
+
+  // An all-dates-fail run (an English-locale export, say) points at the locale
+  assert.throws(
+    () => plan([{ folder: "English", file: "messages.json", data: { messages: [{ creator: { name: "Ava R." }, created_date: "Wednesday, November 26, 2026 at 8:11:40 PM UTC", text: "x" }] } }]),
+    /^Error: the 1 input path given holds no Google Chat messages; 1 row carried a date that doesn't match the Hebrew-locale Takeout format — only Hebrew-locale exports are read$/,
+  );
 });
 
 test("CLI: converts folders and loose .json, deduplicates by realpath, descends into a Groups-style folder, scopes --title, reports all summary lines, and validates flags", () => {
@@ -231,7 +237,7 @@ test("CLI: converts folders and loose .json, deduplicates by realpath, descends 
     "leket: senders: Ava R. (1), Ben T. (1), Cal M. (1).",
     "leket: 1 row had no usable date, skipped.",
     "leket: 1 file held no usable messages, skipped.",
-    "leket: 2 input paths aren't a Google Chat export (no messages.json), skipped.",
+    "leket: 2 input paths aren't a Google Chat export (no messages.json — pass a conversation folder, a loose messages.json, or the Google Chat/Groups folder), skipped.",
     "",
   ].join("\n"));
   const md = readFileSync(join(out, "google-chat-Project Space.md"), "utf8");
@@ -269,6 +275,16 @@ test("CLI: converts folders and loose .json, deduplicates by realpath, descends 
   const failEmpty1 = leket(["convert", "google-chat", emptyChatDir, "--out", tmp()]);
   assert.equal(failEmpty1.status, 1);
   assert.match(failEmpty1.stderr, /leket: the 1 input path given holds no Google Chat messages; nothing written\./);
+
+  // An English-locale export (every date fails) exits 1 and names the locale, not just "no messages"
+  const englishDir = join(src, "English Locale");
+  mkdirSync(englishDir);
+  writeFileSync(join(englishDir, "messages.json"), JSON.stringify({
+    messages: [{ creator: { name: "Ava R." }, created_date: "Wednesday, November 26, 2026 at 8:11:40 PM UTC", text: "x" }],
+  }));
+  const failLocale = leket(["convert", "google-chat", englishDir, "--out", tmp()]);
+  assert.equal(failLocale.status, 1);
+  assert.match(failLocale.stderr, /^leket: the 1 input path given holds no Google Chat messages; 1 row carried a date that doesn't match the Hebrew-locale Takeout format — only Hebrew-locale exports are read; nothing written\.\n/);
 
   const badJson = join(src, "bad.json");
   writeFileSync(badJson, "{not json");

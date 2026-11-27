@@ -406,4 +406,11 @@ test("CLI: passing a folder and a loose file inside it deduplicates by realpath,
   const badOwner = leket(["convert", "google-voice", CALLS, "--owner", " "]);
   assert.equal(badOwner.status, 2);
   assert.match(badOwner.stderr, /--owner takes a one-line name/);
+
+  // --contact matches after whitespace runs collapse, like the collapsed file-name contact
+  const contactOut = tmp();
+  const contactRun = leket(["convert", "google-voice", CALLS, "--contact", "Alex  Chen", "--out", contactOut]);
+  assert.equal(contactRun.status, 0, contactRun.stderr);
+  assert.deepEqual(readdirSync(contactOut), ["google-voice-Alex Chen.md"]);
+  assert.match(contactRun.stderr, /^leket: 1 file: 2 text messages, 0 calls and 0 voicemails/);
 });

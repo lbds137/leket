@@ -281,7 +281,8 @@ usage: leket convert google-voice <calls>... [--out DIR] [--me LABEL] [--owner N
                   default: "Me" and "אני")
   --name N=LABEL  show the contact or sender name N as LABEL (repeatable; default: the
                   name as written)
-  --contact NAME  only the conversation with NAME (the name in the file names)
+  --contact NAME  only the conversation with NAME (the name in the file names,
+                  matched after whitespace runs collapse)
   --tz ZONE       the zone times are shown in (default UTC; the export writes offsets,
                   so times are converted; a dt or published value with no UTC offset is
                   read in the machine's local time zone)
@@ -298,7 +299,8 @@ usage: leket convert google-chat <chat>... [--out DIR] [--me LABEL] [--owner NAM
   is its conversation folder (holding messages.json) or a .json file directly; a folder
   without its own messages.json (the Takeout Groups folder) yields every direct
   subfolder that holds one. A loose messages.json is labelled by its parent folder,
-  any other .json by its file name.
+  any other .json by its file name. Only Hebrew-locale exports are read — a
+  created_date in any other locale fails as an undated row.
   Writes "google-chat-Folder.md" into DIR (default: the current directory), replacing
   earlier files of that name; two that would share a name get a count added.
   --me LABEL      the account owner's messages' label (default Me)
@@ -1300,7 +1302,7 @@ async function convertGoogleVoiceMain(args) {
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
   const names = parseNameArgs(v.name, fail, collapse);
   if (!names) return 2;
-  return convertGoogleVoice(positionals, { out: v.out, me: v.me, owners: (v.owner || []).map(collapse), names, contact: v.contact, tz: v.tz, title: v.title, base: v.base });
+  return convertGoogleVoice(positionals, { out: v.out, me: v.me, owners: (v.owner || []).map(collapse), names, contact: v.contact && collapse(v.contact), tz: v.tz, title: v.title, base: v.base });
 }
 
 // Reads Google Chat Takeout inputs: a folder contributes its messages.json, and one
@@ -1377,7 +1379,7 @@ export async function convertGoogleChat(paths, { out = ".", me = "Me", owners = 
     senders ? `leket: senders: ${senders}.` : "",
     s.undated ? `leket: ${word(s.undated, "row")} had no usable date, skipped.` : "",
     s.empty ? `leket: ${word(s.empty, "file")} held no usable messages, skipped.` : "",
-    s.notExports ? `leket: ${word(s.notExports, "input path")} ${s.notExports === 1 ? "isn't" : "aren't"} a Google Chat export (no messages.json), skipped.` : "",
+    s.notExports ? `leket: ${word(s.notExports, "input path")} ${s.notExports === 1 ? "isn't" : "aren't"} a Google Chat export (no messages.json — pass a conversation folder, a loose messages.json, or the Google Chat/Groups folder), skipped.` : "",
   ].filter(Boolean).join("\n") + "\n");
   return 0;
 }
@@ -1409,8 +1411,8 @@ async function convertGoogleChatMain(args) {
   return convertGoogleChat(positionals, { out: v.out, me: v.me, owners: (v.owner || []).map(collapse), names, tz: v.tz, title: v.title });
 }
 
-// The name-to-label map keys and --owner values match after whitespace runs collapse,
-// the way sender and contact names collapse at parse time (google-voice, google-chat)
+// The name-to-label map keys and --owner/--contact values match after whitespace runs
+// collapse, the way sender and contact names collapse at parse time (google-voice, google-chat)
 const collapse = (s) => s.replace(/\s+/g, " ").trim();
 
 // Parses repeatable --name KEY=LABEL flags into a no-prototype map, or calls fail() and

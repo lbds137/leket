@@ -158,7 +158,11 @@ export function plan(inputs, { title, me = "Me", owners = [], names = {}, timeZo
     convs.push({ folder, label, rows, placed });
   }
   if (!convs.length) {
-    throw new Error(`the ${word(inputs.length, "input path")} given hold${inputs.length === 1 ? "s" : ""} no Google Chat messages`);
+    // an English-locale (or any non-Hebrew) export fails every date: say so, not just "no messages"
+    const hint = stats.undated
+      ? `; ${stats.undated === 1 ? "1 row carried" : `${stats.undated} rows carried`} a date that doesn't match the Hebrew-locale Takeout format — only Hebrew-locale exports are read`
+      : "";
+    throw new Error(`the ${word(inputs.length, "input path")} given hold${inputs.length === 1 ? "s" : ""} no Google Chat messages${hint}`);
   }
   const files = [], taken = new Set();
   for (const c of convs) {
