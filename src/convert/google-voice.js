@@ -6,7 +6,7 @@
 //
 //   # Google Voice with Sam
 //
-//   Source: 12 Google Voice Takeout files, from `Takeout/Voice/Calls`.
+//   Source: 12 Google Voice Takeout files, from `Calls`.
 //   147 text messages and 23 calls/voicemails, 2010-06-01 to 2015-04-30. Times are America/New_York. Voicemail text is Google's machine transcript, unchecked; the audio stays in the Takeout.
 //
 //   ## YYYY-MM-DD (Day)

@@ -227,7 +227,7 @@ test("CLI: converts the fixture folder, reports unknown kinds / non-exports / un
   assert.match(r.stderr, /5 files: 5 text messages, 1 call and 1 voicemail; times in America\/New_York\./);
   assert.match(r.stderr, /leket: senders: Sam Rivera \(2\), /);
   const md = readFileSync(join(out, "google-voice-Sam.md"), "utf8");
-  assert.equal(md.replace(`\`${CALLS}\``, "`calls`"), readFileSync(join(DIR, "expected.md"), "utf8"));
+  assert.equal(md, readFileSync(join(DIR, "expected.md"), "utf8"));
 
   // unknown kinds (capped at 5 + …), notExports, and undated rows on stderr
   const mix = tmp(), mixOut = tmp();
