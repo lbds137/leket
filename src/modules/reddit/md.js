@@ -22,6 +22,9 @@
 //   which turns into plain text (the URL still reads; it just isn't a link): rare in
 //   reddit, accepted. The title goes through escapeHeading (lib/html-md.js) instead: the
 //   break-class — `<tag`s, `&entities;`, odd backticks, a trailing ` #` — backslash-escaped.
+//   escapeTag's inserted `\` also lands inside an even-count code span, where it shows as
+//   typed (escapes don't work in code spans), e.g. a title `` `a<b` `` shows as `` `a\<b` ``;
+//   one visible character, where a `<` left raw would lose its text as a tag.
 // - image links (saved and remote) are wrapped in `<...>`, with `<`, `>`, whitespace
 //   and `\` percent-encoded (encodeAngle).
 // - code spans pair within one line: a `<` in a span the renderer carries across a line

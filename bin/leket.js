@@ -752,7 +752,7 @@ async function readIdTsv(path, flag, column, check) {
 
 // --folders: a tab-separated file with a header row naming an "id" and a "folder" column
 export const readFolders = (path) => readIdTsv(path, "--folders", "folder",
-  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : * ? \" < > |, . or .. parts, no part ending in a dot or space, no Windows reserved name like con or nul, no control characters)" : ""));
+  (f) => (badFolder(f) ? "which isn't a relative folder (no \\ : * ? \" < > |, . or .. parts, no part ending in a dot or space, no Windows reserved name like con, nul, conin$ or conout$, no control characters)" : ""));
 
 // --titles: a tab-separated file with a header row naming an "id" and a "title" column
 export const readTitles = (path) => readIdTsv(path, "--titles", "title", (t) => (t ? "" : "which is empty"));
@@ -1465,7 +1465,7 @@ async function convertExportMain(kind, args) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   const bad = convertOptionError(v, ["user", "assistant"], { blankOk: true });
   if (bad) return fail(bad);
-  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : * ? " < > |, . or .. parts, no part ending in a dot or space, no Windows reserved name like con or nul, no control characters)`);
+  for (const k of ["unlisted", "other"]) if (v[k] !== undefined && badFolder(v[k])) return fail(`--${k} takes a relative folder (no \\ : * ? " < > |, . or .. parts, no part ending in a dot or space, no Windows reserved name like con, nul, conin$ or conout$, no control characters)`);
   const opts = { out: v.out, user: v.user, assistant: v.assistant, tz: v.tz, folders: v.folders, unlisted: v.unlisted };
   return kind === "gemini" ? convertGemini(positionals, { ...opts, titles: v.titles, other: v.other }) : convertChatgpt(positionals, opts);
 }

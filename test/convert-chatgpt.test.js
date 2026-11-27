@@ -213,7 +213,7 @@ test("CLI: an unreadable export or a bad --folders row writes nothing", async ()
   writeFileSync(join(dir, "bad.tsv"), "id\tfolder\n\nc-pad-0005\t../escape\n");
   let r = leket(["convert", "chatgpt", one, "--out", out, "--folders", join(dir, "bad.tsv")]);
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /row 3 has folder "\.\.\/escape", which isn't a relative folder.*nothing written/);
+  assert.match(r.stderr, /row 3 has folder "\.\.\/escape", which isn't a relative folder \(no \\ : \* \? " < > \|, \. or \.\. parts, no part ending in a dot or space, no Windows reserved name like con, nul, conin\$ or conout\$, no control characters\).*nothing written/);
   writeFileSync(join(dir, "proto.tsv"), "id\tfolder\n__proto__\ttopic\n");
   const proto = await readFolders(join(dir, "proto.tsv"));
   assert.ok(Object.hasOwn(proto, "__proto__"));
@@ -240,7 +240,7 @@ test("CLI: usage errors exit 2", () => {
   for (const [args, msg] of [
     [["convert", "chatgpt"], /usage: leket convert chatgpt/],
     [["convert", "chatgpt", "x", "--tz", "Mars/Olympus"], /unknown time zone Mars\/Olympus/],
-    [["convert", "chatgpt", "x", "--unlisted", "../up"], /--unlisted takes a relative folder/],
+    [["convert", "chatgpt", "x", "--unlisted", "../up"], /--unlisted takes a relative folder \(no \\ : \* \? " < > \|, \. or \.\. parts, no part ending in a dot or space, no Windows reserved name like con, nul, conin\$ or conout\$, no control characters\)/],
     [["convert", "chatgpt", "x", "--user", "a\nb"], /--user takes a one-line label/],
     [["convert", "chatgpt", "x", "--speaker", "a"], /Unknown option '--speaker'/],
   ]) {

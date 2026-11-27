@@ -44,10 +44,11 @@ export function safeTitle(title) {
   const enc = new TextEncoder();
   if (enc.encode(s).length > 200) {
     // 200 bytes hold at most 200 code points: cut to those first, so a huge title costs
-    // at most 200 short re-encodes
+    // at most 200 short re-encodes; the strip can bare a reserved stem, so RESERVED_STEM
+    // re-runs after it
     const cps = [...s.slice(0, 400)].slice(0, 200);
     while (enc.encode(cps.join("")).length > 200) cps.pop();
-    s = cps.join("").replace(/[. ]+$/, "");
+    s = cps.join("").replace(/[. ]+$/, "").replace(RESERVED_STEM, "$1-");
   }
   return s || "untitled";
 }

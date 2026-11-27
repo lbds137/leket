@@ -233,7 +233,7 @@ test("CLI: no activity, a bad file, usage errors", () => {
   assert.ok(!readdirSync(dir).includes("out"));
   for (const [args, msg] of [
     [["convert", "gemini"], /usage: leket convert/],
-    [["convert", "gemini", "x", "--other", "/abs"], /--other takes a relative folder/],
+    [["convert", "gemini", "x", "--other", "/abs"], /--other takes a relative folder \(no \\ : \* \? " < > \|, \. or \.\. parts, no part ending in a dot or space, no Windows reserved name like con, nul, conin\$ or conout\$, no control characters\)/],
     [["convert", "chatgpt", "x", "--other", "o"], /Unknown option '--other'/],
   ]) {
     r = leket(args);
