@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { brotliCompressSync, createGzip, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
+import { brotliCompressSync, createDeflate, createGzip, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
 
 import { guardedFetch, LEKET_UA, makeLookup } from "../src/lib/guarded-fetch.js";
 import { fetchImageData } from "../src/modules/reddit/prepare.js";
@@ -119,6 +119,18 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     else if (req.url === "/proto.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "constructor" }); res.end("??"); }
     else if (req.url === "/br.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "br" }); res.end(brotliCompressSync(Buffer.from([7, 8]))); }
     else if (req.url === "/deflate.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" }); res.end(deflateSync(Buffer.from([9, 10]))); }
+    else if (req.url === "/deflate-w9.png") {
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" });
+      const z = createDeflate({ windowBits: 9 });
+      z.pipe(res);
+      z.end("small window");
+    }
+    else if (req.url === "/deflate-1b.png") {
+      const z = deflateSync(Buffer.from("one byte first"));
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" });
+      res.write(z.subarray(0, 1));
+      setTimeout(() => res.end(z.subarray(1)), 15);
+    }
     else if (req.url === "/deflate-raw.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" }); res.end(deflateRawSync(Buffer.from([11, 12]))); }
     else if (req.url === "/corrupt-gz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" }); res.end(Buffer.from("not gzipped at all")); }
     else if (req.url === "/trunc-gz.png") {
@@ -155,6 +167,10 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     assert.deepEqual(new Uint8Array(await br.arrayBuffer()), new Uint8Array([7, 8]));
     const def = await guardedFetch(`${base}/deflate.png`, { lookup: direct, ca: tls.cert });
     assert.deepEqual(new Uint8Array(await def.arrayBuffer()), new Uint8Array([9, 10]));
+    const defW9 = await guardedFetch(`${base}/deflate-w9.png`, { lookup: direct, ca: tls.cert });
+    assert.equal(await defW9.text(), "small window");
+    const def1b = await guardedFetch(`${base}/deflate-1b.png`, { lookup: direct, ca: tls.cert });
+    assert.equal(await def1b.text(), "one byte first");
     const defRaw = await guardedFetch(`${base}/deflate-raw.png`, { lookup: direct, ca: tls.cert });
     assert.deepEqual(new Uint8Array(await defRaw.arrayBuffer()), new Uint8Array([11, 12]));
     const badGz = await guardedFetch(`${base}/corrupt-gz.png`, { lookup: direct, ca: tls.cert });

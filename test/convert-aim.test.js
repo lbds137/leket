@@ -99,9 +99,7 @@ test("cli: folders merge into one transcript; senders on stderr; --tz names the 
   const md = readFileSync(join(out, "aim-pixel42+pixelalt.md"), "utf8");
   assert.match(md, /Times are as logged, in America\/Los_Angeles\./);
   assert.equal(md.replace(/, in America\/Los_Angeles/, " (the logging computer's local time, with no zone)"),
-    readFileSync(join(DIR, "expected.md"), "utf8")
-      .replace(/^# .*/, "# AIM with pixel42, pixelalt")
-      .replace("`pixel42`, `pixelalt`", `\`${join(DIR, "pixel42")}\`, \`${join(DIR, "pixelalt")}\``));
+    readFileSync(join(DIR, "expected.md"), "utf8").replace(/^# .*/, "# AIM with pixel42, pixelalt"));
 });
 
 test("cli: a loose log has no 'from' folder in Source and singularizes 1 log on stderr", () => {

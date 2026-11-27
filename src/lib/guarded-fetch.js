@@ -46,20 +46,30 @@ export const LEKET_UA = "leket (personal archiving; https://github.com/lbds137/l
 // is refused rather than saved as a picture that won't open
 const DECODERS = { gzip: createGunzip, "x-gzip": createGunzip, deflate: createInflate, br: createBrotliDecompress };
 
-// Servers send either zlib-wrapped (0x78) or raw deflate for Content-Encoding: deflate;
-// hold the first chunk to sniff which decoder to pipe through
+// Servers send either zlib-wrapped (RFC 1950: CM=8, CINFO <= 7, FCHECK) or raw deflate
+// for Content-Encoding: deflate; hold until two bytes arrive to sniff which decoder to use
 function inflate(res) {
   const out = new PassThrough();
-  let z;
-  res.once("data", (chunk) => {
-    z = (chunk[0] === 0x78 ? createInflate : createInflateRaw)();
+  let head = Buffer.alloc(0), z;
+  const start = (create) => {
+    res.off("data", onData);
+    z = create();
     z.on("error", (e) => out.destroy(e));
     out.on("close", () => z.destroy());
     z.pipe(out);
-    z.write(chunk);
+    if (head.length) z.write(head);
+  };
+  const onData = (chunk) => {
+    head = head.length ? Buffer.concat([head, chunk]) : chunk;
+    if (head.length < 2) return;
+    const b0 = head[0], b1 = head[1];
+    start((b0 & 0x0f) === 8 && (b0 >> 4) <= 7 && ((b0 << 8) | b1) % 31 === 0 ? createInflate : createInflateRaw);
     res.pipe(z);
+  };
+  res.on("data", onData);
+  res.once("end", () => {
+    if (!z) { start(createInflateRaw); z.end(); }
   });
-  res.once("end", () => { if (!z) out.end(); });
   return out;
 }
 

@@ -1159,11 +1159,11 @@ async function convertTextLogMain(kind, args) {
 }
 
 // Reads .html inputs for a converter whose Source line names only folders actually given on
-// the command line (folder = p for a folder argument, "" for a loose file).
+// the command line (folder = basename(resolve(p)) for a folder argument, "" for a loose file).
 async function htmlInputs(paths, what) {
   const inputs = [], seen = new Set();
   for (const p of paths) {
-    const folder = (await stat(p)).isDirectory() ? p : "";
+    const folder = (await stat(p)).isDirectory() ? basename(resolve(p)) : "";
     for (const f of folder ? await inputFiles([p], ".html", what) : [p]) {
       const real = realpathSync(f);
       if (!seen.has(real)) {
