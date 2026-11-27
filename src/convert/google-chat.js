@@ -17,8 +17,9 @@
 // Each `messages.json` is an object `{ messages: [row, …] }`, where each row carries
 // `creator.name`, a Hebrew-locale `created_date` ("26 בנובמבר 2026 בשעה 20:11:40 UTC"),
 // `text` and `attached_files` (`[{ original_name, export_name }]`). A row whose
-// `created_date` key is absent inherits the previous row's already-resolved `created_date`
-// (transitively) before parsing, and its text is prefixed `[no date in the export] `.
+// `created_date` key is absent inherits the previous row's raw `created_date` (transitively)
+// before parsing, and its text is prefixed `[no date in the export] `; a row after an
+// unparseable date inherits that bad string, and both then skip as undated.
 //
 // A port of a private converter, made generic: names and the time zone are options. The
 // deliberate differences:
@@ -57,7 +58,13 @@ function parseDate(s) {
   const [, d, mon, y, hh, mm, ss] = m;
   const mo = MONTHS.indexOf(mon);
   if (mo < 0) return null;
-  return Date.UTC(+y, mo, +d, +hh, +mm, +ss);
+  const [D, H, M, S] = [+d, +hh, +mm, +ss];
+  const ms = Date.UTC(+y, mo, D, H, M, S);
+  // Date.UTC rolls impossible values over (31 February becomes March 3, hour 25 the next
+  // day): reject whatever doesn't round-trip, as a date that "doesn't match the grammar"
+  const t = new Date(ms);
+  if (t.getUTCDate() !== D || t.getUTCHours() !== H || t.getUTCMinutes() !== M || t.getUTCSeconds() !== S) return null;
+  return ms;
 }
 
 function render(c, { title, timeZone = "UTC" }) {
@@ -71,7 +78,7 @@ function render(c, { title, timeZone = "UTC" }) {
     `# ${title || `Google Chat with ${escapeTag(c.label)}`}`,
     "",
     `Source: 1 Google Chat Takeout file${from}.`,
-    `${c.rows.length} messages, ${local(first).date} to ${local(last).date}. Times are ${timeZone}. `
+    `${word(c.rows.length, "message")}, ${local(first).date} to ${local(last).date}. Times are ${timeZone}. `
       + `Attachments appear as \`[attachment: name]\` (files are not copied).${placed}`,
     "",
   ];
@@ -130,11 +137,11 @@ export function plan(inputs, { title, me = "Me", owners = [], names = {}, timeZo
       const rawText = typeof raw.text === "string" && raw.text ? raw.text : "";
       const text = isPlaced ? `[no date in the export] ${rawText}` : rawText;
       const lines = [];
-      if (text) for (const line of text.split("\n")) lines.push(pyStrip(`> ${line}`));
+      if (text) for (const line of text.split("\n")) lines.push(pyStrip(`> ${escapeTag(line)}`));
       if (Array.isArray(raw.attached_files)) {
         for (const a of raw.attached_files) {
           const att = (a && typeof a === "object" && (a.original_name || a.export_name)) || "unknown";
-          lines.push(pyStrip(`> [attachment: ${att}]`));
+          lines.push(pyStrip(`> [attachment: ${escapeTag(att)}]`));
         }
       }
       if (!lines.length) lines.push("> [no text]");
@@ -145,11 +152,13 @@ export function plan(inputs, { title, me = "Me", owners = [], names = {}, timeZo
       continue;
     }
     rows.sort((a, b) => a.ms - b.ms);
-    const label = folder || String(file).replace(/^.*[/\\]/, "");
+    // a loose .json input's label is its file name minus the extension (a loose
+    // messages.json arrives with its parent folder's name from the bin side)
+    const label = folder || String(file).replace(/^.*[/\\]/, "").replace(/\.json$/i, "");
     convs.push({ folder, label, rows, placed });
   }
   if (!convs.length) {
-    throw new Error(`the ${inputs.length} input paths given hold no Google Chat messages`);
+    throw new Error(`the ${word(inputs.length, "input path")} given hold${inputs.length === 1 ? "s" : ""} no Google Chat messages`);
   }
   const files = [], taken = new Set();
   for (const c of convs) {

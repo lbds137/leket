@@ -34,8 +34,8 @@ test("plan: renders a folder conversation with owners, --name, attachments, pySt
       {
         creator: { name: "Ava R." },
         created_date: "2 ב-מרץ 2025 בשעה 14:30:00 UTC",
-        text: "",
-        attached_files: [{ original_name: "", export_name: "fallback.png" }, {}],
+        text: "see <b> &amp; ok",
+        attached_files: [{ original_name: "img <b>.png", export_name: "" }, {}],
       },
       {
         creator: { name: "Cal M." },
@@ -73,7 +73,8 @@ test("plan: renders a folder conversation with owners, --name, attachments, pySt
     "## 2025-03-02 (Sun)",
     "",
     "> -# Jo — Mar 2 2025 9:30 AM",
-    "> [attachment: fallback.png]",
+    "> see \\<b> \\&amp; ok",
+    "> [attachment: img \\<b>.png]",
     "> [attachment: unknown]",
     ">",
     "> -# Cal M. — Mar 2 2025 9:31 AM",
@@ -111,13 +112,16 @@ test("dates: all 12 Hebrew month words, U+202F and U+00A0 normalization, transit
         { creator: { name: "Ava R." }, created_date: "10 במאי 2025 בשעה 09:00:00 UTC", text: "first by clock" },
         { creator: { name: "Ava R." }, created_date: "10 בחודשלאקיים 2025 בשעה 11:00:00 UTC", text: "unknown month" },
         { creator: { name: "Ava R." }, created_date: "not a date", text: "bad grammar" },
+        { creator: { name: "Ben T." }, text: "poisoned: inherits the bad date, as the raw-string chain does" },
         { creator: { name: "Ava R." }, created_date: 12345, text: "non-string" },
+        { creator: { name: "Ava R." }, created_date: "31 בפברואר 2025 בשעה 10:00:00 UTC", text: "day rolls over" },
+        { creator: { name: "Ava R." }, created_date: "10 במאי 2025 בשעה 25:61:00 UTC", text: "hour and minute roll over" },
       ],
     },
   }]);
   assert.equal(stats.messages, 4);
   assert.equal(stats.placed, 2);
-  assert.equal(stats.undated, 4);
+  assert.equal(stats.undated, 7);
   assert.match(files[0].text, /2 messages had no date in the export and are placed after the message before them\./);
   assert.deepEqual(files[0].text.match(/^> (?!-#).*/gm), [
     "> first by clock",
@@ -160,7 +164,7 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
   ];
   const { files, stats } = plan(inputs);
   assert.deepEqual(files.map((f) => f.name), [
-    "google-chat-loose.json.md",
+    "google-chat-loose.md",
     "google-chat-Loose -tag-.md",
     "google-chat-loose -tag- (2).md",
   ]);
@@ -169,7 +173,7 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
   assert.equal(stats.undated, 1);
   assert.equal(stats.notExports, 2);
   assert.deepEqual({ ...stats.senders }, { Me: 1, "Ben T. <script>": 1, "?": 1, "Ava R.": 2 });
-  assert.match(files[0].text, /^# Google Chat with loose\.json\n\nSource: 1 Google Chat Takeout file\.\n/);
+  assert.match(files[0].text, /^# Google Chat with loose\n\nSource: 1 Google Chat Takeout file\.\n/);
   assert.match(files[0].text, /> -# Me — Jan 1 2025 12:00 AM\n> \[no text\]\n>\n> -# Ben T\. \\<script> — Jan 1 2025 12:01 AM\n> hi\n>\n> -# \? — Jan 1 2025 12:02 AM\n> anon/);
   assert.match(files[1].text, /^# Google Chat with Loose \\<tag>\n\nSource: 1 Google Chat Takeout file, from `Loose <tag>`\.\n/);
 
@@ -185,12 +189,14 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
   );
 });
 
-test("CLI: converts folders and loose .json, deduplicates by realpath, reports all summary lines, and validates flags", () => {
+test("CLI: converts folders and loose .json, deduplicates by realpath, descends into a Groups-style folder, scopes --title, reports all summary lines, and validates flags", () => {
   const src = tmp(), out = tmp();
   const spaceDir = join(src, "Project Space");
+  const teamBDir = join(src, "Team B");
   const emptyChatDir = join(src, "Empty Space");
   const noJsonDir = join(src, "No Json");
   mkdirSync(spaceDir);
+  mkdirSync(teamBDir);
   mkdirSync(emptyChatDir);
   mkdirSync(noJsonDir);
 
@@ -202,33 +208,67 @@ test("CLI: converts folders and loose .json, deduplicates by realpath, reports a
       { creator: { name: "Ben T." }, created_date: "bad date", text: "skipped" },
     ],
   }));
+  const teamBFile = join(teamBDir, "messages.json");
+  writeFileSync(teamBFile, JSON.stringify({
+    messages: [{ creator: { name: "Cal M." }, created_date: "3 בנובמבר 2026 בשעה 15:00:00 UTC", text: "team b" }],
+  }));
   writeFileSync(join(emptyChatDir, "messages.json"), JSON.stringify({ messages: [] }));
   const looseTxt = join(src, "ignore.txt");
   writeFileSync(looseTxt, "not json");
 
-  // Pass spaceDir and spaceFile together: realpath dedup counts it once
+  // Pass each folder together with its own messages.json: realpath dedup counts each
+  // once. --owner "Ava  R." (two spaces) must match the collapsed sender name.
   const r = leket([
-    "convert", "google-chat", spaceDir, spaceFile, emptyChatDir, noJsonDir, looseTxt,
-    "--out", out, "--me", "Jo", "--owner", "Ava R.", "--name", "Ben T.=Benny",
-    "--tz", "America/New_York", "--title", "Team Chat",
+    "convert", "google-chat", spaceDir, spaceFile, teamBDir, teamBFile,
+    emptyChatDir, noJsonDir, looseTxt,
+    "--out", out, "--me", "Jo", "--owner", "Ava  R.", "--name", "Ben T.=Benny",
+    "--tz", "America/New_York",
   ]);
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(readdirSync(out), ["google-chat-Project Space.md"]);
+  assert.deepEqual(readdirSync(out).sort(), ["google-chat-Project Space.md", "google-chat-Team B.md"]);
   assert.equal(r.stderr, [
-    "leket: 1 Google Chat Takeout file: 2 messages, 1 from Jo, 1 with no date placed after the message before them; times in America/New_York.",
-    "leket: senders: Ava R. (1), Ben T. (1).",
+    "leket: 2 Google Chat Takeout files: 3 messages, 1 from Jo, 1 with no date placed after the message before them; times in America/New_York.",
+    "leket: senders: Ava R. (1), Ben T. (1), Cal M. (1).",
     "leket: 1 row had no usable date, skipped.",
-    "leket: 1 file held no messages, skipped.",
-    "leket: 2 input paths held no messages.json, skipped.",
+    "leket: 1 file held no usable messages, skipped.",
+    "leket: 2 input paths aren't a Google Chat export (no messages.json), skipped.",
     "",
   ].join("\n"));
   const md = readFileSync(join(out, "google-chat-Project Space.md"), "utf8");
-  assert.match(md, /^# Team Chat\n\nSource: 1 Google Chat Takeout file, from `Project Space`\./);
+  assert.match(md, /^# Google Chat with Project Space\n\nSource: 1 Google Chat Takeout file, from `Project Space`\./);
 
-  // Exit 1 when every input is empty/non-export or when a .json file is invalid JSON
+  // --title names one conversation: works for a single input, refused (exit 1) for several
+  const titledOut = tmp();
+  const titled = leket(["convert", "google-chat", spaceDir, "--title", "Team Chat", "--out", titledOut]);
+  assert.equal(titled.status, 0, titled.stderr);
+  assert.match(readFileSync(join(titledOut, "google-chat-Project Space.md"), "utf8"), /^# Team Chat\n/);
+
+  const multiTitle = leket(["convert", "google-chat", spaceDir, teamBDir, "--title", "Team Chat", "--out", tmp()]);
+  assert.equal(multiTitle.status, 1);
+  assert.match(multiTitle.stderr, /^leket: --title names one conversation's heading; the inputs hold 2 conversations; nothing written\.\n/);
+
+  // A Groups-style parent (no own messages.json) descends one level into its
+  // conversation folders; loose files and message-less subdirs inside it are ignored
+  const descentOut = tmp();
+  const descended = leket(["convert", "google-chat", src, "--out", descentOut]);
+  assert.equal(descended.status, 0, descended.stderr);
+  assert.deepEqual(readdirSync(descentOut).sort(), ["google-chat-Project Space.md", "google-chat-Team B.md"]);
+  assert.equal(descended.stderr, [
+    "leket: 2 Google Chat Takeout files: 3 messages, 1 with no date placed after the message before them; times in UTC.",
+    "leket: senders: Ava R. (1), Ben T. (1), Cal M. (1).",
+    "leket: 1 row had no usable date, skipped.",
+    "leket: 1 file held no usable messages, skipped.",
+    "",
+  ].join("\n"));
+
+  // Exit 1 when every input is empty/non-export (word() covers the singular), or when a .json file is invalid JSON
   const failEmpty = leket(["convert", "google-chat", emptyChatDir, noJsonDir, "--out", tmp()]);
   assert.equal(failEmpty.status, 1);
   assert.match(failEmpty.stderr, /leket: the 2 input paths given hold no Google Chat messages; nothing written\./);
+
+  const failEmpty1 = leket(["convert", "google-chat", emptyChatDir, "--out", tmp()]);
+  assert.equal(failEmpty1.status, 1);
+  assert.match(failEmpty1.stderr, /leket: the 1 input path given holds no Google Chat messages; nothing written\./);
 
   const badJson = join(src, "bad.json");
   writeFileSync(badJson, "{not json");

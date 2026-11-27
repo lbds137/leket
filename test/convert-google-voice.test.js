@@ -221,7 +221,7 @@ test("an empty conversation is skipped as the original skipped it; no rows anywh
 test("CLI: converts the fixture folder, reports unknown kinds / non-exports / undated rows, and validates flags", () => {
   const out = tmp();
   const r = leket(["convert", "google-voice", CALLS, "--out", out, "--me", "Jo",
-    "--name", "Sam Rivera=Sam", "--tz", "America/New_York"]);
+    "--name", "Sam  Rivera=Sam", "--tz", "America/New_York"]);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(readdirSync(out).sort(), ["google-voice-Alex Chen.md", "google-voice-Sam.md"]);
   assert.match(r.stderr, /5 files: 5 text messages, 1 call and 1 voicemail; times in America\/New_York\./);
@@ -394,7 +394,7 @@ test("CLI: passing a folder and a loose file inside it deduplicates by realpath,
   const out = tmp();
   const looseInside = join(CALLS, readdirSync(CALLS).sort()[0]);
   const r = leket(["convert", "google-voice", CALLS, looseInside, "--out", out, "--me", "Jo",
-    "--owner", "Alex Chen", "--name", "Sam Rivera=Sam", "--tz", "America/New_York"]);
+    "--owner", "Alex  Chen", "--name", "Sam  Rivera=Sam", "--tz", "America/New_York"]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /^leket: 5 files: 5 text messages, 1 call and 1 voicemail; times in America\/New_York\.\n/);
   const samMd = readFileSync(join(out, "google-voice-Sam.md"), "utf8");
