@@ -1,0 +1,24 @@
+== host
+vm
+4
+Ubuntu 24.04.5 LTS
+node: v22.23.5
+npm: 10.9.9
+git: /usr/bin/git
+python3: /usr/local/bin/python3
+openssl: /usr/bin/openssl
+pgrep: /usr/bin/pgrep
+free: /usr/bin/free
+node-v24.21.0-linux-x64.tar.gz: OK
+node: system was v22.23.5; installed v24.21.0 at /usr/local/lib/leket-cloud-node24 (node now reports v24.21.0)
+== installs (best effort)
+user root (uid 0)
+== env file /tmp/cloud-env.sh
+# written by .claude/cloud/setup.sh; source before running repo tools
+export PATH="/usr/local/lib/leket-cloud-node24/bin:$PATH"
+== npm ci
+npm ci ok (added 2 packages in 2s)
+== oracle warmup
+oracle ok
+oracle warmup ok
+setup_rc=0
