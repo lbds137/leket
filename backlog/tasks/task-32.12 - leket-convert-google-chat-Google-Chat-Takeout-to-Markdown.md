@@ -1,10 +1,10 @@
 ---
 id: TASK-32.12
 title: 'leket convert google-chat: Google Chat (Takeout) to Markdown'
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-11-26T11:27:00Z'
-updated_date: '2026-11-27T02:53:00Z'
+updated_date: '2026-11-27T03:31:00Z'
 labels:
   - convert
 dependencies: []
@@ -26,6 +26,8 @@ Row L: Google Chat (Takeout) to Markdown. Generic only (public repo): every name
 - [ ] #3 The original's owning session is told it can retire its copy once this ships
 <!-- AC:END -->
 
-## Implementation notes
+## Implementation Notes
 
-Shipped in 0.18.0 (PR #211, branch worktree-agent-task-32.12-google-chat). Implemented on the agy gemini lane from a written spec (premise ledger marking what came from the private original); reviewed driver-side and by a fresh-context cross-family reviewer (PASS); full suite green before push. The private original's fixed choices became options (--owner/--me/--name/--tz/--title); its crash paths (undated first row, unknown month word, non-string date, empty conversation) became skips counted on stderr; non-owner names render as written, not first-name-only. AC #3 lands when the merge is reported to the original's owning session. The #210 review's nine carried lows ride the same PR (item 8, the task-32.11 annotation, was done on main at merge time).
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on the agy gemini lane from a written spec (premise ledger marking what came from the private original); reviewed driver-side, by fresh-context cross-family reviewers, and by the CI claude-review each round; full suite + smoke green before each push. In Progress until AC #3 (telling the original's owning session after merge) is checked. The private original's fixed choices became options (--owner/--me/--name/--tz/--title); its crash paths (undated first row, unknown month word, non-string date, empty conversation) became skips counted on stderr; non-owner names render as written, not first-name-only. The #210 review's nine carried lows ride the same PR (item 8, the task-32.11 annotation, was done on main at merge time). Review round 1: date round-trip check, tag-escaped bodies/attachments, word() counts, --title one-conversation guard, Groups descent + loose-messages.json labeling, gv/gchat name collapse (TASK-43 filed for the remaining hand-rolled plurals). Review round 2: --contact collapse (regression), Hebrew-locale hint on all-dates-fail, Groups hint in the skip message; unreadable-input hard-fail kept (house-wide exit contract).
+<!-- SECTION:NOTES:END -->
