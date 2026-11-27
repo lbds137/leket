@@ -15,10 +15,19 @@
 # never installs anything itself. Every python call in the tests is a stdlib `-I -c`
 # one-liner or a repo CHECK script.
 #
+# Node is the one non-best-effort piece: the cloud base image ships whatever node major
+# it ships (v22.23.5 on 11-27) and this suite does not survive it (the first VM run's
+# runner cancelled 48 tests with 'Promise resolution is still pending'), so when the
+# image's node is not the CI major (24), setup provisions a pinned node 24 tarball
+# (sha256-checked against nodejs.org's SHASUMS256) into /usr/local/lib/leket-cloud-node24
+# and puts it first on PATH via the env file. If the provision fails, setup stops before
+# the env file: exit 1, no suite run, no verdict off a node the repo is not green on.
+#
 # Exit 0 = the env file was written (everything after it is best effort and reported);
-# 1 = setup could not reach the env-file step (cwd, temp file or write failure);
+# 1 = setup could not reach the env-file step (cwd, temp file or write failure, or the
+# node 24 provision failed);
 # 2 = refused (the local host's hostname). Every failure inside exit 0 prints a line the
-# report must carry: MISSING / STILL MISSING, install FAILED, VERSION PROBLEM,
+# report must carry: MISSING / STILL MISSING, install FAILED,
 # npm ci FAILED, oracle warmup FAILED.
 set -u
 cd -- "$(dirname -- "$0")/../.." || { echo "cloud setup: can't reach the repo root from $0" >&2; exit 1; }
@@ -35,12 +44,50 @@ for t in git python3 openssl pgrep free; do
   printf '%s: %s\n' "$t" "$(command -v "$t" || echo MISSING)"
 done
 nv=$(command -v node >/dev/null && node --version 2>/dev/null) || nv=
-nvok=   # floor: this repo's CI (ci.yml) runs node 24
+nvok=   # the suite is green on the CI major (24) and proven broken on the image's 22
 case $nv in v[0-9]*.[0-9]*)
   v=${nv#v}; maj=${v%%.*}
-  if [ "$maj" -ge 24 ]; then nvok=1; fi ;;
+  if [ "$maj" -eq 24 ]; then nvok=1; fi ;;
 esac
-[ "$nvok" = 1 ] || echo "node: VERSION PROBLEM (${nv:-absent}; this repo's CI uses 24): stop and report it; do not install Node yourself"
+nodepathline=   # non-empty when setup provisions node; exported into the env file
+if [ "$nvok" != 1 ]; then
+  # The base image ships whatever node it ships (v22.23.5 on 11-27) and the suite does
+  # not survive it: on run task44-adopt-c1b1398fb3-20261127T200427Z the timeout tests
+  # hung node 22's runner, which cancelled 48 tests with 'Promise resolution is still
+  # pending' and exited 1 with fail 0. So setup provisions the exact node this repo is
+  # green on — the same pinned tarball every run, sha256-checked against nodejs.org's
+  # SHASUMS256 — and nothing after this point trusts the system node.
+  nodeprefix=${CLOUD_NODE_PREFIX:-/usr/local/lib/leket-cloud-node24}
+  nver=${CLOUD_NODE_VERSION:-v24.21.0}   # ci.yml's major (24); the minor the authoring Deck runs
+  sudo=; [ "$(id -u)" = 0 ] || sudo=sudo
+  dlc=
+  if command -v curl >/dev/null; then dlc="curl -fsSL --retry 2 -o"
+  elif command -v wget >/dev/null; then dlc="wget -q -O"
+  fi
+  dlp=$(mktemp -d) || dlp=
+  tgz=node-$nver-linux-x64.tar.gz
+  ok=1
+  if [ -z "$dlc" ]; then echo "node install FAILED: no curl or wget on PATH"; ok=
+  elif [ -z "$dlp" ]; then echo "node install FAILED: no temp dir"; ok=
+  elif ! $dlc "$dlp/SHASUMS256.txt" "https://nodejs.org/dist/$nver/SHASUMS256.txt" \
+     || ! $dlc "$dlp/$tgz" "https://nodejs.org/dist/$nver/$tgz"; then
+    echo "node install FAILED: download of $nver"; ok=
+  elif ! (cd "$dlp" && grep -F " $tgz" SHASUMS256.txt | sha256sum -c -); then
+    echo "node install FAILED: sha256 of $tgz"; ok=
+  elif ! { mkdir -p "$nodeprefix" 2>/dev/null || $sudo mkdir -p "$nodeprefix"; } \
+     || ! tar -xzf "$dlp/$tgz" -C "$nodeprefix" --strip-components=1; then
+    echo "node install FAILED: unpack into $nodeprefix"; ok=
+  fi
+  [ -z "$dlp" ] || rm -rf "$dlp"
+  if [ "$ok" = 1 ]; then
+    export PATH="$nodeprefix/bin:$PATH"
+    nodepathline="export PATH=\"$nodeprefix/bin:\$PATH\""
+    echo "node: system was ${nv:-absent}; installed $nver at $nodeprefix (node now reports $(node --version))"
+  else
+    echo "node: VERSION PROBLEM (system ${nv:-absent}; provisioning $nver failed): stop and report"
+    exit 1
+  fi
+fi
 
 echo "== installs (best effort)"
 need=()
@@ -78,10 +125,18 @@ done
 
 tmp=$(mktemp "$envf.XXXXXX") || { echo "cloud setup: can't create a temp file beside $envf" >&2; exit 1; }
 { echo "# written by .claude/cloud/setup.sh; source before running repo tools"
-  # Nothing to export yet: the unit suite reads no toggles (only smoke.mjs reads
-  # LEKET_CHROME/CI-style env, and smoke is not in the cloud suite). The file exists so
-  # step 1's `. /tmp/cloud-env.sh &&` is uniform with the fleet's suites and a later
-  # extension (smoke needs LEKET_CHROME pointing at a VM chromium) has its place.
+  if [ -n "$nodepathline" ]; then
+    # Setup provisioned node (the image's node is not the CI major); this line is why
+    # every step that sources the file runs the provisioned node, not the system one.
+    echo "$nodepathline"
+  else
+    # Nothing to export: the unit suite reads no toggles (only smoke.mjs reads
+    # LEKET_CHROME/CI-style env, and smoke is not in the cloud suite) and the system
+    # node is the CI major. The file exists so step 1's `. /tmp/cloud-env.sh &&` is
+    # uniform with the fleet's suites and a later extension (smoke needs LEKET_CHROME
+    # pointing at a VM chromium) has its place.
+    :   # an else branch may not hold only comments; this no-op keeps the branch non-empty
+  fi
 } > "$tmp" && mv -f "$tmp" "$envf" || { rm -f "$tmp"; echo "cloud setup: can't write $envf" >&2; exit 1; }
 echo "user $(id -un) (uid $(id -u))"
 echo "== env file $envf"; cat "$envf"

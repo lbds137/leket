@@ -2,7 +2,7 @@ Run this repo's unit test suite once on this VM and return the complete output t
 
 All paths are relative to the checkout root, and every step runs from there (the base check in the placement section leaves you there).
 
-The suite is `npm test` — node --test over `test/*.test.js` (963 tests; 32s of test time, ~35s wall on the authoring Deck, 11-27). There is no browser tier: smoke (`node test/smoke/smoke.mjs`) needs Chromium and is deliberately NOT part of the cloud suite — it stays a local gate (see .claude/cloud/setup.sh's header). The suite runs as root; the setup created no test user.
+The suite is `npm test` — node --test over `test/*.test.js` (963 tests; 32s of test time, ~35s wall on the authoring Deck, 11-27). There is no browser tier: smoke (`node test/smoke/smoke.mjs`) needs Chromium and is deliberately NOT part of the cloud suite — it stays a local gate (see .claude/cloud/setup.sh's header). The suite runs as root; the setup created no test user. It runs on node 24: when the image's node is a different major, setup provisions a pinned node 24 tarball and the env file puts it first on PATH (the `node:` lines in cloud-setup.out name the image's node and what actually ran — on 11-27 the image shipped v22.23.5, and this suite's runner on it cancelled 48 tests).
 
 1. After Step 0, run the suite in one Bash call (timeout 600000 ms):
 
@@ -26,4 +26,4 @@ The suite is `npm test` — node --test over `test/*.test.js` (963 tests; 32s of
 
 4. `git add @RESULTS@ && git commit -m "cloud-test: suite output"`, then push the branch. The push target is the `cloud-test/*` scratch branch you were started on (never `main`). Commit identity and push authentication are the claude CLI's own on this VM — the dispatcher's prompt carries the Delivery section with the same rules (commit on the started branch, push to origin, open no PR). The pushed files are the deliverable: the driver reads them from git, not from your report.
 
-5. In the report, give rc, node --test's summary lines (`ℹ tests N`, `ℹ pass N`, `ℹ fail N`), every `MISSING` (setup or step 3), `install FAILED`, `VERSION PROBLEM`, `npm ci FAILED`, or `oracle warmup FAILED` line verbatim, and the name of each failing test file probed in step 2. Do not analyse the failures.
+5. In the report, give rc, node --test's summary lines (`ℹ tests N`, `ℹ pass N`, `ℹ fail N`, `ℹ cancelled N`), every `MISSING` (setup or step 3), `install FAILED`, `npm ci FAILED`, or `oracle warmup FAILED` line verbatim, and the name of each failing test file probed in step 2. Do not analyse the failures.
