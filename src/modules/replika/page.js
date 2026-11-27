@@ -77,6 +77,9 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
       return;
     }
     progress(0, 1);
+    // the smoke harness seeds a fast pause on the page; without the seed the save's
+    // own pacing stands
+    const smokePauseMs = Number(globalThis.__leketSmokePauseMs) || 0;
     const { data, parts, filename } = await runSave({
       auth: probe.auth,
       leketVersion: chrome.runtime.getManifest().version,
@@ -84,6 +87,10 @@ $("replika-run").addEventListener("click", (e) => busy(e.target, async () => {
       // the page's own WebSocket, looked up at click time — the smoke swaps this global
       // to script the history socket
       WebSocketCtor: globalThis.WebSocket,
+      ...(smokePauseMs ? {
+        pause: () => new Promise((resolve) => setTimeout(resolve, smokePauseMs)),
+        fileRetryMs: smokePauseMs,
+      } : {}),
       onStep: (step) => say(STEP_TEXT[step]({ count: 0, total: 0 })),
       onProgress: (p) => {
         if (STEP_TEXT[p.step]) say(STEP_TEXT[p.step](p));

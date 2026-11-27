@@ -13,7 +13,11 @@
 // the driver found it apart from its own overlay and the clicks YouTube itself answers.
 export async function driveYouTube(opts) {
   opts = opts && typeof opts === "object" ? opts : {};
-  const stepMs = opts.stepMs || 1200;
+  // a page can hint a faster poll than the real-YouTube default — the smoke harness
+  // serves its watch pages with the hint; a real page never carries it, and the hint
+  // can only hurry the run, never slow it past the default
+  const stepMs = opts.stepMs
+    || Math.min(Number(document.querySelector('meta[name="leket-poll-ms"]')?.content) || Infinity, 1200);
   const stallSteps = opts.stallSteps || 8;
   const transcriptWaitMs = opts.transcriptWaitMs || 15000;
   const maxMs = opts.maxMs || 15 * 60 * 1000;

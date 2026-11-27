@@ -161,7 +161,8 @@ const MESSENGER_COLLECTOR_URL = "https://www.messenger.com/e2ee/t/456";
 const YOUTUBE_WATCH = "https://www.youtube.com/watch?v=SmokeVid001";
 const YOUTUBE_WATCH_OLD = "https://www.youtube.com/watch?v=SmokeVid002";
 const YOUTUBE_WATCH_MOVES = "https://www.youtube.com/watch?v=SmokeVid003";
-const youtubePage = `<!doctype html><html lang="en"><head><title>Smoke test video - YouTube</title></head><body>
+const youtubePage = `<!doctype html><html lang="en"><head><title>Smoke test video - YouTube</title>
+<meta name="leket-poll-ms" content="40"></head><body>
 <ytd-watch-metadata><h1>Smoke test video</h1><ytd-channel-name><a href="/@example">Example Channel</a></ytd-channel-name></ytd-watch-metadata>
 <div id="description-inline-expander"><button id="expand">...more</button>
 <ytd-video-description-transcript-section-renderer><button>Show transcript</button></ytd-video-description-transcript-section-renderer></div>
@@ -245,11 +246,14 @@ on two lines</span>
   new IntersectionObserver((entries, io) => {
     if (!entries.some((e) => e.isIntersecting)) return;
     io.disconnect();
+    // lands in 20ms, inside one poll step of the page's leket-poll-ms hint (40ms) and
+    // far inside the driver's stallSteps margin — real YouTube's batch is slower, and
+    // the driver waits for it the same way
     setTimeout(() => {
       cont.before(thread("ugxT4", "@dee", "@Dee Example", "fourth comment, loaded by the continuation", "5 hours ago", "0"));
       cont.before(thread("ugxT5", "@eve", "@Eve Example", "fifth comment, loaded by the continuation", "4 hours ago", "2"));
       cont.remove();
-    }, 300);
+    }, 20);
   }).observe(cont);
 
   // replies: "2 replies" adds one reply and a nested continuation for the second
@@ -293,7 +297,8 @@ const replikaPage = `<!doctype html><html><head><title>my replika</title></head>
   + `<script>localStorage.setItem("auth", JSON.stringify({ userId: "smoke-user", deviceId: "smoke-device", authToken: "smoke-token" }));`
   + `localStorage.setItem("ws", JSON.stringify({ chatId: "smoke-chat" }));`
   + `localStorage.setItem("profile", JSON.stringify({ userProfile: { first_name: "Ada" }, bot: { name: "Echo" } }));</script></body></html>`;
-const messengerCollectorPage = `<!doctype html><html><head><title>(2) Ada Example | Messenger</title></head><body>`
+const messengerCollectorPage = `<!doctype html><html><head><title>(2) Ada Example | Messenger</title>
+<meta name="leket-poll-ms" content="40"></head><body>`
   + `<div role="main"><div id="scroller" style="height:200px;overflow-y:auto"></div></div>`
   + `<script>(() => {
     const scroller = document.getElementById("scroller");
@@ -507,7 +512,7 @@ async function waitFor(fn, what, ms = 15000) {
   while (Date.now() < end) {
     // a dead browser won't come back: say so now, not after this wait's whole timeout
     try { last = await fn(); if (last) return last; } catch (e) { if (e && e.fatal) throw e; last = e; }
-    await sleep(150);
+    await sleep(40);
   }
   throw new Error(`timed out after ${ms / 1000}s waiting for ${what} (last ${last instanceof Error ? `error: ${last.message}` : `answer: ${JSON.stringify(last)}`})`);
 }
@@ -710,12 +715,14 @@ async function scenarios(cdp, downloads) {
   // closing of every page it opened (tabs, module pages, popups — all but the helper), run
   // either way, and a failed cleanup fails the scenario. A dead browser (fatal) ends the run
   const scenario = async (name, body, cleanup) => {
+    const t0 = Date.now();
     try {
       await body();
     } catch (e) {
       if (e && e.fatal) throw e;
       check(false, `${name}: the scenario stopped: ${(e && e.message) || e}`);
     } finally {
+      console.log(`smoke: ${name} took ${((Date.now() - t0) / 1000).toFixed(1)}s`);
       if (cleanup) await cleanup().catch(soft((e) => check(false, `${name}: its cleanup failed: ${e.message}`)));
       const { targetInfos } = await cdp.send("Target.getTargets").catch(soft(() => ({ targetInfos: [] })));
       for (const t of targetInfos) {
@@ -740,7 +747,7 @@ async function scenarios(cdp, downloads) {
       const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123", state: "complete" }).then((d) => d.length)`)
         .then((n) => n >= 2 * round && n), `round ${round}'s two finished downloads`).catch(soft((e) => e.message));
       check(done === 2 * round, `reddit save ${round}: Chrome finished ${2 * round} reddit downloads so far (${done})`);
-      await sleep(500); // a duplicate save would have a moment to land: Chrome's count, read again, still matches
+      await sleep(200); // a duplicate save would have a moment to land: Chrome's count, read again, still matches
       const settled = await extEval(`chrome.downloads.search({ filenameRegex: "reddit-abc123" }).then((d) => d.length)`);
       check(settled === 2 * round, `reddit save ${round}: no further reddit download started (${settled} in Chrome's list)`);
       // its own files only: no scenario's position in the run depends on another's downloads
@@ -984,7 +991,7 @@ async function scenarios(cdp, downloads) {
     const twice = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-", state: "complete" }).then((d) => d.length)`)
       .then((n) => n >= 2 && n), "the second chat save to finish").catch(soft((e) => e.message));
     check(twice === 2 && again.startsWith("Done: 3 chats, 1 files saved to"), `chat: a second run saves again (${twice} finished; it said: ${again})`);
-    await sleep(500); // a stray third save would have a moment to land: Chrome's count, read again, still matches
+    await sleep(200); // a stray third save would have a moment to land: Chrome's count, read again, still matches
     const settled = await extEval(`chrome.downloads.search({ filenameRegex: "claude-chat-outputs-" }).then((d) => d.length)`);
     check(settled === 2, `chat: no further chat download started (${settled} in Chrome's list)`);
     const files = landed().filter((f) => f.startsWith("claude-chat-outputs-"));
@@ -1024,7 +1031,7 @@ async function scenarios(cdp, downloads) {
       const done = await waitFor(() => extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-", state: "complete" }).then((d) => d.length)`)
         .then((n) => n >= round && n), `etsy round ${round}'s finished download`).catch(soft((e) => e.message));
       check(done === round, `etsy save ${round}: Chrome finished ${round} Etsy download(s) so far (${done})`);
-      await sleep(500); // a renamed copy would have a moment to land: Chrome's count, read again, still matches
+      await sleep(200); // a renamed copy would have a moment to land: Chrome's count, read again, still matches
       const settled = await extEval(`chrome.downloads.search({ filenameRegex: "etsy-conversations-" }).then((d) => d.length)`);
       check(settled === round, `etsy save ${round}: no further Etsy download started (${settled} in Chrome's list)`);
       // one dated file, overwritten each round. Named by the UTC date, so a midnight UTC
@@ -1051,6 +1058,10 @@ async function scenarios(cdp, downloads) {
       if (round === 1 && !first.name) throw new Error("etsy save 1 landed no file, so the overwrite rounds have nothing to compare against");
       return { end, saved, text };
     };
+
+    // the page reads this as its collectConversations pauseMs: Etsy's synthetic web
+    // answers instantly, so the save paces at 20ms a page instead of 400ms
+    await evalIn(ep, `globalThis.__leketSmokePauseMs = 20, true`);
 
     // a token that is neither an id nor a conversation link stops the run before any
     // fetch: dropped silently, the real id would save under a green line
@@ -1300,8 +1311,9 @@ async function scenarios(cdp, downloads) {
       globalThis.WebSocket = FakeSocket;
       return true; })()`);
     check(swapped === true, "replika: the page's WebSocket is swapped for the scripted fake");
-    // no retry-wait lever here: collectMedia's own short retry (3 tries, 1 s apart) is the
-    // only wait the refused voice clip costs
+    // the page reads this as its between-media pause and its refused-file retry gap:
+    // the synthetic hosts answer instantly, so both pace at 20ms instead of ~1s
+    await evalIn(rp, `globalThis.__leketSmokePauseMs = 20, true`);
     await evalIn(rp, `document.getElementById("replika-run").click(), true`);
     const end = await waitFor(() => evalIn(rp, `(() => { const p = document.getElementById("replika-status"); const t = p.hidden ? "" : p.textContent;
       return (t.startsWith("Saved replika-") || p.className === "warn") && { t, cls: p.className,

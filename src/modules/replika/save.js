@@ -227,7 +227,7 @@ export function makeMediaNamer() {
 // still unplanned keeps that reason, the caller stops its remaining steps. A fetch that
 // fails marks the record with a fixed reason — never fetchFile's own error text, which
 // can carry server-derived words.
-export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait, pause = restBetweenMedia, onProgress } = {}) {
+export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait, pause = restBetweenMedia, fileRetryMs = 1000, onProgress } = {}) {
   const name = makeMediaNamer();
   const files = [];
   let stopped = null;
@@ -275,8 +275,9 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
       plan.record.not_captured = MEDIA_HOST_NOT_REPLIKA;
       continue;
     }
-    // 3 tries a second apart: a host that refuses fails in ~3 s a file, not ~30 s
-    const got = await fetchFile(target, { fetchFn: noted(picture ? "error" : "follow"), tries: 3, wait: 1000, maxBytes: MAX_MEDIA_BYTES });
+    // 3 tries a second apart (the smoke harness passes fileRetryMs to hurry this):
+    // a host that refuses fails in ~3 s a file, not ~30 s
+    const got = await fetchFile(target, { fetchFn: noted(picture ? "error" : "follow"), tries: 3, wait: fileRetryMs, maxBytes: MAX_MEDIA_BYTES });
     if (got.error) {
       plan.record.not_captured = got.tooBig ? MEDIA_TOO_LARGE : MEDIA_FETCH_FAILED;
     } else {
@@ -301,7 +302,7 @@ export async function collectMedia(plans, { auth, fetchFn = fetch, sleep = wait,
 // keeps its own default.
 export async function runSave({
   auth, leketVersion = null, now = new Date(),
-  fetchFn = fetch, sleep = wait, WebSocketCtor, uuid, timeoutMs, pause,
+  fetchFn = fetch, sleep = wait, WebSocketCtor, uuid, timeoutMs, pause, fileRetryMs,
   onStep = () => {}, onProgress = () => {},
 } = {}) {
   const statuses = { chat: "complete", diary: "complete", memories: "complete", media: "complete" };
@@ -368,7 +369,7 @@ export async function runSave({
     for (const plan of allPlans) if (!plan.record.not_captured) plan.record.not_captured = stopReason;
   } else {
     media = await collectMedia(allPlans, {
-      auth, fetchFn, sleep, pause,
+      auth, fetchFn, sleep, pause, fileRetryMs,
       onProgress: (p) => onProgress({ step: "media", count: p.done, total: p.total }),
     });
     if (media.stopped) statuses.media = media.stopped;
