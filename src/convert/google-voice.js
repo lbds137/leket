@@ -26,7 +26,9 @@
 // the Python original's naive astimezone() read it. Every `Group Conversation - <time>.html`
 // file joins one "Group Conversation" transcript (the original grouped them the same way).
 // A file whose kind is known but which yields no row (undated call, message-less text file)
-// still counts in `stats.files` and the Source line, as in the original.
+// still counts in `stats.files` and the Source line, as in the original. MMS `<img>` parts
+// after `</q>` are dropped silently (and a picture-only message div with no `<cite>`/`<q>`
+// yields no row).
 //
 // A port of a private converter, made generic: names and the time zone are options. The
 // deliberate differences:
@@ -55,7 +57,7 @@
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
 import { codeSpan, decode, htmlToMarkdown } from "../lib/html-md.js";
-import { escapeTag, safeTitle, span } from "./common.js";
+import { escapeTag, safeTitle, span, word } from "./common.js";
 
 const STAMP = /^\d{4}-\d{2}-\d{2}T[\d_]+(?:Z|[+-][\d_]+)?\.html$/i;
 const KIND = {
@@ -88,7 +90,7 @@ const CALL_TEXT = {
   missed: () => "missed call",
   voicemail: () => "voicemail",
 };
-const MSG = /<div class="message">\s*<abbr class="dt" title="([^"]*)">[\s\S]*?<cite class="sender vcard">([\s\S]*?)<\/cite>:\s*<q>([\s\S]*?)<\/q>/g;
+const MSG = /<div class="message">\s*<abbr class="dt" title="([^"]*)">(?:(?!<div class="message">)[\s\S])*?<cite class="sender vcard">((?:(?!<div class="message">)[\s\S])*?)<\/cite>:\s*<q>((?:(?!<div class="message">)[\s\S])*?)<\/q>/g;
 const FN = /<abbr class="fn" title="[^"]*">([\s\S]*?)<\/abbr>|<span class="fn">([\s\S]*?)<\/span>/;
 const PUBLISHED = /<abbr class="published" title="([^"]*)"/;
 const DURATION = /<abbr class="duration" title="PT([^"]+)"/;
@@ -101,8 +103,8 @@ function splitFileName(fileName) {
   const head = parts.slice(0, -1);
   const word = head.at(-1);
   const known = Object.hasOwn(KIND, word);
-  const contact = (known ? head.slice(0, -1) : head).join(" - ");
-  return contact.trim() ? { contact, kind: known ? KIND[word] : null } : null;
+  const contact = (known ? head.slice(0, -1) : head).join(" - ").replace(/\s+/g, " ").trim();
+  return contact ? { contact, kind: known ? KIND[word] : null } : null;
 }
 
 function kindFromText(text) {
@@ -124,8 +126,6 @@ export function kindOf(fileName, text = "") {
   if (!s) return null;
   return s.kind || kindFromText(text);
 }
-
-const word = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function render(c, { title, me = "Me", names = {}, timeZone = "UTC" }) {
   const local = clock(timeZone);
@@ -176,7 +176,8 @@ function render(c, { title, me = "Me", names = {}, timeZone = "UTC" }) {
 }
 
 // [{ folder, file, text }] → { files: [{ name, text }], stats }
-export function plan(inputs, { title, base, me = "Me", names = {}, contact = "", timeZone = "UTC" } = {}) {
+export function plan(inputs, { title, base, me = "Me", owners = [], names = {}, contact = "", timeZone = "UTC" } = {}) {
+  const ownerSet = new Set(["Me", "אני", ...owners]);
   const conversations = new Map();
   const stats = {
     files: 0, contacts: 0, texts: 0, calls: 0, voicemails: 0,
@@ -220,8 +221,8 @@ export function plan(inputs, { title, base, me = "Me", names = {}, contact = "",
         const ms = Date.parse(when);
         if (!Number.isFinite(ms)) { stats.undated++; continue; }
         const fn = FN.exec(cite);
-        const who = decode(fn ? (fn[1] ?? fn[2]) : "").trim();
-        const isOwner = who === "Me" || who === "אני";
+        const who = decode(fn ? (fn[1] ?? fn[2]) : "").replace(/\s+/g, " ").trim();
+        const isOwner = ownerSet.has(who);
         const rawBody = q.trim();
         const key = JSON.stringify(["t", ms, isOwner, rawBody]);
         if (!c.rows.has(key)) c.rows.set(key, { type: "text", ms, who, isOwner, rawBody });

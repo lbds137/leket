@@ -99,7 +99,10 @@ export function guardedFetch(url, { signal, headers = {}, lookup = makeLookup(),
             // a reset upstream fails the read, but as a fresh error, so the corrupt-body
             // tag below can't stamp a network failure as the decoder's own; a reader that
             // stops early (cancel) closes the connection too, not only the decoder
-            res.on("error", (e) => decoded.destroy(Object.assign(new Error(e.message), { via: "upstream", cause: e })));
+            res.on("error", (e) => decoded.destroy(Object.assign(new Error(e.message),
+              e.name && e.name !== "Error" ? { name: e.name } : null,
+              e.code !== undefined ? { code: e.code } : null,
+              { via: "upstream", cause: e })));
             decoded.on("close", () => { if (!res.complete) res.destroy(); });
             decoded.on("error", (e) => { if (!e.via) { e.code = "EDECODE"; e.coding = coding; } });
             body = Readable.toWeb(decoded);

@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { IncomingMessage } from "node:http";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -133,11 +134,18 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     }
     else if (req.url === "/deflate-raw.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" }); res.end(deflateRawSync(Buffer.from([11, 12]))); }
     else if (req.url === "/corrupt-gz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" }); res.end(Buffer.from("not gzipped at all")); }
+    else if (req.url === "/corrupt-deflate.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" }); res.end(Buffer.from("not deflated at all")); }
     else if (req.url === "/trunc-gz.png") {
       // a connection cut before the body completes: the response errors, the body never finishes
       const gz = gzipSync(Buffer.from([13, 14]));
       res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip", "content-length": String(gz.length + 20) });
       res.write(gz.subarray(0, gz.length - 2));
+      setTimeout(() => res.destroy(), 25);
+    }
+    else if (req.url === "/trunc-deflate.png") {
+      const def = deflateSync(Buffer.from([13, 14]));
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate", "content-length": String(def.length + 20) });
+      res.write(def.subarray(0, def.length - 2));
       setTimeout(() => res.destroy(), 25);
     }
     else if (req.url === "/zz.png") { res.writeHead(200, { "content-type": "image/png", "content-encoding": "zz" }); res.end("??"); }
@@ -175,9 +183,13 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
     assert.deepEqual(new Uint8Array(await defRaw.arrayBuffer()), new Uint8Array([11, 12]));
     const badGz = await guardedFetch(`${base}/corrupt-gz.png`, { lookup: direct, ca: tls.cert });
     await assert.rejects(badGz.arrayBuffer(), (e) => e.code === "EDECODE" && e.coding === "gzip");
+    const badDef = await guardedFetch(`${base}/corrupt-deflate.png`, { lookup: direct, ca: tls.cert });
+    await assert.rejects(badDef.arrayBuffer(), (e) => e.code === "EDECODE" && e.coding === "deflate");
     // a cut connection is not a corrupt body: the wrapped upstream error carries no EDECODE tag
     const trunc = await guardedFetch(`${base}/trunc-gz.png`, { lookup: direct, ca: tls.cert });
-    await assert.rejects(trunc.arrayBuffer(), (e) => !e.code && !/corrupt/.test(e.message));
+    await assert.rejects(trunc.arrayBuffer(), (e) => e.code === "ECONNRESET" && !/corrupt/.test(e.message));
+    const truncDef = await guardedFetch(`${base}/trunc-deflate.png`, { lookup: direct, ca: tls.cert });
+    await assert.rejects(truncDef.arrayBuffer(), (e) => e.code === "ECONNRESET" && !/corrupt/.test(e.message));
     await assert.rejects(guardedFetch(`${base}/zz.png`, { lookup: direct, ca: tls.cert }),
       (e) => e.code === "EENCODING" && /not fetched: the server sent it encoded as zz/.test(e.message));
     // fetchImageData passes that refusal on as its own reason, not "couldn't reach it"
@@ -186,6 +198,8 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
       { message: "not fetched: the server sent it encoded as zz" });
     await assert.rejects(fetchImageData({ n: 1, u: `${base}/corrupt-gz.png`, ext: "" }, { fetch: viaImage }),
       (e) => /^couldn't read it \(the server sent it encoded as gzip, but the body is corrupt: .+\)$/.test(e.message));
+    await assert.rejects(fetchImageData({ n: 1, u: `${base}/corrupt-deflate.png`, ext: "" }, { fetch: viaImage }),
+      (e) => /^couldn't read it \(the server sent it encoded as deflate, but the body is corrupt: .+\)$/.test(e.message));
   } finally {
     server.close();
   }
@@ -193,48 +207,71 @@ test("guardedFetch: it says who it is and asks for the bytes as they are; a comp
 
 test("guardedFetch: cancelling a compressed answer mid-read closes the connection, as cancelling a plain one does", async () => {
   const tls = certificate();
-  let socketClosed;
-  const closed = new Promise((r) => { socketClosed = r; });
-  const server = createServer(tls, (req, res) => {
-    req.socket.on("close", socketClosed);
-    res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" });
-    const gz = createGzip();
-    gz.pipe(res);
-    // an answer that never ends on its own: only the client closing it stops it
-    const tick = setInterval(() => gz.write(randomBytes(65536)), 10);
-    res.on("close", () => clearInterval(tick));
-  });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
-  try {
-    const r = await guardedFetch(`https://img.example:${server.address().port}/gz.png`, { lookup: direct, ca: tls.cert });
-    const reader = r.body.getReader();
-    await reader.read();
-    await reader.cancel();
-    const late = new Promise((res) => setTimeout(() => res("still open"), 5000).unref());
-    assert.equal(await Promise.race([closed.then(() => "closed"), late]), "closed");
-  } finally {
-    server.closeAllConnections();
-    server.close();
+  for (const [coding, makeStream] of [["gzip", createGzip], ["deflate", createDeflate]]) {
+    let socketClosed;
+    const closed = new Promise((r) => { socketClosed = r; });
+    const server = createServer(tls, (req, res) => {
+      req.socket.on("close", socketClosed);
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": coding });
+      const z = makeStream();
+      z.pipe(res);
+      // an answer that never ends on its own: only the client closing it stops it
+      const tick = setInterval(() => z.write(randomBytes(65536)), 10);
+      res.on("close", () => clearInterval(tick));
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
+    try {
+      const r = await guardedFetch(`https://img.example:${server.address().port}/img.png`, { lookup: direct, ca: tls.cert });
+      const reader = r.body.getReader();
+      await reader.read();
+      await reader.cancel();
+      const late = new Promise((res) => setTimeout(() => res("still open"), 5000).unref());
+      assert.equal(await Promise.race([closed.then(() => "closed"), late]), "closed", coding);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   }
 });
 
-test("guardedFetch: a compressed answer that stalls fails the read when the signal aborts, as a plain one does", async () => {
+test("guardedFetch: a compressed answer that stalls fails the read when the signal aborts, as a plain one does, and preserves upstream error name and code", async () => {
   const tls = certificate();
+  const deflateHead = deflateSync(Buffer.from("stalled")).subarray(0, 2);
   const server = createServer(tls, (req, res) => {
-    res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" });
-    // a gzip header and then nothing: the download stalls
-    res.write(Buffer.from([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3]));
+    if (req.url === "/deflate.png") {
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "deflate" });
+      res.write(deflateHead);
+    } else if (req.url === "/abort-err.png") {
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" });
+      res.write(Buffer.from([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3]));
+      setTimeout(() => res.destroy(), 25);
+    } else {
+      res.writeHead(200, { "content-type": "image/png", "content-encoding": "gzip" });
+      // a gzip header and then nothing: the download stalls
+      res.write(Buffer.from([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3]));
+    }
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const direct = (name, opts, cb) => (opts.all ? cb(null, [{ address: "127.0.0.1", family: 4 }]) : cb(null, "127.0.0.1", 4));
+  const origDestroy = IncomingMessage.prototype.destroy;
   try {
-    const r = await guardedFetch(`https://img.example:${server.address().port}/gz.png`,
-      { lookup: direct, ca: tls.cert, signal: AbortSignal.timeout(300) });
-    const late = new Promise((res) => setTimeout(() => res("hung"), 5000).unref());
-    const read = r.arrayBuffer().then(() => "read", () => "failed");
-    assert.equal(await Promise.race([read, late]), "failed");
+    for (const path of ["/gz.png", "/deflate.png"]) {
+      const r = await guardedFetch(`https://img.example:${server.address().port}${path}`,
+        { lookup: direct, ca: tls.cert, signal: AbortSignal.timeout(300) });
+      const late = new Promise((res) => setTimeout(() => res("hung"), 5000).unref());
+      const read = r.arrayBuffer().then(() => "read", () => "failed");
+      assert.equal(await Promise.race([read, late]), "failed", path);
+    }
+    IncomingMessage.prototype.destroy = function (err) {
+      if (err) { err.name = "AbortError"; err.code = "ABORT_ERR"; }
+      return origDestroy.call(this, err);
+    };
+    const r = await guardedFetch(`https://img.example:${server.address().port}/abort-err.png`,
+      { lookup: direct, ca: tls.cert });
+    await assert.rejects(r.arrayBuffer(), (e) => e.name === "AbortError" && e.code === "ABORT_ERR");
   } finally {
+    IncomingMessage.prototype.destroy = origDestroy;
     server.closeAllConnections();
     server.close();
   }

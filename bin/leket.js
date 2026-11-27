@@ -13,8 +13,10 @@
 // Restore backup (src/convert/sms.js), and `leket convert signal <export.txt>…` for
 // signalbackup-tools' text export (src/convert/signal.js), and `leket convert whatsapp
 // <chat.txt>…` for WhatsApp's Export chat (src/convert/whatsapp.js), `leket convert aim
-// <logs>…` for AIM chat logs saved as HTML (src/convert/aim.js), and `leket convert
-// google-voice <calls>…` for Google Voice in Google Takeout (src/convert/google-voice.js).
+// <logs>…` for AIM chat logs saved as HTML (src/convert/aim.js), `leket convert
+// google-voice <calls>…` for Google Voice in Google Takeout (src/convert/google-voice.js),
+// and `leket convert google-chat <chat>…` for Google Chat in Google Takeout
+// (src/convert/google-chat.js).
 // `leket reddit <url>` saves a post as the extension's Markdown
 // (src/modules/reddit/md.js renders it; REDDIT_USAGE below). The rest of this header is
 // about `leket youtube`.
@@ -42,7 +44,7 @@ import {
 } from "../src/modules/youtube/extract.js";
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
 import { collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
-import { badFolder } from "../src/convert/common.js";
+import { badFolder, word } from "../src/convert/common.js";
 import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
 import { collect as collectCharacterChat, plan as planCharacterChat } from "../src/convert/character-chat.js";
 import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert/claude-code.js";
@@ -51,6 +53,7 @@ import { plan as planSignal } from "../src/convert/signal.js";
 import { plan as planWhatsapp } from "../src/convert/whatsapp.js";
 import { plan as planAim, screenKey as aimKey } from "../src/convert/aim.js";
 import { plan as planGoogleVoice } from "../src/convert/google-voice.js";
+import { plan as planGoogleChat } from "../src/convert/google-chat.js";
 import { MANIFEST } from "../src/lib/files.js";
 import { shown } from "../src/lib/shown.js";
 import { readZipEntry, zipEntries } from "../src/lib/unzip.js";
@@ -261,8 +264,8 @@ usage: leket convert aim <logs>... [--out DIR] [--me LABEL] [--name SCREENNAME=L
   that doesn't exist, or the logs hold no message (nothing written), or a write failed;
   2 usage.
 
-usage: leket convert google-voice <calls>... [--out DIR] [--me LABEL] [--name NAME=LABEL]...
-         [--contact NAME] [--tz ZONE] [--title TEXT] [--base NAME]
+usage: leket convert google-voice <calls>... [--out DIR] [--me LABEL] [--owner NAME]...
+         [--name NAME=LABEL]... [--contact NAME] [--tz ZONE] [--title TEXT] [--base NAME]
 
   Turns a Google Voice Takeout's calls folder (Voice/Calls: one .html per text-thread
   chunk, placed / received / missed call and voicemail) into one Markdown file per
@@ -274,15 +277,36 @@ usage: leket convert google-voice <calls>... [--out DIR] [--me LABEL] [--name NA
   earlier files of that name; two that would share a name get a count added.
   --me LABEL      the account owner's messages' label (default Me; a Hebrew-locale
                   export marks them "אני")
+  --owner NAME    treat sender NAME as the account owner, shown as --me (repeatable;
+                  default: "Me" and "אני")
   --name N=LABEL  show the contact or sender name N as LABEL (repeatable; default: the
                   name as written)
   --contact NAME  only the conversation with NAME (the name in the file names)
   --tz ZONE       the zone times are shown in (default UTC; the export writes offsets,
-                  so times are converted)
+                  so times are converted; a dt or published value with no UTC offset is
+                  read in the machine's local time zone)
   --title TEXT    with --contact: the heading (default "Google Voice with Name")
   --base NAME     with --contact: the file's name (NAME.md)
   Exit: 0 written; 1 a folder holds no .html file, no conversation matched --contact,
-  or the input holds no message (nothing written), or a write failed; 2 usage.`;
+  or the input holds no message (nothing written), or a write failed; 2 usage.
+
+usage: leket convert google-chat <chat>... [--out DIR] [--me LABEL] [--owner NAME]...
+         [--name NAME=LABEL]... [--tz ZONE] [--title TEXT]
+
+  Turns Google Chat in Google Takeout (Google Chat/Groups/<conversation>/messages.json)
+  into one Markdown file per conversation, in the shape convert discord writes. A chat
+  is its conversation folder (holding messages.json) or a .json file directly.
+  Writes "google-chat-Folder.md" into DIR (default: the current directory), replacing
+  earlier files of that name; two that would share a name get a count added.
+  --me LABEL      the account owner's messages' label (default Me)
+  --owner NAME    treat sender NAME as the account owner, shown as --me (repeatable;
+                  without --owner, every sender is shown as written)
+  --name N=LABEL  show the sender name N as LABEL (repeatable; default: the name as
+                  written)
+  --tz ZONE       the zone times are shown in (default UTC)
+  --title TEXT    the heading (default "Google Chat with Folder")
+  Exit: 0 written; 1 an input couldn't be read or the inputs hold no messages (nothing
+  written), or a write failed; 2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -1147,14 +1171,8 @@ async function convertTextLogMain(kind, args) {
   const bad = convertOptionError(v, ["title"]);
   if (bad) return fail(bad);
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
-  const names = Object.create(null); // no prototype: a display name can be any word
-  for (const n of v.name || []) {
-    const i = n.indexOf("=");
-    if (i < 1) return fail(`--name takes NAME=LABEL, not ${n}`);
-    const label = n.slice(i + 1);
-    if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${n.slice(0, i)}= takes a one-line label`);
-    names[n.slice(0, i)] = label;
-  }
+  const names = parseNameArgs(v.name, fail); // no prototype: a display name can be any word
+  if (!names) return 2;
   return convertTextLog(kind, positionals, { out: v.out, names, tz: v.tz, title: v.title, base: v.base });
 }
 
@@ -1215,41 +1233,33 @@ async function convertAimMain(args) {
   const bad = convertOptionError(v, ["me", "title"]);
   if (bad) return fail(bad);
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
-  const names = Object.create(null); // no prototype: a screen name can be any word
-  for (const n of v.name || []) {
-    const i = n.indexOf("=");
-    const key = i < 1 ? "" : aimKey(n.slice(0, i));
-    if (!key) return fail(`--name takes SCREENNAME=LABEL, not ${n}`);
-    const label = n.slice(i + 1);
-    if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${n.slice(0, i)}= takes a one-line label`);
-    names[key] = label;
-  }
+  const names = parseNameArgs(v.name, fail, aimKey, "SCREENNAME");
+  if (!names) return 2;
   return convertAim(positionals, { out: v.out, me: v.me, names, tz: v.tz, title: v.title, base: v.base });
 }
 
 // `convert google-voice`: Google Voice Takeout Calls/*.html → one transcript per contact
-export async function convertGoogleVoice(paths, { out = ".", me = "Me", names = {}, contact = "", tz = "", title, base } = {}) {
+export async function convertGoogleVoice(paths, { out = ".", me = "Me", owners = [], names = {}, contact = "", tz = "", title, base } = {}) {
   const zone = tz || "UTC";
   let planned;
   try {
     const inputs = await htmlInputs(paths, "Google Voice export file");
-    planned = planGoogleVoice(inputs, { title, base, me, names, contact, timeZone: zone });
+    planned = planGoogleVoice(inputs, { title, base, me, owners, names, contact, timeZone: zone });
   } catch (e) {
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
   }
   if (!(await writeConverted(planned.files, out))) return 1;
   const s = planned.stats;
-  const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
   const senders = Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ");
   const unk = s.unknownKinds;
   const unkList = unk.slice(0, 5).map(shown).join(", ") + (unk.length > 5 ? ", …" : "");
   process.stderr.write([
-    `leket: ${count(s.files, "file")}: ${count(s.texts, "text message")}, ${count(s.calls, "call")} and ${count(s.voicemails, "voicemail")}; times in ${zone}.`,
+    `leket: ${word(s.files, "file")}: ${word(s.texts, "text message")}, ${word(s.calls, "call")} and ${word(s.voicemails, "voicemail")}; times in ${zone}.`,
     senders ? `leket: senders: ${senders}.` : "",
-    unk.length ? `leket: ${count(unk.length, "file")} of an unknown kind, skipped: ${unkList}.` : "",
+    unk.length ? `leket: ${word(unk.length, "file")} of an unknown kind, skipped: ${unkList}.` : "",
     s.notExports ? `leket: ${s.notExports === 1 ? "1 file in the input is not a Google Voice export file" : `${s.notExports} files in the input are not Google Voice export files`}, skipped.` : "",
-    s.undated ? `leket: ${count(s.undated, "row")} had no usable time, skipped.` : "",
+    s.undated ? `leket: ${word(s.undated, "row")} had no usable time, skipped.` : "",
   ].filter(Boolean).join("\n") + "\n");
   return 0;
 }
@@ -1260,9 +1270,9 @@ async function convertGoogleVoiceMain(args) {
     parsed = parseArgs({
       args, allowPositionals: true,
       options: {
-        out: { type: "string" }, me: { type: "string" }, name: { type: "string", multiple: true },
-        contact: { type: "string" }, tz: { type: "string" }, title: { type: "string" },
-        base: { type: "string" }, help: { type: "boolean", short: "h" },
+        out: { type: "string" }, me: { type: "string" }, owner: { type: "string", multiple: true },
+        name: { type: "string", multiple: true }, contact: { type: "string" }, tz: { type: "string" },
+        title: { type: "string" }, base: { type: "string" }, help: { type: "boolean", short: "h" },
       },
     });
   } catch (e) {
@@ -1275,22 +1285,122 @@ async function convertGoogleVoiceMain(args) {
   if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   const bad = convertOptionError(v, ["me", "title", "contact"]);
   if (bad) return fail(bad);
+  for (const o of v.owner || []) if (!o.trim() || /[\r\n]/.test(o)) return fail("--owner takes a one-line name");
   for (const k of ["title", "base"]) {
     if (v[k] !== undefined && v.contact === undefined) {
       return fail(`--${k} goes with --contact (it names that one conversation's ${k === "title" ? "heading" : "file"})`);
     }
   }
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
-  const names = Object.create(null); // no prototype: a contact or sender name can be any word
-  for (const n of v.name || []) {
+  const names = parseNameArgs(v.name, fail);
+  if (!names) return 2;
+  return convertGoogleVoice(positionals, { out: v.out, me: v.me, owners: v.owner, names, contact: v.contact, tz: v.tz, title: v.title, base: v.base });
+}
+
+// Reads Google Chat Takeout inputs: a folder contributes its messages.json (or counts as a
+// non-export when it has none), and a loose .json path is read as-is (a loose path not
+// ending in .json counts as a non-export). Deduped by realpath.
+async function googleChatInputs(paths) {
+  const inputs = [], seen = new Set();
+  for (const p of paths) {
+    const st = await stat(p);
+    if (st.isDirectory()) {
+      const f = join(p, "messages.json");
+      const fst = await stat(f).catch((e) => (e.code === "ENOENT" || e.code === "ENOTDIR" ? null : Promise.reject(e)));
+      if (!fst || !fst.isFile()) {
+        inputs.push({ folder: basename(resolve(p)), file: "", data: null });
+        continue;
+      }
+      const real = realpathSync(f);
+      if (!seen.has(real)) {
+        seen.add(real);
+        let data;
+        try { data = JSON.parse(await readFile(f, "utf8")); } catch (e) { throw new Error(`${f} isn't JSON (${e.message})`); }
+        inputs.push({ folder: basename(resolve(p)), file: "messages.json", data });
+      }
+    } else if (!/\.json$/i.test(p)) {
+      inputs.push({ folder: "", file: basename(p), data: null });
+    } else {
+      const real = realpathSync(p);
+      if (!seen.has(real)) {
+        seen.add(real);
+        let data;
+        try { data = JSON.parse(await readFile(p, "utf8")); } catch (e) { throw new Error(`${p} isn't JSON (${e.message})`); }
+        inputs.push({ folder: "", file: basename(p), data });
+      }
+    }
+  }
+  return inputs;
+}
+
+// `convert google-chat`: Google Chat Takeout Groups/<folder>/messages.json → one transcript each
+export async function convertGoogleChat(paths, { out = ".", me = "Me", owners = [], names = {}, tz = "", title } = {}) {
+  const zone = tz || "UTC";
+  let planned;
+  try {
+    const inputs = await googleChatInputs(paths);
+    planned = planGoogleChat(inputs, { title, me, owners, names, timeZone: zone });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}; nothing written.\n`);
+    return 1;
+  }
+  if (!(await writeConverted(planned.files, out))) return 1;
+  const s = planned.stats;
+  const senders = Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ");
+  process.stderr.write([
+    `leket: ${word(s.files, "Google Chat Takeout file")}: ${word(s.messages, "message")}`
+      + (s.fromOwner ? `, ${s.fromOwner} from ${me}` : "")
+      + (s.placed ? `, ${s.placed} with no date placed after the message before them` : "")
+      + `; times in ${zone}.`,
+    senders ? `leket: senders: ${senders}.` : "",
+    s.undated ? `leket: ${word(s.undated, "row")} had no usable date, skipped.` : "",
+    s.empty ? `leket: ${word(s.empty, "file")} held no messages, skipped.` : "",
+    s.notExports ? `leket: ${word(s.notExports, "input path")} held no messages.json, skipped.` : "",
+  ].filter(Boolean).join("\n") + "\n");
+  return 0;
+}
+
+async function convertGoogleChatMain(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args, allowPositionals: true,
+      options: {
+        out: { type: "string" }, me: { type: "string" }, owner: { type: "string", multiple: true },
+        name: { type: "string", multiple: true }, tz: { type: "string" }, title: { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`leket: ${e.message}\n${CONVERT_USAGE}\n`);
+    return 2;
+  }
+  const { values: v, positionals } = parsed;
+  if (v.help) { process.stdout.write(`${CONVERT_USAGE}\n`); return 0; }
+  const fail = (msg) => { process.stderr.write(`leket: ${msg}\n`); return 2; };
+  if (!positionals.length) { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
+  const bad = convertOptionError(v, ["me", "title"]);
+  if (bad) return fail(bad);
+  for (const o of v.owner || []) if (!o.trim() || /[\r\n]/.test(o)) return fail("--owner takes a one-line name");
+  const names = parseNameArgs(v.name, fail);
+  if (!names) return 2;
+  return convertGoogleChat(positionals, { out: v.out, me: v.me, owners: v.owner, names, tz: v.tz, title: v.title });
+}
+
+// Parses repeatable --name KEY=LABEL flags into a no-prototype map, or calls fail() and
+// returns null. transform (e.g. aimKey) normalizes the key before checking it.
+function parseNameArgs(list = [], fail, transform = (s) => s, what = "NAME") {
+  const names = Object.create(null);
+  for (const n of list) {
     const i = n.indexOf("=");
-    const key = i < 1 ? "" : n.slice(0, i);
-    if (!key.trim() || /[\r\n]/.test(key)) return fail(`--name takes NAME=LABEL, not ${n}`);
+    const raw = i < 1 ? "" : n.slice(0, i);
+    const key = raw ? transform(raw) : "";
+    if (!key.trim() || /[\r\n]/.test(key)) { fail(`--name takes ${what}=LABEL, not ${n}`); return null; }
     const label = n.slice(i + 1);
-    if (!label.trim() || /[\r\n]/.test(label)) return fail(`--name ${key}= takes a one-line label`);
+    if (!label.trim() || /[\r\n]/.test(label)) { fail(`--name ${raw}= takes a one-line label`); return null; }
     names[key] = label;
   }
-  return convertGoogleVoice(positionals, { out: v.out, me: v.me, names, contact: v.contact, tz: v.tz, title: v.title, base: v.base });
+  return names;
 }
 
 // The checks every convert main makes: each label given is one line (and not blank,
@@ -1339,6 +1449,7 @@ async function convertMain(rest) {
   if (kind === "signal" || kind === "whatsapp") return convertTextLogMain(kind, args);
   if (kind === "aim") return convertAimMain(args);
   if (kind === "google-voice") return convertGoogleVoiceMain(args);
+  if (kind === "google-chat") return convertGoogleChatMain(args);
   if (kind !== "discord") { process.stderr.write(`${CONVERT_USAGE}\n`); return 2; }
   let parsed;
   try {
@@ -1363,12 +1474,8 @@ async function convertMain(rest) {
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
   const bad = convertOptionError(v, []);
   if (bad) return fail(bad);
-  const names = {};
-  for (const n of v.name || []) {
-    const i = n.indexOf("=");
-    if (i < 1) return fail(`--name takes USERNAME=LABEL, not ${n}`);
-    names[n.slice(0, i)] = n.slice(i + 1);
-  }
+  const names = parseNameArgs(v.name, fail, undefined, "USERNAME");
+  if (!names) return 2;
   return convertDiscord(positionals, { out: v.out, by: v.by, base: v.base, title: v.title, tz: v.tz, names, embeds: !!v.embeds, voice: v.voice });
 }
 

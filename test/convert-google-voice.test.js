@@ -353,3 +353,57 @@ test("empty sender cite counts under (unknown) in stats.senders, and the default
   assert.deepEqual({ ...stats.senders }, { "(unknown)": 1 });
   assert.match(files[0].text, /^# Google Voice with A \\<b> & Co\n/);
 });
+
+test("MSG containment: a cite-less message div before a normal div does not swallow the first timestamp; alone it yields zero rows", () => {
+  const citeless = '<div class="message"><abbr class="dt" title="2020-01-15T09:00:00Z">t</abbr><img src="mms.jpg"></div>\n';
+  const normal = msg("2020-01-15T10:00:00Z", "Pat", "second div");
+  const { files, stats } = plan([
+    { file: "Pat - Text - 2020-01-15T10_00_00Z.html", text: citeless + normal },
+  ]);
+  assert.equal(stats.texts, 1);
+  assert.equal(body(files[0].text), [
+    "## 2020-01-15 (Wed)", "",
+    "> -# Pat — Jan 15 2020 10:00 AM",
+    "> second div", ">", "",
+  ].join("\n"));
+
+  assert.throws(() => plan([
+    { file: "Pat - Text - 2020-01-15T09_00_00Z.html", text: citeless },
+  ]), /^Error: Pat - Text - 2020-01-15T09_00_00Z\.html holds no message$/);
+});
+
+test("collapse names and --owner: multi-line sender and contact names collapse to one line; owners labels extra owner names as me", () => {
+  assert.equal(contactOf("Sam  \n Rivera - Text - 2020-01-15T10_00_00Z.html"), "Sam Rivera");
+  const { files, stats } = plan([
+    {
+      file: "Sam  \n Rivera - Text - 2020-01-15T10_00_00Z.html",
+      text: msg("2020-01-15T10:00:00Z", "Sam\n  Rivera", "from sam") + msg("2020-01-15T10:01:00Z", "Yo", "from yo"),
+    },
+  ], { me: "Jo", owners: ["Yo"], contact: "Sam Rivera" });
+  assert.deepEqual({ ...stats.senders }, { "Sam Rivera": 1, Yo: 1 });
+  assert.equal(body(files[0].text), [
+    "## 2020-01-15 (Wed)", "",
+    "> -# Sam Rivera — Jan 15 2020 10:00 AM",
+    "> from sam", ">",
+    "> -# Jo — Jan 15 2020 10:01 AM",
+    "> from yo", ">", "",
+  ].join("\n"));
+});
+
+test("CLI: passing a folder and a loose file inside it deduplicates by realpath, and --owner works on the CLI", () => {
+  const out = tmp();
+  const looseInside = join(CALLS, readdirSync(CALLS).sort()[0]);
+  const r = leket(["convert", "google-voice", CALLS, looseInside, "--out", out, "--me", "Jo",
+    "--owner", "Alex Chen", "--name", "Sam Rivera=Sam", "--tz", "America/New_York"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /^leket: 5 files: 5 text messages, 1 call and 1 voicemail; times in America\/New_York\.\n/);
+  const samMd = readFileSync(join(out, "google-voice-Sam.md"), "utf8");
+  assert.equal(samMd, readFileSync(join(DIR, "expected.md"), "utf8"));
+  const alexMd = readFileSync(join(out, "google-voice-Alex Chen.md"), "utf8");
+  assert.match(alexMd, /^Source: 1 Google Voice Takeout file, from `calls`\.$/m);
+  assert.match(alexMd, /> -# Jo — /);
+
+  const badOwner = leket(["convert", "google-voice", CALLS, "--owner", " "]);
+  assert.equal(badOwner.status, 2);
+  assert.match(badOwner.stderr, /--owner takes a one-line name/);
+});
