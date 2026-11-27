@@ -295,7 +295,10 @@ usage: leket convert google-chat <chat>... [--out DIR] [--me LABEL] [--owner NAM
 
   Turns Google Chat in Google Takeout (Google Chat/Groups/<conversation>/messages.json)
   into one Markdown file per conversation, in the shape convert discord writes. A chat
-  is its conversation folder (holding messages.json) or a .json file directly.
+  is its conversation folder (holding messages.json) or a .json file directly; a folder
+  without its own messages.json (the Takeout Groups folder) yields every direct
+  subfolder that holds one. A loose messages.json is labelled by its parent folder,
+  any other .json by its file name.
   Writes "google-chat-Folder.md" into DIR (default: the current directory), replacing
   earlier files of that name; two that would share a name get a count added.
   --me LABEL      the account owner's messages' label (default Me)
@@ -304,9 +307,12 @@ usage: leket convert google-chat <chat>... [--out DIR] [--me LABEL] [--owner NAM
   --name N=LABEL  show the sender name N as LABEL (repeatable; default: the name as
                   written)
   --tz ZONE       the zone times are shown in (default UTC)
-  --title TEXT    the heading (default "Google Chat with Folder")
-  Exit: 0 written; 1 an input couldn't be read or the inputs hold no messages (nothing
-  written), or a write failed; 2 usage.`;
+  --title TEXT    the heading (default "Google Chat with Folder"; refused when the
+                  inputs hold more than one conversation)
+  Owner and --name names match after whitespace runs collapse, the way the export's
+  own names collapse.
+  Exit: 0 written; 1 an input couldn't be read, the inputs hold no messages, --title
+  met several conversations (nothing written), or a write failed; 2 usage.`;
 
 const REDDIT_USAGE = `usage: leket reddit <post-url> [--out DIR] [--file PATH]
        leket reddit --from-json FILE [--out DIR] [--file PATH]
@@ -1292,42 +1298,54 @@ async function convertGoogleVoiceMain(args) {
     }
   }
   if (v.base !== undefined && (!v.base || /[/\\:]/.test(v.base))) return fail("--base takes a file name, not a path (no / \\ or :)");
-  const names = parseNameArgs(v.name, fail);
+  const names = parseNameArgs(v.name, fail, collapse);
   if (!names) return 2;
-  return convertGoogleVoice(positionals, { out: v.out, me: v.me, owners: v.owner, names, contact: v.contact, tz: v.tz, title: v.title, base: v.base });
+  return convertGoogleVoice(positionals, { out: v.out, me: v.me, owners: (v.owner || []).map(collapse), names, contact: v.contact, tz: v.tz, title: v.title, base: v.base });
 }
 
-// Reads Google Chat Takeout inputs: a folder contributes its messages.json (or counts as a
-// non-export when it has none), and a loose .json path is read as-is (a loose path not
-// ending in .json counts as a non-export). Deduped by realpath.
+// Reads Google Chat Takeout inputs: a folder contributes its messages.json, and one
+// without its own (Takeout's Groups folder) yields every direct subfolder that holds one;
+// a folder with neither counts as a non-export. A loose .json path is read as-is — a loose
+// messages.json labels by its parent folder, like the folder input; a loose path not ending
+// in .json counts as a non-export. Deduped by realpath.
 async function googleChatInputs(paths) {
   const inputs = [], seen = new Set();
+  const readJson = async (f, folder, file) => {
+    const real = realpathSync(f);
+    if (seen.has(real)) return;
+    seen.add(real);
+    let data;
+    try { data = JSON.parse(await readFile(f, "utf8")); } catch (e) { throw new Error(`${f} isn't JSON (${e.message})`); }
+    inputs.push({ folder, file, data });
+  };
+  const hasMessages = async (dir) => {
+    const f = join(dir, "messages.json");
+    const fst = await stat(f).catch((e) => (e.code === "ENOENT" || e.code === "ENOTDIR" ? null : Promise.reject(e)));
+    return fst && fst.isFile() ? f : null;
+  };
   for (const p of paths) {
     const st = await stat(p);
     if (st.isDirectory()) {
-      const f = join(p, "messages.json");
-      const fst = await stat(f).catch((e) => (e.code === "ENOENT" || e.code === "ENOTDIR" ? null : Promise.reject(e)));
-      if (!fst || !fst.isFile()) {
-        inputs.push({ folder: basename(resolve(p)), file: "", data: null });
+      const f = await hasMessages(p);
+      if (!f) {
+        const subs = (await readdir(p, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+        const found = [];
+        for (const name of subs) {
+          const sf = await hasMessages(join(p, name));
+          if (sf) found.push([sf, name]);
+        }
+        if (!found.length) { inputs.push({ folder: basename(resolve(p)), file: "", data: null }); continue; }
+        for (const [sf, name] of found) await readJson(sf, name, "messages.json");
         continue;
       }
-      const real = realpathSync(f);
-      if (!seen.has(real)) {
-        seen.add(real);
-        let data;
-        try { data = JSON.parse(await readFile(f, "utf8")); } catch (e) { throw new Error(`${f} isn't JSON (${e.message})`); }
-        inputs.push({ folder: basename(resolve(p)), file: "messages.json", data });
-      }
+      await readJson(f, basename(resolve(p)), "messages.json");
     } else if (!/\.json$/i.test(p)) {
       inputs.push({ folder: "", file: basename(p), data: null });
     } else {
-      const real = realpathSync(p);
-      if (!seen.has(real)) {
-        seen.add(real);
-        let data;
-        try { data = JSON.parse(await readFile(p, "utf8")); } catch (e) { throw new Error(`${p} isn't JSON (${e.message})`); }
-        inputs.push({ folder: "", file: basename(p), data });
-      }
+      const base = basename(p);
+      // a loose messages.json labels by its parent folder, like the folder input does
+      const folder = base === "messages.json" ? basename(dirname(resolve(p))) : "";
+      await readJson(p, folder, base);
     }
   }
   return inputs;
@@ -1344,6 +1362,10 @@ export async function convertGoogleChat(paths, { out = ".", me = "Me", owners = 
     process.stderr.write(`leket: ${e.message}; nothing written.\n`);
     return 1;
   }
+  if (title && planned.files.length > 1) {
+    process.stderr.write(`leket: --title names one conversation's heading; the inputs hold ${planned.files.length} conversations; nothing written.\n`);
+    return 1;
+  }
   if (!(await writeConverted(planned.files, out))) return 1;
   const s = planned.stats;
   const senders = Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ");
@@ -1354,8 +1376,8 @@ export async function convertGoogleChat(paths, { out = ".", me = "Me", owners = 
       + `; times in ${zone}.`,
     senders ? `leket: senders: ${senders}.` : "",
     s.undated ? `leket: ${word(s.undated, "row")} had no usable date, skipped.` : "",
-    s.empty ? `leket: ${word(s.empty, "file")} held no messages, skipped.` : "",
-    s.notExports ? `leket: ${word(s.notExports, "input path")} held no messages.json, skipped.` : "",
+    s.empty ? `leket: ${word(s.empty, "file")} held no usable messages, skipped.` : "",
+    s.notExports ? `leket: ${word(s.notExports, "input path")} ${s.notExports === 1 ? "isn't" : "aren't"} a Google Chat export (no messages.json), skipped.` : "",
   ].filter(Boolean).join("\n") + "\n");
   return 0;
 }
@@ -1382,10 +1404,14 @@ async function convertGoogleChatMain(args) {
   const bad = convertOptionError(v, ["me", "title"]);
   if (bad) return fail(bad);
   for (const o of v.owner || []) if (!o.trim() || /[\r\n]/.test(o)) return fail("--owner takes a one-line name");
-  const names = parseNameArgs(v.name, fail);
+  const names = parseNameArgs(v.name, fail, collapse);
   if (!names) return 2;
-  return convertGoogleChat(positionals, { out: v.out, me: v.me, owners: v.owner, names, tz: v.tz, title: v.title });
+  return convertGoogleChat(positionals, { out: v.out, me: v.me, owners: (v.owner || []).map(collapse), names, tz: v.tz, title: v.title });
 }
+
+// The name-to-label map keys and --owner values match after whitespace runs collapse,
+// the way sender and contact names collapse at parse time (google-voice, google-chat)
+const collapse = (s) => s.replace(/\s+/g, " ").trim();
 
 // Parses repeatable --name KEY=LABEL flags into a no-prototype map, or calls fail() and
 // returns null. transform (e.g. aimKey) normalizes the key before checking it.
