@@ -157,8 +157,10 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
     },
     { folder: "EmptyChat", file: "messages.json", data: { messages: [] } },
     { folder: "NoMessagesKey", file: "messages.json", data: {} },
-    { folder: "NotExportDir", file: "", data: null },
+    { folder: "NotExportDir", file: "", data: null, notExport: true },
     { folder: "", file: "notes.txt", data: {} },
+    // a messages.json parsing to JSON null is empty, not an unknown export
+    { folder: "NullFile", file: "messages.json", data: null },
     // a conversation whose every row is skipped for dates counts as BOTH empty and undated
     { folder: "AllUndated", file: "messages.json", data: { messages: [{ creator: { name: "Ava R." }, created_date: "not a date", text: "x" }] } },
   ];
@@ -169,7 +171,7 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
     "google-chat-loose -tag- (2).md",
   ]);
   assert.equal(stats.fromOwner, 0);
-  assert.equal(stats.empty, 3);
+  assert.equal(stats.empty, 4);
   assert.equal(stats.undated, 1);
   assert.equal(stats.notExports, 2);
   assert.deepEqual({ ...stats.senders }, { Me: 1, "Ben T. <script>": 1, "?": 1, "Ava R.": 2 });
@@ -182,17 +184,27 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
   assert.equal(titled.files[0].name, "google-chat-Loose -tag-.md");
   assert.match(titled.files[0].text, /^# Custom <Heading>\n/);
 
-  // Every input empty or skipped throws, naming the number of input paths
+  // Every input empty or skipped throws, naming the number of input paths read
   assert.throws(
     () => plan([inputs[3], inputs[5]]),
-    /^Error: the 2 input paths given hold no Google Chat messages$/,
+    /^Error: the 2 input paths read hold no Google Chat messages$/,
   );
 
   // An all-dates-fail run (an English-locale export, say) points at the locale
   assert.throws(
     () => plan([{ folder: "English", file: "messages.json", data: { messages: [{ creator: { name: "Ava R." }, created_date: "Wednesday, November 26, 2026 at 8:11:40 PM UTC", text: "x" }] } }]),
-    /^Error: the 1 input path given holds no Google Chat messages; 1 row carried a date that doesn't match the Hebrew-locale Takeout format — only Hebrew-locale exports are read$/,
+    /^Error: the 1 input path read holds no Google Chat messages; 1 row was skipped — a date that doesn't match the Hebrew-locale Takeout format \(only Hebrew-locale exports are read\) or no date at all$/,
   );
+
+  // all-malformed rows (no dates involved) get the same skip count, accurately worded
+  assert.throws(
+    () => plan([{ folder: "Junk", file: "messages.json", data: { messages: ["garbage", 42] } }]),
+    /^Error: the 1 input path read holds no Google Chat messages; 2 rows were skipped — a date that doesn't match the Hebrew-locale Takeout format \(only Hebrew-locale exports are read\) or no date at all$/,
+  );
+
+  // a sender literally named "__proto__" maps through --name like anyone else (no-prototype map)
+  const proto = plan([{ folder: "Proto", file: "messages.json", data: { messages: [{ creator: { name: "__proto__" }, created_date: "1 בינואר 2025 בשעה 00:00:00 UTC", text: "x" }] } }], { names: { ["__proto__"]: "P" } });
+  assert.match(proto.files[0].text, /^> -# P — /m);
 });
 
 test("CLI: converts folders and loose .json, deduplicates by realpath, descends into a Groups-style folder, scopes --title, reports all summary lines, and validates flags", () => {
@@ -270,11 +282,11 @@ test("CLI: converts folders and loose .json, deduplicates by realpath, descends 
   // Exit 1 when every input is empty/non-export (word() covers the singular), or when a .json file is invalid JSON
   const failEmpty = leket(["convert", "google-chat", emptyChatDir, noJsonDir, "--out", tmp()]);
   assert.equal(failEmpty.status, 1);
-  assert.match(failEmpty.stderr, /leket: the 2 input paths given hold no Google Chat messages; nothing written\./);
+  assert.match(failEmpty.stderr, /leket: the 2 input paths read hold no Google Chat messages; nothing written\./);
 
   const failEmpty1 = leket(["convert", "google-chat", emptyChatDir, "--out", tmp()]);
   assert.equal(failEmpty1.status, 1);
-  assert.match(failEmpty1.stderr, /leket: the 1 input path given holds no Google Chat messages; nothing written\./);
+  assert.match(failEmpty1.stderr, /leket: the 1 input path read holds no Google Chat messages; nothing written\./);
 
   // An English-locale export (every date fails) exits 1 and names the locale, not just "no messages"
   const englishDir = join(src, "English Locale");
@@ -284,7 +296,7 @@ test("CLI: converts folders and loose .json, deduplicates by realpath, descends 
   }));
   const failLocale = leket(["convert", "google-chat", englishDir, "--out", tmp()]);
   assert.equal(failLocale.status, 1);
-  assert.match(failLocale.stderr, /^leket: the 1 input path given holds no Google Chat messages; 1 row carried a date that doesn't match the Hebrew-locale Takeout format — only Hebrew-locale exports are read; nothing written\.\n/);
+  assert.match(failLocale.stderr, /^leket: the 1 input path read holds no Google Chat messages; 1 row was skipped — a date that doesn't match the Hebrew-locale Takeout format \(only Hebrew-locale exports are read\) or no date at all; nothing written\.\n/);
 
   const badJson = join(src, "bad.json");
   writeFileSync(badJson, "{not json");
@@ -305,6 +317,7 @@ test("CLI: converts folders and loose .json, deduplicates by realpath, descends 
     [[spaceDir, "--owner", " "], /--owner takes a one-line name/],
     [[spaceDir, "--name", "Ava"], /--name takes NAME=LABEL/],
     [[spaceDir, "--name", "Ava= "], /takes a one-line label/],
+    [[spaceDir, "--name", "Sam\nRivera=X"], /--name takes NAME=LABEL/],
     [[spaceDir, "--tz", "Mars/Base"], /unknown time zone/],
   ]) {
     const ur = leket(["convert", "google-chat", ...args]);
