@@ -17,6 +17,7 @@
 //   [image: photo.png]
 //
 // Pure: no file access. bin/leket.js reads the exports and writes what plan() returns.
+import { escapeHeading } from "../lib/html-md.js";
 import { shown } from "../lib/shown.js";
 import { blank, pyStrip, safeTitle, stamp } from "./common.js";
 
@@ -86,7 +87,7 @@ export function render({ id, c }, { names = {}, user = "User", assistant = "Chat
   }
   turns.reverse();
   const title = pyStrip(typeof c.title === "string" ? c.title : "") || "untitled";
-  const head = [`# ${title}`, "", `Conversation: https://chatgpt.com/c/${id}`,
+  const head = [`# ${escapeHeading(title)}`, "", `Conversation: https://chatgpt.com/c/${id}`,
     `Created: ${stamp(c.create_time, timeZone)}`, `Updated: ${stamp(c.update_time, timeZone)}`,
     `Messages: ${turns.length}`, ""];
   return { title, turns: turns.length, text: `${head.join("\n")}\n${turns.join("\n")}`, skipped };

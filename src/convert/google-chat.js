@@ -41,7 +41,7 @@
 //
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
-import { codeSpan } from "../lib/html-md.js";
+import { codeSpan, escapeHeading } from "../lib/html-md.js";
 import { escapeTag, pyStrip, safeTitle, span, word } from "./common.js";
 
 const NBSP = new RegExp(`[${String.fromCharCode(0x202f)}${String.fromCharCode(0xa0)}]`, "g");
@@ -75,7 +75,7 @@ function render(c, { title, timeZone = "UTC" }) {
     ? ` ${word(c.placed, "message")} had no date in the export and ${c.placed === 1 ? "is" : "are"} placed after the message before them.`
     : "";
   const L = [
-    `# ${title || `Google Chat with ${escapeTag(c.label)}`}`,
+    `# ${escapeHeading(title || `Google Chat with ${c.label}`)}`,
     "",
     `Source: 1 Google Chat Takeout file${from}.`,
     `${word(c.rows.length, "message")}, ${local(first).date} to ${local(last).date}. Times are ${timeZone}. `

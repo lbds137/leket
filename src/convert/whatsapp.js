@@ -43,7 +43,7 @@
 // Pure: no file access. bin/leket.js reads the files and writes what plan() returns.
 import { clock } from "../modules/discord/convert.js";
 import { WIDE } from "../lib/shown.js";
-import { codeSpan } from "../lib/html-md.js";
+import { codeSpan, escapeHeading } from "../lib/html-md.js";
 import { PYSPACE, blank, escapeTag, safeTitle, span } from "./common.js";
 
 // the bidi controls (not the line and paragraph separators WIDE also lists)
@@ -104,7 +104,7 @@ export function render({ entries, messages, notices }, { source, title, names = 
   const label = labelOf(names);
   const [first, last] = span(entries.filter((e) => e.who !== null).map((e) => e.ms));
   const zone = timeZone ? `, in ${timeZone}` : " (the phone's local time, with no zone)";
-  const L = [`# ${title}`, "",
+  const L = [`# ${escapeHeading(title)}`, "",
     `Source: ${codeSpan(source) || "(unnamed)"}, a chat exported with WhatsApp's Export chat.`,
     `${messages} messages, ${local(first).date} to ${local(last).date}. `
     + `Times are as the phone showed them${zone}. Attached files appear under the names the export gave them.`

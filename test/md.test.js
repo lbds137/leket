@@ -456,9 +456,9 @@ test("safeBody escapes < outside code and closes unclosed fences in post and com
   assert.ok(commentMd.includes("> &lt;!-- x\n> `a<b` and &lt;c>\n> ~~~~\n> <raw>\n> ~~~~"), commentMd);
 });
 
-test("a title's bare < is escaped like a body's, outside code spans", () => {
+test("a title's break-class is escaped by escapeHeading", () => {
   const md = render(postPage({ title: "Why <T> beats `a<b`" }));
-  assert.ok(md.startsWith("# Why &lt;T> beats `a<b`\n"), md);
+  assert.ok(md.startsWith("# Why \\<T> beats `a\\<b`\n"), md);
 });
 
 test("a branch link needs a permalink to hang off: without one the more line links the post", () => {

@@ -179,10 +179,10 @@ test("names, loose files, headings, escapeTag, collision numbering, and empty/no
   assert.match(files[0].text, /> -# Me — Jan 1 2025 12:00 AM\n> \[no text\]\n>\n> -# Ben T\. \\<script> — Jan 1 2025 12:01 AM\n> hi\n>\n> -# \? — Jan 1 2025 12:02 AM\n> anon/);
   assert.match(files[1].text, /^# Google Chat with Loose \\<tag>\n\nSource: 1 Google Chat Takeout file, from `Loose <tag>`\.\n/);
 
-  // --title changes only the heading, not the file name, and is not escaped
-  const titled = plan([inputs[1]], { title: "Custom <Heading>" });
+  // --title changes only the heading, not the file name, and escapes the break-class
+  const titled = plan([inputs[1]], { title: "Custom <Heading> &amp; ` #" });
   assert.equal(titled.files[0].name, "google-chat-Loose -tag-.md");
-  assert.match(titled.files[0].text, /^# Custom <Heading>\n/);
+  assert.equal(titled.files[0].text.split("\n")[0], "# Custom \\<Heading> \\&amp; \\` \\#");
 
   // Every input empty or skipped throws, naming the number of input paths read
   assert.throws(

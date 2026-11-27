@@ -16,11 +16,12 @@
 //   backslash before each of \ ` * [ ] ~ and a non-intraword _ (flairLine), so it reads
 //   as literal text.
 // - flair (author and post) in the header lines is new: the python prints no flair.
-// - bodies and the title go through safeBody/escapeLine: a bare `<` outside code becomes
+// - bodies go through safeBody → escapeSpans: a bare `<` outside code becomes
 //   `&lt;`, unclosed fences are closed. That includes a `<` in an angle-bracket link
 //   destination (`[x](<url>)`), which then shows as text, and a `<https://…>` autolink,
 //   which turns into plain text (the URL still reads; it just isn't a link): rare in
-//   reddit, accepted.
+//   reddit, accepted. The title goes through escapeHeading (lib/html-md.js) instead: the
+//   break-class — `<tag`s, `&entities;`, odd backticks, a trailing ` #` — backslash-escaped.
 // - image links (saved and remote) are wrapped in `<...>`, with `<`, `>`, whitespace
 //   and `\` percent-encoded (encodeAngle).
 // - code spans pair within one line: a `<` in a span the renderer carries across a line
@@ -36,6 +37,8 @@
 //   line's leading tabs, since "> " shifts the columns a tab's width depends on (a text or
 //   code line's content keeps its tabs, except on a closer-shaped code line), and it keeps
 //   trailing spaces, where python's rstrip drops a hard line break.
+
+import { escapeHeading } from "../../lib/html-md.js";
 
 const MIME_EXT = { "image/png": ".png", "image/jpg": ".jpg", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
 const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
@@ -192,10 +195,6 @@ function escapeSpans(line) {
     }
   }
   return { text: out, open };
-}
-
-function escapeLine(line) {
-  return escapeSpans(line).text;
 }
 
 // A JSON field written into a line (author, score, URL, caption): one line, every `<`
@@ -722,7 +721,7 @@ export function render(data, saved = {}, folderRel = "", nf = notFetched(data)) 
   const aFlair = flairText(p.author_flair_text, p.author_flair_richtext);
   const lFlair = flairText(p.link_flair_text, p.link_flair_richtext);
   const out = [
-    `# ${p.title == null ? "(untitled)" : escapeLine(String(p.title).replace(/\s+/g, " "))}`,
+    `# ${p.title == null ? "(untitled)" : escapeHeading(String(p.title).replace(/\s+/g, " "))}`,
     "",
     `r/${plain(p.subreddit ?? "?")} · u/${plain(p.author ?? "[deleted]")}${aFlair ? ` (${aFlair})` : ""}${lFlair ? ` · post flair: ${lFlair}` : ""} · ${plain(p.score ?? "?")} points · ${plain(p.num_comments ?? "?")} comments · ${when(p.created_utc)}`,
     `Source: ${plain(link)}`,

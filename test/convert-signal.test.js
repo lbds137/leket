@@ -136,7 +136,7 @@ test("cli: usage errors exit 2, an unreadable export exits 1 with nothing writte
   const two = tmp();
   writeFileSync(join(two, "A (_id1).txt"), "[Jan 02, 2025 10:00:00] <A> hi\n");
   writeFileSync(join(two, "B (_id2).txt"), "[Jan 02, 2025 10:00:00] <B> hey\n");
-  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ : \* \? " < > \| or control characters\), not ending in a dot or space, and not a Windows reserved name like con, nul, conin\$ or conout\$\n$/;
   for (const [args, msg] of [
     [[two, "--title", "x"], /--title goes with one export .*; 2 were given/],
     [[two, "--base", "x"], /--base goes with one export/],
@@ -191,4 +191,8 @@ test("#208 lows: the range counts messages only (events when there is none); a t
   assert.match(md, /^1 messages, 2025-01-02 to 2025-01-02\./m);
   assert.match(md, /^> \\&lt;3 \\&amp; \\\\\\<b>x$/m);
   assert.match(one("[Jan 01, 2025 09:00:00] *** Missed voice call\n[Jan 03, 2025 11:00:00] *** Missed voice call\n"), /^0 messages, 2025-01-01 to 2025-01-03\./m);
+});
+
+test("heading escapes the break-class in Signal titles", () => {
+  assert.equal(one("[Jan 02, 2025 10:00:00] <Pat> hi\n", { title: "A &amp; <b> ` #" }).split("\n")[0], "# A \\&amp; \\<b> \\` \\#");
 });

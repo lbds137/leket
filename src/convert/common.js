@@ -29,23 +29,25 @@ export function stamp(t, timeZone = "UTC") {
 // Characters a file name never keeps: path separators, a drive colon, * ? " < > | (Windows,
 // and a FAT, exFAT or SMB disk on Linux, refuse them), C0 and C1 controls, and what shown()
 // escapes beyond them (bidi controls, which make a printed name read differently from what
-// is on disk, and the line and paragraph separators)
-const UNSAFE = new RegExp(`[/\\\\:*?"<>|\\x00-\\x1f\\x7f-\\x9f${String.fromCharCode(...WIDE)}]`, "g");
-// Windows device names reserved with or without an extension (COM0/LPT0 and superscript
-// digits included: Windows reserves them too)
-export const RESERVED_STEM = new RegExp(`^(con|prn|aux|nul|(?:com|lpt)[0-9${String.fromCharCode(0xb9, 0xb2, 0xb3)}])(?=\\.|$)`, "i");
+// is on disk, and the line and paragraph separators). Carries the g flag for replace(), so
+// never call .test() on it (stateful lastIndex): compare via replace instead.
+export const UNSAFE = new RegExp(`[/\\\\:*?"<>|\\x00-\\x1f\\x7f-\\x9f${String.fromCharCode(...WIDE)}]`, "g");
+// Windows device names reserved with or without an extension (COM0/LPT0, superscript
+// digits and CONIN$/CONOUT$ included, plus trailing ASCII spaces before a dot or end)
+export const RESERVED_STEM = new RegExp(`^(con|prn|aux|nul|(?:conin|conout)\\$|(?:com|lpt)[0-9${String.fromCharCode(0xb9, 0xb2, 0xb3)}])(?= *(?:\\.|$))`, "i");
 
-// A title as a file name: unsafe characters (above) become "-", trailing dots go (Windows
-// drops them), a Windows-reserved stem gets "-" appended, and it is cut to 200 bytes of UTF-8.
+// A title as a file name: unsafe characters (above) become "-", trailing dots and ASCII
+// spaces go (Windows drops them), a Windows-reserved stem gets "-" appended, and it is cut
+// to 200 bytes of UTF-8.
 export function safeTitle(title) {
-  let s = title.replace(UNSAFE, "-").replace(/\.+$/, "").replace(RESERVED_STEM, "$1-");
+  let s = title.replace(UNSAFE, "-").replace(/[. ]+$/, "").replace(RESERVED_STEM, "$1-");
   const enc = new TextEncoder();
   if (enc.encode(s).length > 200) {
     // 200 bytes hold at most 200 code points: cut to those first, so a huge title costs
     // at most 200 short re-encodes
     const cps = [...s.slice(0, 400)].slice(0, 200);
     while (enc.encode(cps.join("")).length > 200) cps.pop();
-    s = cps.join("").replace(/\.+$/, "");
+    s = cps.join("").replace(/[. ]+$/, "");
   }
   return s || "untitled";
 }
@@ -59,15 +61,7 @@ export function badFolder(f) {
   return f.split("/").some((p) => !p || /[. ]$/.test(p) || RESERVED_STEM.test(p));
 }
 
-// What a Markdown renderer would read as HTML in plain text, escaped with "\" so the text
-// shows as typed: a "<" starting a tag or an autolink ("<Media omitted>", "<Sam>", "<b>"),
-// which would vanish, and an "&" starting a character reference ("&lt;", "&amp;"), which
-// would show as the character. One a backslash already escapes is left alone: after an odd
-// run of backslashes ("\<"), not an even one ("\\<" is a backslash, then the tag). Inside
-// a code span or code block the escape shows as a backslash; that costs one character,
-// where a tag left raw loses its text.
-export const escapeTag = (s) =>
-  s.replace(/(?<!\\)((?:\\\\)*)(<(?=[A-Za-z/!?])|&(?=(?:#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);))/g, "$1\\$2");
+export { escapeTag } from "../lib/html-md.js";
 
 // [ms] → [earliest, latest], without spreading (a long chat would overflow the call stack)
 export function span(times) {

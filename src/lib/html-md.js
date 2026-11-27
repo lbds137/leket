@@ -114,12 +114,38 @@ export function escapeText(s) {
   return out;
 }
 
+// What a Markdown renderer would read as HTML in plain text, escaped with "\" so the text
+// shows as typed: a "<" starting a tag or an autolink ("<Media omitted>", "<Sam>", "<b>"),
+// which would vanish, and an "&" starting a character reference ("&lt;", "&amp;"), which
+// would show as the character. One a backslash already escapes is left alone: after an odd
+// run of backslashes ("\<"), not an even one ("\\<" is a backslash, then the tag). Inside
+// a code span or code block the escape shows as a backslash; that costs one character,
+// where a tag left raw loses its text.
+export const escapeTag = (s) =>
+  s.replace(/(?<!\\)((?:\\\\)*)(<(?=[A-Za-z/!?])|&(?=(?:#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);))/g, "$1\\$2");
+
+const TRAILING_HASH = /(^|[ \t])(#+)([ \t]*)$/;
+
 // Text for one line of a heading or a header paragraph: escaped, line breaks as spaces (one
 // would end the heading or start a new block), and a run of # at the end kept (CommonMark
 // reads " #…" at a heading's end as a closing sequence and drops it)
 export function oneLineText(s) {
-  return escapeText(s.replace(/[\r\n]+/g, " ")).replace(/(^|[ \t])(#+)([ \t]*)$/, "$1\\$2$3");
+  return escapeText(s.replace(/[\r\n]+/g, " ")).replace(TRAILING_HASH, "$1\\$2$3");
 }
+
+// A title written into a "# …" heading: escapes only the break-class (< starting a tag or
+// autolink and & starting a character reference via escapeTag, all backticks when the
+// title has an odd number of them, and a trailing " #…" sequence that CommonMark would
+// strip as a closing heading marker), leaving emphasis, links, leading/mid #s and even
+// code spans raw. Order is canonical: escapeTag first (its lookbehind counts raw
+// backslashes, so "`<b>" becomes "\`\<b>"), odd-backtick sweep second, trailing-# last.
+// (The three steps happen to commute — the sweep's inserted backslash lands before a
+// backtick, never before a "<" — but this order reads escapeTag's input as typed.)
+export const escapeHeading = (s) => {
+  let out = escapeTag(String(s));
+  if ((out.match(/`/g) || []).length % 2 === 1) out = out.replace(/`/g, "\\`");
+  return out.replace(TRAILING_HASH, "$1\\$2");
+};
 
 // what would make a line start a block: a heading, list, quote, rule or setext underline
 function escapeLineStart(line) {

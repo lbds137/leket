@@ -252,3 +252,10 @@ test("CLI: usage errors exit 2", () => {
   assert.equal(h.status, 0);
   assert.match(h.stdout, /--unlisted FOLDER/);
 });
+
+test("heading escapes the break-class while the returned title and file name use the raw title", () => {
+  const conv = { conversation_id: "c-esc", title: "A &amp; <b> `c #", create_time: 1709651220, mapping: {}, current_node: null };
+  const [f] = plan(collect([{ conversations: [conv] }]));
+  assert.equal(f.text.split("\n")[0], "# A \\&amp; \\<b> \\`c \\#");
+  assert.equal(f.name, "2024-03-05 A &amp; -b- `c #.md");
+});

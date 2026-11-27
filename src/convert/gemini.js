@@ -18,7 +18,7 @@
 // Rows that belong to no chat (a Canvas, feedback, phone Assistant actions) go to
 // other-activity.md, and each Canvas document's text to canvases/.
 // Pure: no file access. bin/leket.js reads the exports and writes what plan() returns.
-import { codeSpan, decode, escapeText, htmlToMarkdown } from "../lib/html-md.js";
+import { codeSpan, decode, escapeHeading, escapeText, htmlToMarkdown } from "../lib/html-md.js";
 import { safeTitle, stamp } from "./common.js";
 
 const CONV = /^https?:\/\/gemini\.google\.com\/app\/([0-9a-f]+)/;
@@ -208,7 +208,7 @@ export function plan({ rows, other: otherProducts = 0 }, {
     const n = es.filter(isPrompt).length;
     const gems = [...new Set(es.flatMap((e) => list(e.subtitles).map((s) => str(s?.name))
       .filter((s) => s.includes(" was used in this chat")).map((s) => s.split(" was used")[0])))].sort();
-    const head = [`# ${Object.hasOwn(titles, cid) ? titles[cid] : slug(first)}`, "",
+    const head = [`# ${escapeHeading(Object.hasOwn(titles, cid) ? titles[cid] : slug(first))}`, "",
       `Conversation: https://gemini.google.com/app/${cid}`,
       `First: ${stamp(secs(es[0]), timeZone)}`, `Last: ${stamp(secs(es[es.length - 1]), timeZone)}`, `Prompts: ${n}`];
     if (gems.length) head.push(`Gem: ${gems.join(", ")}`);

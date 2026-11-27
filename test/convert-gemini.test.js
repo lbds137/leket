@@ -242,3 +242,9 @@ test("CLI: no activity, a bad file, usage errors", () => {
   }
   assert.match(leket(["convert", "gemini", "--help"]).stdout, /--titles FILE/);
 });
+
+test("heading escapes the break-class in chat titles", () => {
+  const r = run({ titles: { aaa111: "Trip &amp; <b> ` #" } });
+  const f = r.files.find((x) => x.id === "aaa111");
+  assert.equal(f.text.split("\n")[0], "# Trip \\&amp; \\<b> \\` \\#");
+});

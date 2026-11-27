@@ -1168,3 +1168,8 @@ test("a text post keeps the two-file save: no image, md or done message", async 
   assert.equal(reply.message, "Saved reddit-abc123.json and reddit-abc123.md to Downloads.");
   assert.deepEqual([imageRequests.length, mdRequests.length, donesSent.length], [0, 0, 0]);
 });
+
+test("render escapes the break-class in the post title heading", () => {
+  const md = render(postPage({ title: "A & B <i> #" }));
+  assert.equal(md.split("\n")[0], "# A & B \\<i> \\#");
+});

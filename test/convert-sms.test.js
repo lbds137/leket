@@ -304,7 +304,7 @@ test("CLI: no match, a cut-off backup or a missing file exits 1 with no transcri
 });
 
 test("CLI: usage errors exit 2", () => {
-  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ or :\), not ending in a dot or space, and not a Windows reserved name like con or nul\n$/;
+  const BAD_BASE = /^leket: --base takes a file name, not a path \(no \/ \\ : \* \? " < > \| or control characters\), not ending in a dot or space, and not a Windows reserved name like con, nul, conin\$ or conout\$\n$/;
   const bad = [
     [[FIXTURE, FIXTURE], /give one backup/],
     [[FIXTURE, "--title", "T"], /--title goes with --number/],
@@ -329,4 +329,27 @@ test("a < that would start a tag is escaped in a text; an address with a backtic
   const [f] = convert(xml).files;
   assert.match(f.text, /^> \\<b>hi\\<\/b> 1 < 2$/m);
   assert.match(f.text, /only the conversation with ``a`b``\./);
+});
+
+test("heading escapes the break-class in both --title and the Texts with fallback; traversal attachment names stay inside --media", () => {
+  const xml = doc(sms({ address: "5550100001", date: "1000", type: "1", body: "hi", contact_name: "#x &amp; &lt;y&gt;" }));
+  assert.equal(convert(xml).files[0].text.split("\n")[0], "# Texts with #x & \\<y>");
+  assert.equal(convert(xml, { number: "5550100001", title: "A &amp; <b> ` #" }).files[0].text.split("\n")[0], "# A \\&amp; \\<b> \\` \\#");
+
+  const out = tmp(), media = join(out, "media"), file = join(out, "evil.xml");
+  writeFileSync(file, doc(
+    `<mms date="1709690400000" msg_box="1" address="5550100001"><parts>`
+    + `<part ct="application/octet-stream" cl="../../evil.bin" data="QUJD" />`
+    + `<part ct="image/png" cl="a\\..\\x.png" data="REVG" />`
+    + `</parts></mms>`,
+  ));
+  const r = leket(["convert", "sms", file, "--out", out, "--media", media]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readdirSync(media).sort(), [
+    "2024-03-06_1709690400000_0_..-..-evil.bin",
+    "2024-03-06_1709690400000_1_a-..-x.png",
+    "attachments.tsv",
+  ]);
+  const md = readFileSync(join(out, `sms-${chr(0x2026)}0001.md`), "utf8");
+  assert.match(md, /> \[attachment: 2024-03-06_1709690400000_0_\.\.-\.\.-evil\.bin\]\n> \[attachment: 2024-03-06_1709690400000_1_a-\.\.-x\.png\]/);
 });

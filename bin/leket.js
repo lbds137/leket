@@ -44,7 +44,7 @@ import {
 } from "../src/modules/youtube/extract.js";
 import { mergeSaves, render as renderDiscord } from "../src/modules/discord/convert.js";
 import { collect as collectChatgpt, plan as planChatgpt } from "../src/convert/chatgpt.js";
-import { RESERVED_STEM, badFolder, safeTitle, word } from "../src/convert/common.js";
+import { RESERVED_STEM, UNSAFE, badFolder, safeTitle, word } from "../src/convert/common.js";
 import { collect as collectGemini, plan as planGemini } from "../src/convert/gemini.js";
 import { collect as collectCharacterChat, plan as planCharacterChat } from "../src/convert/character-chat.js";
 import { turns as claudeCodeTurns, plan as planClaudeCode } from "../src/convert/claude-code.js";
@@ -1431,8 +1431,8 @@ function parseNameArgs(list = [], fail, transform = (s) => s, what = "NAME") {
   return names;
 }
 
-export const BAD_BASE = "--base takes a file name, not a path (no / \\ or :), not ending in a dot or space, and not a Windows reserved name like con or nul";
-const badBase = (b) => !b || /[/\\:]|[. ]$/.test(b) || RESERVED_STEM.test(b);
+export const BAD_BASE = '--base takes a file name, not a path (no / \\ : * ? " < > | or control characters), not ending in a dot or space, and not a Windows reserved name like con, nul, conin$ or conout$';
+const badBase = (b) => !b || b.replace(UNSAFE, "") !== b || /[. ]$/.test(b) || RESERVED_STEM.test(b);
 
 // The checks every convert main makes: each label given is one line (and not blank,
 // unless blankOk), and --tz is a zone Intl knows. → the first failure's message, or "".
