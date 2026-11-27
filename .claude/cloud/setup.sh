@@ -18,10 +18,11 @@
 # Node is the one non-best-effort piece: the cloud base image ships whatever node major
 # it ships (v22.23.5 on 11-27) and this suite does not survive it (the first VM run's
 # runner cancelled 48 tests with 'Promise resolution is still pending'), so when the
-# image's node is not the CI major (24), setup provisions a pinned node 24 tarball
-# (sha256-checked against nodejs.org's SHASUMS256) into /usr/local/lib/leket-cloud-node24
-# and puts it first on PATH via the env file. If the provision fails, setup stops before
-# the env file: exit 1, no suite run, no verdict off a node the repo is not green on.
+# image's node is not the CI major (24), setup provisions a pinned node 24 tarball —
+# v24.21.0 linux-x64, its sha256 pinned in this script so a nodejs.org-side change
+# fails closed — into /usr/local/lib/leket-cloud-node24 and puts it first on PATH via
+# the env file. If the provision fails, setup stops before the env file: exit 1, no
+# suite run, no verdict off a node the repo is not green on.
 #
 # Exit 0 = the env file was written (everything after it is best effort and reported);
 # 1 = setup could not reach the env-file step (cwd, temp file or write failure, or the
@@ -49,34 +50,59 @@ case $nv in v[0-9]*.[0-9]*)
   v=${nv#v}; maj=${v%%.*}
   if [ "$maj" -eq 24 ]; then nvok=1; fi ;;
 esac
-nodepathline=   # non-empty when setup provisions node; exported into the env file
-if [ "$nvok" != 1 ]; then
+nodepathline=   # non-empty when the provisioned prefix leads PATH; exported into the env file
+nodeprefix=${CLOUD_NODE_PREFIX:-/usr/local/lib/leket-cloud-node24}
+nver=${CLOUD_NODE_VERSION:-v24.21.0}   # ci.yml's major (24); the minor the authoring Deck runs
+# The provisioned prefix, when it already carries $nver, wins over whatever PATH says:
+# a setup re-run on a VM that sourced the env file sees the provisioned node as the
+# "system" node (nvok=1) and would otherwise rewrite the env file WITHOUT the PATH
+# export, silently reverting every later step to the image's node.
+have=$("$nodeprefix/bin/node" --version 2>/dev/null)
+if [ "$have" = "$nver" ]; then
+  export PATH="$nodeprefix/bin:$PATH"
+  nodepathline="export PATH=\"$nodeprefix/bin:\$PATH\""
+  echo "node: PATH leads with $nodeprefix/bin ($nver); provisioning skipped"
+elif [ "$nvok" != 1 ]; then
   # The base image ships whatever node it ships (v22.23.5 on 11-27) and the suite does
   # not survive it: on run task44-adopt-c1b1398fb3-20261127T200427Z the timeout tests
   # hung node 22's runner, which cancelled 48 tests with 'Promise resolution is still
   # pending' and exited 1 with fail 0. So setup provisions the exact node this repo is
-  # green on — the same pinned tarball every run, sha256-checked against nodejs.org's
-  # SHASUMS256 — and nothing after this point trusts the system node.
-  nodeprefix=${CLOUD_NODE_PREFIX:-/usr/local/lib/leket-cloud-node24}
-  nver=${CLOUD_NODE_VERSION:-v24.21.0}   # ci.yml's major (24); the minor the authoring Deck runs
-  sudo=; [ "$(id -u)" = 0 ] || sudo=sudo
+  # green on — the same pinned tarball every run, its sha256 pinned in this script —
+  # and nothing after this point trusts the system node.
   dlc=
   if command -v curl >/dev/null; then dlc="curl -fsSL --retry 2 -o"
   elif command -v wget >/dev/null; then dlc="wget -q -O"
   fi
   dlp=$(mktemp -d) || dlp=
-  tgz=node-$nver-linux-x64.tar.gz
   ok=1
   if [ -z "$dlc" ]; then echo "node install FAILED: no curl or wget on PATH"; ok=
   elif [ -z "$dlp" ]; then echo "node install FAILED: no temp dir"; ok=
-  elif ! $dlc "$dlp/SHASUMS256.txt" "https://nodejs.org/dist/$nver/SHASUMS256.txt" \
-     || ! $dlc "$dlp/$tgz" "https://nodejs.org/dist/$nver/$tgz"; then
-    echo "node install FAILED: download of $nver"; ok=
-  elif ! (cd "$dlp" && grep -F " $tgz" SHASUMS256.txt | sha256sum -c -); then
-    echo "node install FAILED: sha256 of $tgz"; ok=
-  elif ! { mkdir -p "$nodeprefix" 2>/dev/null || $sudo mkdir -p "$nodeprefix"; } \
-     || ! tar -xzf "$dlp/$tgz" -C "$nodeprefix" --strip-components=1; then
-    echo "node install FAILED: unpack into $nodeprefix"; ok=
+  elif [ "$(uname -m)" != x86_64 ]; then echo "node install FAILED: unsupported arch $(uname -m) (the pinned tarball is linux-x64)"; ok=
+  fi
+  tgz=node-$nver-linux-x64.tar.gz
+  # The tarball's sha256 is pinned here (from nodejs.org's SHASUMS256, 11-27), so "the
+  # same pinned tarball every run" is literal: a nodejs.org-side change fails closed.
+  # timeout 180 bounds the fetch like npm ci's timeout 300 below — a stalled dist
+  # server must not eat the step-0 Bash call's cap before the FAILED line lands in
+  # cloud-setup.out.
+  sha=6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff
+  if [ "$ok" = 1 ]; then
+    if ! timeout 180 $dlc "$dlp/$tgz" "https://nodejs.org/dist/$nver/$tgz"; then
+      echo "node install FAILED: download of $nver"; ok=
+    elif ! printf '%s  %s\n' "$sha" "$tgz" | (cd "$dlp" && sha256sum -c -); then
+      echo "node install FAILED: sha256 of $tgz (want $sha)"; ok=
+    fi
+  fi
+  if [ "$ok" = 1 ]; then
+    # rm first: a re-provision on a reused VM (a CLOUD_NODE_VERSION override) must not
+    # overlay a second node over the first's lib/node_modules.
+    rm -rf "$nodeprefix"
+    if ! mkdir -p "$nodeprefix" \
+       || ! tar -xzf "$dlp/$tgz" -C "$nodeprefix" --strip-components=1; then
+      echo "node install FAILED: unpack into $nodeprefix"; ok=
+    elif [ "$("$nodeprefix/bin/node" --version 2>/dev/null)" != "$nver" ]; then
+      echo "node install FAILED: $nodeprefix/bin/node does not report $nver (binary or library mismatch)"; ok=
+    fi
   fi
   [ -z "$dlp" ] || rm -rf "$dlp"
   if [ "$ok" = 1 ]; then
