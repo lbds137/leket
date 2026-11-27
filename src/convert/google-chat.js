@@ -105,8 +105,8 @@ export function plan(inputs, { title, me = "Me", owners = [], names = {}, timeZo
     undated: 0, empty: 0, notExports: 0, senders: Object.create(null),
   };
   const convs = [];
-  for (const { folder = "", file = "", data } of inputs) {
-    if ((file && !/\.json$/i.test(file)) || data === null || data === undefined) {
+  for (const { folder = "", file = "", data, notExport = false } of inputs) {
+    if (notExport || (file && !/\.json$/i.test(file))) {
       stats.notExports++;
       continue;
     }
@@ -158,11 +158,12 @@ export function plan(inputs, { title, me = "Me", owners = [], names = {}, timeZo
     convs.push({ folder, label, rows, placed });
   }
   if (!convs.length) {
-    // an English-locale (or any non-Hebrew) export fails every date: say so, not just "no messages"
+    // an English-locale (or any non-Hebrew) export fails every date: say so, not just "no messages";
+    // the count is plan's expanded inputs, so say "read", not "given"
     const hint = stats.undated
-      ? `; ${stats.undated === 1 ? "1 row carried" : `${stats.undated} rows carried`} a date that doesn't match the Hebrew-locale Takeout format — only Hebrew-locale exports are read`
+      ? `; ${stats.undated === 1 ? "1 row was skipped" : `${stats.undated} rows were skipped`} — a date that doesn't match the Hebrew-locale Takeout format (only Hebrew-locale exports are read) or no date at all`
       : "";
-    throw new Error(`the ${word(inputs.length, "input path")} given hold${inputs.length === 1 ? "s" : ""} no Google Chat messages${hint}`);
+    throw new Error(`the ${word(inputs.length, "input path")} read hold${inputs.length === 1 ? "s" : ""} no Google Chat messages${hint}`);
   }
   const files = [], taken = new Set();
   for (const c of convs) {

@@ -1336,13 +1336,13 @@ async function googleChatInputs(paths) {
           const sf = await hasMessages(join(p, name));
           if (sf) found.push([sf, name]);
         }
-        if (!found.length) { inputs.push({ folder: basename(resolve(p)), file: "", data: null }); continue; }
+        if (!found.length) { inputs.push({ folder: basename(resolve(p)), file: "", data: null, notExport: true }); continue; }
         for (const [sf, name] of found) await readJson(sf, name, "messages.json");
         continue;
       }
       await readJson(f, basename(resolve(p)), "messages.json");
     } else if (!/\.json$/i.test(p)) {
-      inputs.push({ folder: "", file: basename(p), data: null });
+      inputs.push({ folder: "", file: basename(p), data: null, notExport: true });
     } else {
       const base = basename(p);
       // a loose messages.json labels by its parent folder, like the folder input does
@@ -1373,7 +1373,7 @@ export async function convertGoogleChat(paths, { out = ".", me = "Me", owners = 
   const senders = Object.entries(s.senders).sort((a, b) => b[1] - a[1]).map(([n, k]) => `${shown(n)} (${k})`).join(", ");
   process.stderr.write([
     `leket: ${word(s.files, "Google Chat Takeout file")}: ${word(s.messages, "message")}`
-      + (s.fromOwner ? `, ${s.fromOwner} from ${me}` : "")
+      + (s.fromOwner ? `, ${s.fromOwner} from ${shown(me)}` : "")
       + (s.placed ? `, ${s.placed} with no date placed after the message before them` : "")
       + `; times in ${zone}.`,
     senders ? `leket: senders: ${senders}.` : "",
@@ -1423,7 +1423,7 @@ function parseNameArgs(list = [], fail, transform = (s) => s, what = "NAME") {
     const i = n.indexOf("=");
     const raw = i < 1 ? "" : n.slice(0, i);
     const key = raw ? transform(raw) : "";
-    if (!key.trim() || /[\r\n]/.test(key)) { fail(`--name takes ${what}=LABEL, not ${n}`); return null; }
+    if (!key.trim() || /[\r\n]/.test(raw)) { fail(`--name takes ${what}=LABEL, not ${n}`); return null; }
     const label = n.slice(i + 1);
     if (!label.trim() || /[\r\n]/.test(label)) { fail(`--name ${raw}= takes a one-line label`); return null; }
     names[key] = label;
