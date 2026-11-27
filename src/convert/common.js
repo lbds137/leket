@@ -31,11 +31,14 @@ export function stamp(t, timeZone = "UTC") {
 // escapes beyond them (bidi controls, which make a printed name read differently from what
 // is on disk, and the line and paragraph separators)
 const UNSAFE = new RegExp(`[/\\\\:*?"<>|\\x00-\\x1f\\x7f-\\x9f${String.fromCharCode(...WIDE)}]`, "g");
+// Windows device names reserved with or without an extension (COM0/LPT0 and superscript
+// digits included: Windows reserves them too)
+export const RESERVED_STEM = new RegExp(`^(con|prn|aux|nul|(?:com|lpt)[0-9${String.fromCharCode(0xb9, 0xb2, 0xb3)}])(?=\\.|$)`, "i");
 
 // A title as a file name: unsafe characters (above) become "-", trailing dots go (Windows
-// drops them), and it is cut to 200 bytes of UTF-8.
+// drops them), a Windows-reserved stem gets "-" appended, and it is cut to 200 bytes of UTF-8.
 export function safeTitle(title) {
-  let s = title.replace(UNSAFE, "-").replace(/\.+$/, "");
+  let s = title.replace(UNSAFE, "-").replace(/\.+$/, "").replace(RESERVED_STEM, "$1-");
   const enc = new TextEncoder();
   if (enc.encode(s).length > 200) {
     // 200 bytes hold at most 200 code points: cut to those first, so a huge title costs
@@ -48,11 +51,12 @@ export function safeTitle(title) {
 }
 
 // A folder from --folders or --unlisted: relative, "/"-separated, no empty, . or .. part,
-// and none of the characters safeTitle replaces in a name
+// no part ending in a dot or ASCII space or matching a Windows-reserved stem, and none of
+// the characters safeTitle replaces in a name
 export function badFolder(f) {
   if (typeof f !== "string" || !f || f.startsWith("/")) return true;
   if (f.replace(UNSAFE, (c) => (c === "/" ? c : "")) !== f) return true;
-  return f.split("/").some((p) => !p || p === "." || p === "..");
+  return f.split("/").some((p) => !p || /[. ]$/.test(p) || RESERVED_STEM.test(p));
 }
 
 // What a Markdown renderer would read as HTML in plain text, escaped with "\" so the text
