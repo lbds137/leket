@@ -37,11 +37,13 @@ test("safeTitle: appends - to Windows-reserved device stems (including extension
   assert.equal(safeTitle("lpt1.a.b"), "lpt1-.a.b");
   assert.equal(safeTitle(`com${S2}.log`), `com${S2}-.log`);
   assert.equal(safeTitle("aux..."), "aux-");
-  // >200-byte cut cannot re-create a reserved stem, strips trailing spaces/dots, and stays within 200 UTF-8 bytes
+  // >200-byte cut cannot return a bare reserved stem (RESERVED_STEM re-runs after the cut's strip), strips trailing spaces/dots, and stays within 200 UTF-8 bytes
   const longExt = safeTitle(`NUL.${"a".repeat(250)}`);
   assert.equal(longExt, `NUL-.${"a".repeat(195)}`);
   assert.equal(new TextEncoder().encode(longExt).length, 200);
   assert.equal(safeTitle(`NUL${".".repeat(250)}a`), "NUL-");
+  assert.equal(safeTitle(`con${" ".repeat(197)}x`), "con-");
+  assert.equal(safeTitle(`nul${" ".repeat(250)}x`), "nul-");
   assert.equal(safeTitle(`${"a".repeat(195)}     ${"b".repeat(20)}`), "a".repeat(195));
   const longPlain = safeTitle(`CON${"a".repeat(250)}`);
   assert.equal(longPlain, `CON${"a".repeat(197)}`);
