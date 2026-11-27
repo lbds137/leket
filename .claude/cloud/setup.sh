@@ -21,7 +21,9 @@
 # image's node is not the CI major (24), setup provisions a pinned node 24 tarball —
 # v24.21.0 linux-x64, its sha256 pinned in this script so a nodejs.org-side change
 # fails closed — into /usr/local/lib/leket-cloud-node24 and puts it first on PATH via
-# the env file. If the provision fails, setup stops before the env file: exit 1, no
+# the env file. The tarball is linux-x64: a VM of another architecture fails closed
+# with an explicit unsupported-arch line. If the provision fails, setup stops before
+# the env file: exit 1, no
 # suite run, no verdict off a node the repo is not green on.
 #
 # Exit 0 = the env file was written (everything after it is best effort and reported);
@@ -52,7 +54,7 @@ case $nv in v[0-9]*.[0-9]*)
 esac
 nodepathline=   # non-empty when the provisioned prefix leads PATH; exported into the env file
 nodeprefix=${CLOUD_NODE_PREFIX:-/usr/local/lib/leket-cloud-node24}
-nver=${CLOUD_NODE_VERSION:-v24.21.0}   # ci.yml's major (24); the minor the authoring Deck runs
+nver=v24.21.0   # ci.yml's major (24); the minor the authoring Deck runs — pinned, not a knob (the sha below is pinned to it)
 # The provisioned prefix, when it already carries $nver, wins over whatever PATH says:
 # a setup re-run on a VM that sourced the env file sees the provisioned node as the
 # "system" node (nvok=1) and would otherwise rewrite the env file WITHOUT the PATH
@@ -94,14 +96,20 @@ elif [ "$nvok" != 1 ]; then
     fi
   fi
   if [ "$ok" = 1 ]; then
-    # rm first: a re-provision on a reused VM (a CLOUD_NODE_VERSION override) must not
-    # overlay a second node over the first's lib/node_modules.
-    rm -rf "$nodeprefix"
-    if ! mkdir -p "$nodeprefix" \
-       || ! tar -xzf "$dlp/$tgz" -C "$nodeprefix" --strip-components=1; then
-      echo "node install FAILED: unpack into $nodeprefix"; ok=
-    elif [ "$("$nodeprefix/bin/node" --version 2>/dev/null)" != "$nver" ]; then
-      echo "node install FAILED: $nodeprefix/bin/node does not report $nver (binary or library mismatch)"; ok=
+    # Replace only a prefix setup itself provisioned (marker file): CLOUD_NODE_PREFIX
+    # is a documented knob, and rm -rf on a directory it does not own is not acceptable.
+    if [ -d "$nodeprefix" ] && [ ! -f "$nodeprefix/.leket-cloud-node" ]; then
+      echo "node install FAILED: $nodeprefix exists and is not a leket-provisioned node (no .leket-cloud-node marker); refusing to replace it"; ok=
+    else
+      rm -rf "$nodeprefix"
+      if ! mkdir -p "$nodeprefix" \
+         || ! tar -xzf "$dlp/$tgz" -C "$nodeprefix" --strip-components=1; then
+        echo "node install FAILED: unpack into $nodeprefix"; ok=
+      elif [ "$("$nodeprefix/bin/node" --version 2>/dev/null)" != "$nver" ]; then
+        echo "node install FAILED: $nodeprefix/bin/node does not report $nver (binary or library mismatch)"; ok=
+      else
+        echo "$nver" > "$nodeprefix/.leket-cloud-node"
+      fi
     fi
   fi
   [ -z "$dlp" ] || rm -rf "$dlp"
@@ -111,6 +119,7 @@ elif [ "$nvok" != 1 ]; then
     echo "node: system was ${nv:-absent}; installed $nver at $nodeprefix (node now reports $(node --version))"
   else
     echo "node: VERSION PROBLEM (system ${nv:-absent}; provisioning $nver failed): stop and report"
+    rm -f "$envf"   # no env file, no suite run — a stale one from an earlier run must not survive
     exit 1
   fi
 fi
